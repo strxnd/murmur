@@ -48,16 +48,6 @@ Tests are not scaffolded yet. When adding tests, keep them close to the behavior
 
 Name tests after behavior, for example `auto-mode.test.ts` or `replacements.test.ts`.
 
-## Commit & Pull Request Guidelines
-
-This directory has no git history yet, so no existing convention can be inferred. Use short imperative commit messages with one of these prefixes:
-
-- `feat: add OpenAI-compatible STT provider validation`
-- `fix: restore clipboard after paste fallback`
-- `chore: update Electron build configuration`
-
-Pull requests should include a concise summary, verification steps, known limitations, and screenshots or short recordings for UI changes.
-
 ## Security & Configuration Tips
 
 Do not commit API keys, local provider secrets, retained audio, SQLite data, or generated `out/` artifacts. Cloud STT/LLM providers must remain opt-in and respect local-only mode.
