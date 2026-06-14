@@ -1,5 +1,5 @@
 import { Keyboard } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type JSX, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type JSX, type KeyboardEvent, type MouseEvent } from "react";
 import { keyboardEventToAccelerator } from "../lib/keyboard-shortcuts";
 import { cn } from "../lib/cn";
 
@@ -48,6 +48,11 @@ export function ShortcutRecorder({
     void onCaptureStartRef.current?.();
   }, [disabled]);
 
+  const handleClick = (event: MouseEvent<HTMLButtonElement>): void => {
+    event.currentTarget.focus();
+    startCapture();
+  };
+
   useEffect(() => {
     return () => {
       if (!isCaptureActive.current) return;
@@ -95,7 +100,7 @@ export function ShortcutRecorder({
       aria-label={`Record shortcut. Current shortcut: ${value}`}
       title={isRecording ? "Press a shortcut" : "Record shortcut"}
       onBlur={stopCapture}
-      onClick={startCapture}
+      onClick={handleClick}
       onKeyDown={handleKeyDown}
       onKeyUp={handleKeyUp}
       className={cn(

@@ -33,6 +33,17 @@ import { SttRuntimeService } from "./services/stt-runtime";
 import { resolveAppPaths, type AppPaths } from "./services/app-paths";
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, nativeTheme } from "./electron-api";
 
+interface ShortcutInput {
+  alt?: boolean;
+  code?: string;
+  control?: boolean;
+  isAutoRepeat?: boolean;
+  key?: string;
+  meta?: boolean;
+  shift?: boolean;
+  type?: string;
+}
+
 export class AppController {
   private mainWindow: ElectronBrowserWindow | null = null;
   private pillWindow: ElectronBrowserWindow | null = null;
@@ -51,6 +62,7 @@ export class AppController {
   private hotkeyRegistered = false;
   private hotkeyDiagnostics: string[] = [];
   private hotkeyCaptureDepth = 0;
+  private lastActivationHotkeyAt = 0;
 
   constructor() {
     this.paths = resolveAppPaths(app);
@@ -131,6 +143,11 @@ export class AppController {
   }
 
   private attachWindowDiagnostics(window: ElectronBrowserWindow, label: string): void {
+    window.webContents.on("before-input-event", (event, input) => {
+      if (!this.matchesActivationHotkeyInput(input)) return;
+      event.preventDefault();
+      void this.handleActivationHotkey("focused_window_hotkey");
+    });
     window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
       console.log(`[renderer:${label}:${level}] ${message} (${sourceId}:${line})`);
     });
@@ -280,13 +297,14 @@ export class AppController {
     }
 
     const activationOk = this.tryRegisterHotkey("activation", settings.activationHotkey, () => {
-      if (this.session.status === "recording") {
-        void this.stopRecording();
-      } else {
-        void this.startRecording(`${settings.activationMode}_hotkey`);
-      }
+      void this.handleActivationHotkey(`${settings.activationMode}_global_hotkey`);
     });
     this.hotkeyRegistered = activationOk;
+    if (!activationOk) {
+      this.hotkeyDiagnostics.push(
+        `Focused-window fallback remains active for ${settings.activationHotkey}; global triggering may be unavailable in this session.`
+      );
+    }
     if (settings.activationMode === "push_to_talk") {
       this.hotkeyDiagnostics.push(
         "Electron globalShortcut does not expose key release events; push-to-talk currently uses the activation hotkey press to start and stop recording."
@@ -297,13 +315,32 @@ export class AppController {
   private tryRegisterHotkey(label: string, accelerator: string, callback: () => void): boolean {
     try {
       const registered = globalShortcut.register(accelerator, callback);
-      if (!registered) this.hotkeyDiagnostics.push(`Unable to register ${label} hotkey: ${accelerator}`);
-      return registered;
+      const isRegistered = registered && globalShortcut.isRegistered(accelerator);
+      if (!isRegistered) this.hotkeyDiagnostics.push(`Unable to register ${label} hotkey globally: ${accelerator}`);
+      return isRegistered;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.hotkeyDiagnostics.push(`Invalid ${label} hotkey "${accelerator}": ${message}`);
       return false;
     }
+  }
+
+  private async handleActivationHotkey(trigger: string): Promise<AppStateSnapshot> {
+    const now = Date.now();
+    if (now - this.lastActivationHotkeyAt < 250) return this.getSnapshot();
+    this.lastActivationHotkeyAt = now;
+
+    if (this.session.status === "recording") {
+      return this.stopRecording();
+    }
+
+    return this.startRecording(trigger);
+  }
+
+  private matchesActivationHotkeyInput(input: ShortcutInput): boolean {
+    if (input.type !== "keyDown" || input.isAutoRepeat || this.hotkeyCaptureDepth > 0) return false;
+    const settings = this.storage.getState().settings;
+    return shortcutInputToAccelerator(input) === settings.activationHotkey;
   }
 
   private async startRecording(_trigger: string): Promise<AppStateSnapshot> {
@@ -594,6 +631,106 @@ export class AppController {
     this.mainWindow?.webContents.send("state:changed", snapshot);
     this.pillWindow?.webContents.send("state:changed", snapshot);
   }
+}
+
+const modifierKeys = new Set(["Alt", "AltGraph", "Control", "Meta", "OS", "Shift"]);
+
+const shortcutCodeKeys: Record<string, string> = {
+  ArrowDown: "Down",
+  ArrowLeft: "Left",
+  ArrowRight: "Right",
+  ArrowUp: "Up",
+  Backquote: "`",
+  Backslash: "\\",
+  Backspace: "Backspace",
+  BracketLeft: "[",
+  BracketRight: "]",
+  CapsLock: "Capslock",
+  Comma: ",",
+  Delete: "Delete",
+  End: "End",
+  Enter: "Return",
+  Equal: "=",
+  Escape: "Escape",
+  Home: "Home",
+  Insert: "Insert",
+  Minus: "-",
+  NumpadAdd: "Plus",
+  NumpadDecimal: ".",
+  NumpadDivide: "/",
+  NumpadEnter: "Return",
+  NumpadMultiply: "*",
+  NumpadSubtract: "-",
+  PageDown: "PageDown",
+  PageUp: "PageUp",
+  Period: ".",
+  Quote: "'",
+  Semicolon: ";",
+  Slash: "/",
+  Space: "Space",
+  Tab: "Tab"
+};
+
+const shortcutNamedKeys: Record<string, string> = {
+  AudioVolumeDown: "VolumeDown",
+  AudioVolumeMute: "VolumeMute",
+  AudioVolumeUp: "VolumeUp",
+  CapsLock: "Capslock",
+  Delete: "Delete",
+  End: "End",
+  Enter: "Return",
+  Escape: "Escape",
+  Home: "Home",
+  Insert: "Insert",
+  MediaPlayPause: "MediaPlayPause",
+  MediaStop: "MediaStop",
+  MediaTrackNext: "MediaNextTrack",
+  MediaTrackPrevious: "MediaPreviousTrack",
+  NumLock: "Numlock",
+  PageDown: "PageDown",
+  PageUp: "PageUp",
+  PrintScreen: "PrintScreen",
+  ScrollLock: "Scrolllock",
+  Tab: "Tab"
+};
+
+function shortcutInputToAccelerator(input: ShortcutInput): string | null {
+  const key = shortcutInputKey(input);
+  if (!key) return null;
+
+  const modifiers: string[] = [];
+  if (process.platform === "darwin") {
+    if (input.meta) modifiers.push("CommandOrControl");
+    if (input.control) modifiers.push("Control");
+  } else {
+    if (input.control) modifiers.push("CommandOrControl");
+    if (input.meta) modifiers.push("Super");
+  }
+  if (input.alt) modifiers.push("Alt");
+  if (input.shift) modifiers.push("Shift");
+
+  return [...modifiers, key].join("+");
+}
+
+function shortcutInputKey(input: ShortcutInput): string | null {
+  const code = input.code ?? "";
+  const key = input.key ?? "";
+  if (modifierKeys.has(key)) return null;
+
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  if (/^Numpad[0-9]$/.test(code)) return code.slice(6);
+  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
+  if (shortcutCodeKeys[code]) return shortcutCodeKeys[code];
+  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(key)) return key.toUpperCase();
+  if (shortcutNamedKeys[key]) return shortcutNamedKeys[key];
+  if (key.length !== 1) return null;
+
+  const upperKey = key.toUpperCase();
+  if (/^[A-Z]$/.test(upperKey)) return upperKey;
+  if (/^[0-9]$/.test(key)) return key;
+  if (key === "+") return "Plus";
+  return key;
 }
 
 function computeDurationMs(startedAt: string | undefined, stoppedAt: string): number | undefined {
