@@ -22,8 +22,8 @@ export const defaultSettings: AppSettings = {
   activeModeId: "default",
   activationMode: "toggle",
   activationHotkey: "CommandOrControl+Alt+Space",
-  typingBaselineWpm: 40,
-  autoIncreaseMicVolume: false
+  recordingPillPosition: "bottom_center",
+  typingBaselineWpm: 40
 };
 
 export const defaultSession: DictationSession = {

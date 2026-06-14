@@ -26,23 +26,17 @@ import { ContextService } from "./services/context";
 import { LlmService } from "./services/llm";
 import { ModelLibraryService } from "./services/model-library";
 import { PasteService } from "./services/paste";
-import { SoundService } from "./services/sound";
 import { StorageService } from "./services/storage";
 import { TranscriptionService } from "./services/stt";
 import { SttRuntimeService } from "./services/stt-runtime";
 import { resolveAppPaths, type AppPaths } from "./services/app-paths";
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, nativeTheme } from "./electron-api";
+import { NativeDesktopGlobalShortcutService } from "./services/native-global-shortcuts";
+import { shortcutDescriptionForActivationMode, XdgGlobalShortcutService } from "./services/xdg-global-shortcuts";
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, nativeTheme, screen } from "./electron-api";
 
-interface ShortcutInput {
-  alt?: boolean;
-  code?: string;
-  control?: boolean;
-  isAutoRepeat?: boolean;
-  key?: string;
-  meta?: boolean;
-  shift?: boolean;
-  type?: string;
-}
+const pillWindowWidth = 360;
+const pillWindowHeight = 86;
+const pillWindowMargin = 24;
 
 export class AppController {
   private mainWindow: ElectronBrowserWindow | null = null;
@@ -50,8 +44,9 @@ export class AppController {
   private storage: StorageService;
   private context = new ContextService();
   private paste = new PasteService();
-  private sound = new SoundService();
   private runtimeService = new SttRuntimeService();
+  private portalHotkeys = new XdgGlobalShortcutService();
+  private nativeHotkeys = new NativeDesktopGlobalShortcutService();
   private paths: AppPaths;
   private stt: TranscriptionService;
   private llm = new LlmService();
@@ -59,9 +54,16 @@ export class AppController {
   private session: DictationSession = defaultSession;
   private sessionContext: ContextSnapshot | null = null;
   private recordingStoppedAt: string | null = null;
+  private pushToTalkPressed = false;
+  private pushToTalkSessionId: string | null = null;
+  private hotkeyBackend: CapabilityReport["hotkeys"]["backend"] = "electron_global_shortcut";
   private hotkeyRegistered = false;
+  private hotkeyPushToTalkRelease = false;
+  private hotkeyTriggerDescription: string | undefined;
   private hotkeyDiagnostics: string[] = [];
   private hotkeyCaptureDepth = 0;
+  private hotkeyRegistrationGeneration = 0;
+  private hotkeyRegistrationQueue: Promise<void> = Promise.resolve();
   private lastActivationHotkeyAt = 0;
 
   constructor() {
@@ -76,17 +78,19 @@ export class AppController {
   }
 
   dispose(): void {
+    globalShortcut.unregisterAll();
+    this.portalHotkeys.dispose();
+    this.nativeHotkeys.dispose();
     this.stt.dispose();
   }
 
   async initialize(): Promise<void> {
     await this.context.initialize();
     await this.paste.initialize();
-    await this.sound.initialize();
     this.registerIpc();
     this.createWindows();
     this.applySettings(this.storage.getState().settings);
-    this.registerHotkeys();
+    await this.registerHotkeys();
   }
 
   private createWindows(): void {
@@ -104,15 +108,21 @@ export class AppController {
     });
 
     this.pillWindow = new BrowserWindow({
-      width: 360,
-      height: 86,
+      width: pillWindowWidth,
+      height: pillWindowHeight,
       show: false,
       frame: false,
+      focusable: false,
       resizable: false,
+      hasShadow: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
       movable: true,
       alwaysOnTop: true,
       skipTaskbar: true,
       title: "Murmur Recording",
+      type: "notification",
       transparent: true,
       webPreferences: {
         preload: join(__dirname, "../preload/index.cjs"),
@@ -125,6 +135,7 @@ export class AppController {
     void this.loadRenderer(this.pillWindow, "?pill=1");
     this.attachWindowDiagnostics(this.mainWindow, "main");
     this.attachWindowDiagnostics(this.pillWindow, "pill");
+    this.configurePillWindow();
 
     this.mainWindow.on("closed", () => {
       this.mainWindow = null;
@@ -143,11 +154,6 @@ export class AppController {
   }
 
   private attachWindowDiagnostics(window: ElectronBrowserWindow, label: string): void {
-    window.webContents.on("before-input-event", (event, input) => {
-      if (!this.matchesActivationHotkeyInput(input)) return;
-      event.preventDefault();
-      void this.handleActivationHotkey("focused_window_hotkey");
-    });
     window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
       console.log(`[renderer:${label}:${level}] ${message} (${sourceId}:${line})`);
     });
@@ -161,19 +167,20 @@ export class AppController {
 
   private registerIpc(): void {
     ipcMain.handle("app:get-state", () => this.getSnapshot());
-    ipcMain.handle("settings:update", (_event, patch: Partial<AppSettings>) => {
+    ipcMain.handle("settings:update", async (_event, patch: Partial<AppSettings>) => {
       const state = this.storage.updateSettings(patch);
       this.applySettings(state.settings);
-      this.registerHotkeys();
+      await this.registerHotkeys();
       this.broadcastState();
       return this.getSnapshot();
     });
-    ipcMain.handle("hotkeys:capture-start", () => {
-      this.beginHotkeyCapture();
+    ipcMain.handle("hotkeys:capture-start", async () => {
+      await this.beginHotkeyCapture();
+      this.broadcastState();
       return { ok: true };
     });
-    ipcMain.handle("hotkeys:capture-end", () => {
-      this.endHotkeyCapture();
+    ipcMain.handle("hotkeys:capture-end", async () => {
+      await this.endHotkeyCapture();
       return { ok: true };
     });
     ipcMain.handle("modes:set", (_event, modes: ModeConfig[]) => {
@@ -257,9 +264,9 @@ export class AppController {
       return this.getSnapshot();
     });
     ipcMain.handle("history:reprocess", (_event, id: string) => this.reprocessHistory(id));
-    ipcMain.handle("data:clear-local", () => {
+    ipcMain.handle("data:clear-local", async () => {
       this.storage.clearLocalData();
-      this.registerHotkeys();
+      await this.registerHotkeys();
       this.broadcastState();
       return this.getSnapshot();
     });
@@ -268,48 +275,152 @@ export class AppController {
   private applySettings(settings: AppSettings): void {
     nativeTheme.themeSource = settings.theme;
     app.setLoginItemSettings({ openAtLogin: settings.launchAtLogin });
+    this.configurePillWindow();
   }
 
-  private beginHotkeyCapture(): void {
+  private async beginHotkeyCapture(): Promise<void> {
     this.hotkeyCaptureDepth += 1;
-    globalShortcut.unregisterAll();
-    this.hotkeyRegistered = false;
-    this.hotkeyDiagnostics = ["Keyboard shortcut recording is active."];
+    await this.registerHotkeys();
   }
 
-  private endHotkeyCapture(): void {
+  private async endHotkeyCapture(): Promise<void> {
     if (this.hotkeyCaptureDepth === 0) return;
     this.hotkeyCaptureDepth -= 1;
     if (this.hotkeyCaptureDepth > 0) return;
-    this.registerHotkeys();
+    await this.registerHotkeys();
     this.broadcastState();
   }
 
-  private registerHotkeys(): void {
+  private registerHotkeys(): Promise<void> {
+    const generation = ++this.hotkeyRegistrationGeneration;
+    const registration = this.hotkeyRegistrationQueue
+      .catch(() => undefined)
+      .then(() => this.registerHotkeysForGeneration(generation));
+    this.hotkeyRegistrationQueue = registration;
+    return registration;
+  }
+
+  private async registerHotkeysForGeneration(generation: number): Promise<void> {
     globalShortcut.unregisterAll();
+    await this.portalHotkeys.unregister();
+    await this.nativeHotkeys.unregister();
+    this.resetHotkeyCapabilities();
+
+    if (generation !== this.hotkeyRegistrationGeneration) return;
+
     const settings = this.storage.getState().settings;
-    this.hotkeyDiagnostics = [];
 
     if (this.hotkeyCaptureDepth > 0) {
-      this.hotkeyRegistered = false;
       this.hotkeyDiagnostics = ["Keyboard shortcut recording is active."];
+      return;
+    }
+
+    const portalResult = await this.portalHotkeys.register({
+      accelerator: settings.activationHotkey,
+      description: shortcutDescriptionForActivationMode(settings.activationMode),
+      activationMode: settings.activationMode,
+      onActivated: () => {
+        if (settings.activationMode === "push_to_talk") {
+          void this.handlePushToTalkActivated();
+        } else {
+          void this.handleActivationHotkey("toggle_global_hotkey");
+        }
+      },
+      onDeactivated: () => {
+        if (settings.activationMode === "push_to_talk") {
+          void this.handlePushToTalkDeactivated();
+        }
+      }
+    });
+
+    if (generation !== this.hotkeyRegistrationGeneration) {
+      globalShortcut.unregisterAll();
+      await this.portalHotkeys.unregister();
+      await this.nativeHotkeys.unregister();
+      return;
+    }
+
+    this.hotkeyDiagnostics = portalResult.diagnostics;
+    if (portalResult.registered) {
+      this.hotkeyBackend = "xdg_desktop_portal";
+      this.hotkeyRegistered = true;
+      this.hotkeyPushToTalkRelease = portalResult.pushToTalkRelease;
+      this.hotkeyTriggerDescription = portalResult.triggerDescription;
+      return;
+    }
+
+    const nativeResult = await this.nativeHotkeys.register({
+      accelerator: settings.activationHotkey,
+      description: shortcutDescriptionForActivationMode(settings.activationMode),
+      activationMode: settings.activationMode,
+      onActivated: () => {
+        if (settings.activationMode === "push_to_talk") {
+          void this.handlePushToTalkActivated();
+        } else {
+          void this.handleActivationHotkey("toggle_global_hotkey");
+        }
+      },
+      onDeactivated: () => {
+        if (settings.activationMode === "push_to_talk") {
+          void this.handlePushToTalkDeactivated();
+        }
+      },
+      onPressedWithoutRelease: () => {
+        void this.handleActivationHotkey(`${settings.activationMode}_global_hotkey`);
+      }
+    });
+
+    if (generation !== this.hotkeyRegistrationGeneration) {
+      globalShortcut.unregisterAll();
+      await this.portalHotkeys.unregister();
+      await this.nativeHotkeys.unregister();
+      return;
+    }
+
+    this.hotkeyDiagnostics = [...this.hotkeyDiagnostics, ...nativeResult.diagnostics];
+    if (nativeResult.registered && nativeResult.backend) {
+      this.hotkeyBackend = nativeResult.backend;
+      this.hotkeyRegistered = true;
+      this.hotkeyPushToTalkRelease = nativeResult.pushToTalkRelease;
+      this.hotkeyTriggerDescription = nativeResult.triggerDescription;
+      if (settings.activationMode === "push_to_talk" && !nativeResult.pushToTalkRelease) {
+        this.hotkeyDiagnostics.push(
+          `${this.hotkeyBackendLabel(nativeResult.backend)} does not expose key release events; push-to-talk uses press to start and stop recording.`
+        );
+      }
       return;
     }
 
     const activationOk = this.tryRegisterHotkey("activation", settings.activationHotkey, () => {
       void this.handleActivationHotkey(`${settings.activationMode}_global_hotkey`);
     });
+    this.hotkeyBackend = "electron_global_shortcut";
     this.hotkeyRegistered = activationOk;
-    if (!activationOk) {
-      this.hotkeyDiagnostics.push(
-        `Focused-window fallback remains active for ${settings.activationHotkey}; global triggering may be unavailable in this session.`
-      );
-    }
+    this.hotkeyPushToTalkRelease = false;
+    this.hotkeyTriggerDescription = undefined;
+
+    if (!activationOk) this.hotkeyDiagnostics.push(`Global activation shortcut is not registered: ${settings.activationHotkey}.`);
     if (settings.activationMode === "push_to_talk") {
       this.hotkeyDiagnostics.push(
-        "Electron globalShortcut does not expose key release events; push-to-talk currently uses the activation hotkey press to start and stop recording."
+        "Electron globalShortcut does not expose key release events; push-to-talk uses press to start and stop recording."
       );
     }
+  }
+
+  private resetHotkeyCapabilities(): void {
+    this.hotkeyBackend = "electron_global_shortcut";
+    this.hotkeyRegistered = false;
+    this.hotkeyPushToTalkRelease = false;
+    this.hotkeyTriggerDescription = undefined;
+    this.hotkeyDiagnostics = [];
+  }
+
+  private hotkeyBackendLabel(backend: CapabilityReport["hotkeys"]["backend"]): string {
+    if (backend === "gnome_custom_shortcut") return "GNOME custom shortcuts";
+    if (backend === "kde_kglobalaccel") return "KDE KGlobalAccel";
+    if (backend === "hyprland_bind") return "Hyprland binds";
+    if (backend === "xdg_desktop_portal") return "XDG Desktop Portal";
+    return "Electron globalShortcut";
   }
 
   private tryRegisterHotkey(label: string, accelerator: string, callback: () => void): boolean {
@@ -337,10 +448,27 @@ export class AppController {
     return this.startRecording(trigger);
   }
 
-  private matchesActivationHotkeyInput(input: ShortcutInput): boolean {
-    if (input.type !== "keyDown" || input.isAutoRepeat || this.hotkeyCaptureDepth > 0) return false;
-    const settings = this.storage.getState().settings;
-    return shortcutInputToAccelerator(input) === settings.activationHotkey;
+  private async handlePushToTalkActivated(): Promise<AppStateSnapshot> {
+    if (this.session.status !== "idle") return this.getSnapshot();
+
+    this.pushToTalkPressed = true;
+    const snapshot = await this.startRecording("push_to_talk_global_hotkey");
+    if (snapshot.session.status === "recording") {
+      this.pushToTalkSessionId = snapshot.session.id;
+      if (!this.pushToTalkPressed) {
+        return this.handlePushToTalkDeactivated();
+      }
+    }
+    return snapshot;
+  }
+
+  private async handlePushToTalkDeactivated(): Promise<AppStateSnapshot> {
+    this.pushToTalkPressed = false;
+    if (this.session.status !== "recording") return this.getSnapshot();
+    if (this.pushToTalkSessionId !== this.session.id) return this.getSnapshot();
+
+    this.pushToTalkSessionId = null;
+    return this.stopRecording();
   }
 
   private async startRecording(_trigger: string): Promise<AppStateSnapshot> {
@@ -348,7 +476,6 @@ export class AppController {
     if (["transcribing", "processing", "pasting"].includes(this.session.status)) return this.getSnapshot();
 
     const persisted = this.storage.getState();
-    await this.sound.prepareForRecording(persisted.settings);
     const context = await this.context.capture(persisted.settings);
     const mode = resolveModeByContext(context, persisted.modes, persisted.autoModeRules, persisted.settings.activeModeId);
     const sttProvider = this.selectTranscriptionProvider(persisted);
@@ -374,6 +501,8 @@ export class AppController {
 
   private async stopRecording(): Promise<AppStateSnapshot> {
     if (this.session.status !== "recording") return this.getSnapshot();
+    this.pushToTalkPressed = false;
+    this.pushToTalkSessionId = null;
     this.recordingStoppedAt = new Date().toISOString();
     this.mainWindow?.webContents.send("recording:stop", { sessionId: this.session.id });
     this.session = { ...this.session, status: "transcribing" };
@@ -392,6 +521,8 @@ export class AppController {
     };
     this.sessionContext = null;
     this.recordingStoppedAt = null;
+    this.pushToTalkPressed = false;
+    this.pushToTalkSessionId = null;
     this.hidePillSoon();
     this.broadcastState();
     return this.getSnapshot();
@@ -491,6 +622,8 @@ export class AppController {
 
       this.session = { ...this.session, status: "complete", transcriptPreview: processedText };
       this.recordingStoppedAt = null;
+      this.pushToTalkPressed = false;
+      this.pushToTalkSessionId = null;
       this.hidePillSoon();
       this.broadcastState();
       setTimeout(() => {
@@ -541,6 +674,8 @@ export class AppController {
 
   private failSession(message: string): AppStateSnapshot {
     this.session = { ...this.session, status: "error", error: message };
+    this.pushToTalkPressed = false;
+    this.pushToTalkSessionId = null;
     this.hidePillSoon();
     this.broadcastState();
     return this.getSnapshot();
@@ -579,11 +714,44 @@ export class AppController {
   }
 
   private showPill(): void {
-    this.pillWindow?.showInactive();
+    if (!this.pillWindow) return;
+    this.configurePillWindow();
+    this.positionPillWindow();
+    this.pillWindow.showInactive();
   }
 
   private hidePillSoon(): void {
     setTimeout(() => this.pillWindow?.hide(), 1800).unref();
+  }
+
+  private configurePillWindow(): void {
+    if (!this.pillWindow) return;
+    this.pillWindow.setFocusable(false);
+    this.pillWindow.setSkipTaskbar(true);
+    this.pillWindow.setAlwaysOnTop(true);
+    this.pillWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    this.positionPillWindow();
+  }
+
+  private positionPillWindow(): void {
+    if (!this.pillWindow) return;
+
+    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    const position = this.storage.getState().settings.recordingPillPosition;
+    const { x, y, width, height } = display.workArea;
+    const pillX =
+      position === "bottom_left"
+        ? x + pillWindowMargin
+        : position === "bottom_right"
+          ? x + width - pillWindowWidth - pillWindowMargin
+          : x + (width - pillWindowWidth) / 2;
+
+    this.pillWindow.setBounds({
+      x: Math.round(pillX),
+      y: Math.round(y + height - pillWindowHeight - pillWindowMargin),
+      width: pillWindowWidth,
+      height: pillWindowHeight
+    });
   }
 
   private getSnapshot(): AppStateSnapshot {
@@ -600,13 +768,14 @@ export class AppController {
     return {
       sttRuntimes: this.runtimeService.getAvailabilities(),
       hotkeys: {
-        backend: "electron_global_shortcut",
-        pushToTalkRelease: false,
+        backend: this.hotkeyBackend,
+        pushToTalkRelease: this.hotkeyPushToTalkRelease,
         registered: this.hotkeyRegistered,
+        triggerDescription: this.hotkeyTriggerDescription,
         diagnostics: this.hotkeyDiagnostics
       },
       context: {
-        backend: "hyprctl_clipboard_fallback",
+        backend: "clipboard_fallback",
         appMetadata: contextFlags.appMetadata,
         focusedText: contextFlags.focusedText,
         selectedText: contextFlags.selectedText,
@@ -621,8 +790,7 @@ export class AppController {
       storage: {
         backend: this.storage.backend,
         diagnostics: this.storage.getDiagnostics()
-      },
-      sound: this.sound.getCapabilities()
+      }
     };
   }
 
@@ -631,106 +799,6 @@ export class AppController {
     this.mainWindow?.webContents.send("state:changed", snapshot);
     this.pillWindow?.webContents.send("state:changed", snapshot);
   }
-}
-
-const modifierKeys = new Set(["Alt", "AltGraph", "Control", "Meta", "OS", "Shift"]);
-
-const shortcutCodeKeys: Record<string, string> = {
-  ArrowDown: "Down",
-  ArrowLeft: "Left",
-  ArrowRight: "Right",
-  ArrowUp: "Up",
-  Backquote: "`",
-  Backslash: "\\",
-  Backspace: "Backspace",
-  BracketLeft: "[",
-  BracketRight: "]",
-  CapsLock: "Capslock",
-  Comma: ",",
-  Delete: "Delete",
-  End: "End",
-  Enter: "Return",
-  Equal: "=",
-  Escape: "Escape",
-  Home: "Home",
-  Insert: "Insert",
-  Minus: "-",
-  NumpadAdd: "Plus",
-  NumpadDecimal: ".",
-  NumpadDivide: "/",
-  NumpadEnter: "Return",
-  NumpadMultiply: "*",
-  NumpadSubtract: "-",
-  PageDown: "PageDown",
-  PageUp: "PageUp",
-  Period: ".",
-  Quote: "'",
-  Semicolon: ";",
-  Slash: "/",
-  Space: "Space",
-  Tab: "Tab"
-};
-
-const shortcutNamedKeys: Record<string, string> = {
-  AudioVolumeDown: "VolumeDown",
-  AudioVolumeMute: "VolumeMute",
-  AudioVolumeUp: "VolumeUp",
-  CapsLock: "Capslock",
-  Delete: "Delete",
-  End: "End",
-  Enter: "Return",
-  Escape: "Escape",
-  Home: "Home",
-  Insert: "Insert",
-  MediaPlayPause: "MediaPlayPause",
-  MediaStop: "MediaStop",
-  MediaTrackNext: "MediaNextTrack",
-  MediaTrackPrevious: "MediaPreviousTrack",
-  NumLock: "Numlock",
-  PageDown: "PageDown",
-  PageUp: "PageUp",
-  PrintScreen: "PrintScreen",
-  ScrollLock: "Scrolllock",
-  Tab: "Tab"
-};
-
-function shortcutInputToAccelerator(input: ShortcutInput): string | null {
-  const key = shortcutInputKey(input);
-  if (!key) return null;
-
-  const modifiers: string[] = [];
-  if (process.platform === "darwin") {
-    if (input.meta) modifiers.push("CommandOrControl");
-    if (input.control) modifiers.push("Control");
-  } else {
-    if (input.control) modifiers.push("CommandOrControl");
-    if (input.meta) modifiers.push("Super");
-  }
-  if (input.alt) modifiers.push("Alt");
-  if (input.shift) modifiers.push("Shift");
-
-  return [...modifiers, key].join("+");
-}
-
-function shortcutInputKey(input: ShortcutInput): string | null {
-  const code = input.code ?? "";
-  const key = input.key ?? "";
-  if (modifierKeys.has(key)) return null;
-
-  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
-  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
-  if (/^Numpad[0-9]$/.test(code)) return code.slice(6);
-  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
-  if (shortcutCodeKeys[code]) return shortcutCodeKeys[code];
-  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(key)) return key.toUpperCase();
-  if (shortcutNamedKeys[key]) return shortcutNamedKeys[key];
-  if (key.length !== 1) return null;
-
-  const upperKey = key.toUpperCase();
-  if (/^[A-Z]$/.test(upperKey)) return upperKey;
-  if (/^[0-9]$/.test(key)) return key;
-  if (key === "+") return "Plus";
-  return key;
 }
 
 function computeDurationMs(startedAt: string | undefined, stoppedAt: string): number | undefined {

@@ -7,3 +7,4 @@ export const globalShortcut = electronApi.globalShortcut;
 export const ipcMain = electronApi.ipcMain;
 export const Menu = electronApi.Menu;
 export const nativeTheme = electronApi.nativeTheme;
+export const screen = electronApi.screen;

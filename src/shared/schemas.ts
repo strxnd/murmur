@@ -3,6 +3,7 @@ import { z } from "zod";
 export const dictationModeKindSchema = z.enum(["default", "custom"]);
 export const modePresetIdSchema = z.enum(["voice_to_text", "message", "mail", "note", "custom"]);
 export const sttStreamingModeSchema = z.enum(["none", "completed_audio_sse", "live_realtime"]);
+export const recordingPillPositionSchema = z.enum(["bottom_left", "bottom_center", "bottom_right"]);
 export const transcriptionProviderTypeSchema = z.enum([
   "whisper_cpp",
   "sherpa_onnx",
@@ -202,9 +203,9 @@ export const appSettingsSchema = z
     activeModeId: z.string().min(1),
     activationMode: z.enum(["toggle", "push_to_talk"]),
     activationHotkey: z.string().min(1),
+    recordingPillPosition: recordingPillPositionSchema,
     preferredAudioInputId: optionalStringSchema,
-    typingBaselineWpm: z.number().min(1),
-    autoIncreaseMicVolume: z.boolean()
+    typingBaselineWpm: z.number().min(1)
   });
 
 export const dictationHistoryItemSchema = z
@@ -267,14 +268,15 @@ export const capabilityReportSchema = z
     sttRuntimes: z.record(sttRuntimeIdSchema, sttRuntimeAvailabilitySchema),
     hotkeys: z
       .object({
-        backend: z.literal("electron_global_shortcut"),
+        backend: z.enum(["xdg_desktop_portal", "gnome_custom_shortcut", "kde_kglobalaccel", "hyprland_bind", "electron_global_shortcut"]),
         pushToTalkRelease: z.boolean(),
         registered: z.boolean(),
+        triggerDescription: optionalStringSchema,
         diagnostics: z.array(z.string())
       }),
     context: z
       .object({
-        backend: z.literal("hyprctl_clipboard_fallback"),
+        backend: z.literal("clipboard_fallback"),
         appMetadata: z.boolean(),
         focusedText: z.boolean(),
         selectedText: z.boolean(),
@@ -290,13 +292,6 @@ export const capabilityReportSchema = z
     storage: z
       .object({
         backend: z.enum(["sqlite", "json"]),
-        diagnostics: z.array(z.string())
-      }),
-    sound: z
-      .object({
-        backend: z.literal("wpctl_pactl"),
-        wpctlAvailable: z.boolean(),
-        pactlAvailable: z.boolean(),
         diagnostics: z.array(z.string())
       })
   })

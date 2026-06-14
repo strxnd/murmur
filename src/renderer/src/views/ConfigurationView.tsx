@@ -53,6 +53,12 @@ const activationModeItems: Array<SelectItem<ConfigurationFormValues["settings"][
   { value: "push_to_talk", label: "Push-to-talk" }
 ];
 
+const recordingPillPositionItems: Array<SelectItem<ConfigurationFormValues["settings"]["recordingPillPosition"]>> = [
+  { value: "bottom_center", label: "Bottom center" },
+  { value: "bottom_right", label: "Bottom right" },
+  { value: "bottom_left", label: "Bottom left" }
+];
+
 type ShortcutSettingPath = "settings.activationHotkey";
 
 export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.Element {
@@ -104,9 +110,14 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
     >
       <section className="grid grid-cols-2 gap-4 max-[980px]:grid-cols-1">
         <Panel title="Appearance">
-          <Field label="Theme">
-            <FormSelect control={form.control} name="settings.theme" items={themeItems} />
-          </Field>
+          <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
+            <Field label="Theme">
+              <FormSelect control={form.control} name="settings.theme" items={themeItems} />
+            </Field>
+            <Field label="Recording pill">
+              <FormSelect control={form.control} name="settings.recordingPillPosition" items={recordingPillPositionItems} />
+            </Field>
+          </div>
           <p className="m-0 mt-3 text-xs text-muted-foreground">The interface remains monochrome in this pass.</p>
         </Panel>
 
@@ -125,6 +136,11 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
                 }}
               />
             </Field>
+            {state.capabilities.hotkeys.triggerDescription && (
+              <p className="col-span-full m-0 text-xs leading-5 text-muted-foreground">
+                System shortcut: {state.capabilities.hotkeys.triggerDescription}
+              </p>
+            )}
             {state.capabilities.hotkeys.diagnostics.length > 0 && (
               <p className="col-span-full m-0 text-xs leading-5 text-muted-foreground">
                 {state.capabilities.hotkeys.diagnostics.join(" ")}
