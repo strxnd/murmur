@@ -12,6 +12,7 @@ import {
 } from "../../shared/defaults";
 import { modelCatalog } from "../../shared/model-catalog";
 import type {
+  ActivationMode,
   AppSettings,
   AutoModeRule,
   DictationHistoryItem,
@@ -45,9 +46,16 @@ interface PersistedState extends PersistedConfigState {
   history: DictationHistoryItem[];
 }
 
+interface LegacySettings extends Partial<AppSettings> {
+  toggleHotkey?: string;
+  pushToTalkHotkey?: string;
+  cancelHotkey?: string;
+}
+
 const require = createRequire(import.meta.url);
 const oldBuiltInModeIds = new Set(["voice_to_text", "message", "email", "meeting", "super", "custom"]);
 const modePresetIds = new Set<ModePresetId>(["voice_to_text", "message", "mail", "note", "custom"]);
+const activationModes = new Set<ActivationMode>(["toggle", "push_to_talk"]);
 const customModeDefaults: ModeConfig = {
   id: "custom",
   kind: "custom",
@@ -416,8 +424,16 @@ export class StorageService {
     };
   }
 
-  private normalizeSettings(settings: AppSettings | undefined, modes: ModeConfig[]): AppSettings {
-    const normalized = { ...defaultSettings, ...(settings ?? {}) };
+  private normalizeSettings(settings: LegacySettings | undefined, modes: ModeConfig[]): AppSettings {
+    const { toggleHotkey, pushToTalkHotkey: _pushToTalkHotkey, cancelHotkey: _cancelHotkey, ...currentSettings } = settings ?? {};
+    const normalized: AppSettings = {
+      ...defaultSettings,
+      ...currentSettings,
+      activationMode: activationModes.has(currentSettings.activationMode as ActivationMode)
+        ? (currentSettings.activationMode as ActivationMode)
+        : defaultSettings.activationMode,
+      activationHotkey: currentSettings.activationHotkey ?? toggleHotkey ?? defaultSettings.activationHotkey
+    };
     const modeIds = new Set(modes.map((mode) => mode.id));
     if (oldBuiltInModeIds.has(normalized.activeModeId) || !modeIds.has(normalized.activeModeId)) {
       normalized.activeModeId = "default";

@@ -200,9 +200,8 @@ export const appSettingsSchema = z
     selectedTextCapture: z.enum(["disabled", "clipboard_restore"]),
     pasteMethod: z.enum(["clipboard_restore", "clipboard_only"]),
     activeModeId: z.string().min(1),
-    toggleHotkey: z.string().min(1),
-    pushToTalkHotkey: z.string().min(1),
-    cancelHotkey: z.string().min(1),
+    activationMode: z.enum(["toggle", "push_to_talk"]),
+    activationHotkey: z.string().min(1),
     preferredAudioInputId: optionalStringSchema,
     typingBaselineWpm: z.number().min(1),
     autoIncreaseMicVolume: z.boolean()

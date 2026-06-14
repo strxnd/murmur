@@ -1,4 +1,4 @@
-import { Ban, Clock3, Mic, Square } from "lucide-react";
+import { Clock3, Mic, Square } from "lucide-react";
 import { useMemo, type JSX } from "react";
 import type { AppStateSnapshot, DictationHistoryItem } from "../../../shared/types";
 import { StatCard } from "../components/StatCard";
@@ -61,7 +61,6 @@ export function HomeView({ state }: { state: AppStateSnapshot }): JSX.Element {
 function SessionActions({ state }: { state: AppStateSnapshot }): JSX.Element {
   const startDictation = useMurmurStore((store) => store.startDictation);
   const stopDictation = useMurmurStore((store) => store.stopDictation);
-  const cancelDictation = useMurmurStore((store) => store.cancelDictation);
   const isRecording = state.session.status === "recording";
   const isBusy = ["transcribing", "processing", "pasting"].includes(state.session.status);
 
@@ -70,10 +69,6 @@ function SessionActions({ state }: { state: AppStateSnapshot }): JSX.Element {
       <Button variant="primary" onClick={() => void (isRecording ? stopDictation() : startDictation())} disabled={isBusy}>
         {isRecording ? <Square size={18} /> : <Mic size={18} />}
         {isRecording ? "Stop" : "Record"}
-      </Button>
-      <Button onClick={() => void cancelDictation()}>
-        <Ban size={18} />
-        Cancel
       </Button>
     </Toolbar>
   );

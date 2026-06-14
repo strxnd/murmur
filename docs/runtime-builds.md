@@ -55,7 +55,7 @@ Whisper server:
 vendor/runtimes/<platform-key>/whisper.cpp/whisper-server \
   --host 127.0.0.1 \
   --port 8080 \
-  --model <userData>/models/stt/ggml-tiny.en.bin \
+  --model "${XDG_CACHE_HOME:-$HOME/.cache}/murmur/models/stt/ggml-tiny.en.bin" \
   --inference-path /inference \
   --threads 4
 

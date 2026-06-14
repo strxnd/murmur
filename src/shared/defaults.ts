@@ -20,9 +20,8 @@ export const defaultSettings: AppSettings = {
   selectedTextCapture: "clipboard_restore",
   pasteMethod: "clipboard_restore",
   activeModeId: "default",
-  toggleHotkey: "CommandOrControl+Alt+Space",
-  pushToTalkHotkey: "CommandOrControl+Alt+D",
-  cancelHotkey: "CommandOrControl+Alt+X",
+  activationMode: "toggle",
+  activationHotkey: "CommandOrControl+Alt+Space",
   typingBaselineWpm: 40,
   autoIncreaseMicVolume: false
 };

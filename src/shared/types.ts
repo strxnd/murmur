@@ -2,6 +2,7 @@ export type DictationModeKind = "default" | "custom";
 export type ModePresetId = "voice_to_text" | "message" | "mail" | "note" | "custom";
 
 export type SttStreamingMode = "none" | "completed_audio_sse" | "live_realtime";
+export type ActivationMode = "toggle" | "push_to_talk";
 
 export type TranscriptionProviderType =
   | "whisper_cpp"
@@ -203,9 +204,8 @@ export interface AppSettings {
   selectedTextCapture: "disabled" | "clipboard_restore";
   pasteMethod: "clipboard_restore" | "clipboard_only";
   activeModeId: string;
-  toggleHotkey: string;
-  pushToTalkHotkey: string;
-  cancelHotkey: string;
+  activationMode: ActivationMode;
+  activationHotkey: string;
   preferredAudioInputId?: string;
   typingBaselineWpm: number;
   autoIncreaseMicVolume: boolean;

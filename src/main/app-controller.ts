@@ -265,6 +265,7 @@ export class AppController {
     this.hotkeyCaptureDepth -= 1;
     if (this.hotkeyCaptureDepth > 0) return;
     this.registerHotkeys();
+    this.broadcastState();
   }
 
   private registerHotkeys(): void {
@@ -278,21 +279,19 @@ export class AppController {
       return;
     }
 
-    const toggleOk = this.tryRegisterHotkey("toggle", settings.toggleHotkey, () => {
+    const activationOk = this.tryRegisterHotkey("activation", settings.activationHotkey, () => {
       if (this.session.status === "recording") {
         void this.stopRecording();
       } else {
-        void this.startRecording("toggle_hotkey");
+        void this.startRecording(`${settings.activationMode}_hotkey`);
       }
     });
-    const cancelOk = this.tryRegisterHotkey("cancel", settings.cancelHotkey, () => {
-      void this.cancelRecording();
-    });
-
-    this.hotkeyRegistered = toggleOk && cancelOk;
-    this.hotkeyDiagnostics.push(
-      "Electron globalShortcut does not expose key release events here; push-to-talk is represented as a configured capability but toggle is the active backend."
-    );
+    this.hotkeyRegistered = activationOk;
+    if (settings.activationMode === "push_to_talk") {
+      this.hotkeyDiagnostics.push(
+        "Electron globalShortcut does not expose key release events; push-to-talk currently uses the activation hotkey press to start and stop recording."
+      );
+    }
   }
 
   private tryRegisterHotkey(label: string, accelerator: string, callback: () => void): boolean {

@@ -1,4 +1,4 @@
-import { Ban, RefreshCw, Square } from "lucide-react";
+import { RefreshCw, Square } from "lucide-react";
 import type { JSX } from "react";
 import type { AppStateSnapshot } from "../../../shared/types";
 import { IconButton } from "../components/ui/IconButton";
@@ -8,12 +8,11 @@ import { cn } from "../lib/cn";
 
 export function RecordingPill({ state }: { state: AppStateSnapshot }): JSX.Element {
   const stopDictation = useMurmurStore((store) => store.stopDictation);
-  const cancelDictation = useMurmurStore((store) => store.cancelDictation);
   const isBusy = ["transcribing", "processing", "pasting"].includes(state.session.status);
   const pillParent = useAutoAnimateRef<HTMLDivElement>();
 
   return (
-    <div ref={pillParent} className="grid h-screen w-screen grid-cols-[1.125rem_minmax(0,1fr)_2.25rem_2.25rem] items-center gap-2.5 rounded-full border border-border bg-surface/95 px-3.5 py-3 shadow-2xl shadow-black/40">
+    <div ref={pillParent} className="grid h-screen w-screen grid-cols-[1.125rem_minmax(0,1fr)_2.25rem] items-center gap-2.5 rounded-full border border-border bg-surface/95 px-3.5 py-3 shadow-2xl shadow-black/40">
       <div className={cn("h-3.5 w-3.5 rounded-full border border-border bg-muted-foreground", state.session.status === "recording" && "animate-pulse bg-foreground")} />
       <div className="min-w-0">
         <div className="truncate text-sm font-medium capitalize text-foreground">{state.session.status}</div>
@@ -32,9 +31,6 @@ export function RecordingPill({ state }: { state: AppStateSnapshot }): JSX.Eleme
           <RefreshCw size={18} />
         </IconButton>
       )}
-      <IconButton title="Cancel" tone="danger" onClick={() => void cancelDictation()}>
-        <Ban size={18} />
-      </IconButton>
     </div>
   );
 }

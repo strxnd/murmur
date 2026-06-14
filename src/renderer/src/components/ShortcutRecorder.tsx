@@ -84,6 +84,9 @@ export function ShortcutRecorder({
     event.stopPropagation();
   };
 
+  const visibleShortcut = isRecording ? preview : value;
+  const shortcutParts = shortcutDisplayParts(visibleShortcut);
+
   return (
     <button
       type="button"
@@ -96,14 +99,61 @@ export function ShortcutRecorder({
       onKeyDown={handleKeyDown}
       onKeyUp={handleKeyUp}
       className={cn(
-        "flex min-h-9 w-full min-w-0 items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-2 text-left text-sm text-foreground outline-none transition-colors focus:border-foreground/70 focus:ring-2 focus:ring-foreground/20 disabled:cursor-not-allowed disabled:opacity-50",
+        "flex min-h-11 w-full min-w-0 items-center gap-3 rounded-md border border-border bg-surface px-2.5 py-2 text-left text-sm text-foreground outline-none transition-colors focus:border-foreground/70 focus:ring-2 focus:ring-foreground/20 disabled:cursor-not-allowed disabled:opacity-50",
         isRecording ? "border-foreground/70 bg-muted/40 ring-2 ring-foreground/20" : "hover:bg-muted/40"
       )}
     >
       <Keyboard size={15} className="shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 truncate font-mono text-[13px] leading-none">
-        {isRecording ? preview || "Press keys..." : value}
+      <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+        {shortcutParts.length > 0 ? (
+          shortcutParts.map((part, index) =>
+            part === "+" ? (
+              <span key={`${part}-${index}`} className="shrink-0 text-[11px] font-medium text-subtle">
+                +
+              </span>
+            ) : (
+              <span
+                key={`${part}-${index}`}
+                className="shrink-0 rounded bg-muted px-2 py-1 font-mono text-[11px] font-semibold leading-none text-muted-foreground shadow-inner shadow-foreground/5"
+              >
+                {part}
+              </span>
+            )
+          )
+        ) : (
+          <span className="truncate text-xs text-muted-foreground">Press keys...</span>
+        )}
+      </span>
+      <span className="shrink-0 text-[11px] font-medium text-subtle">
+        {isRecording ? "Recording" : "Click to change"}
       </span>
     </button>
   );
+}
+
+function shortcutDisplayParts(shortcut: string): string[] {
+  if (!shortcut) return [];
+
+  return shortcut.split("+").flatMap((part, index) => {
+    const label = shortcutPartLabel(part);
+    return index === 0 ? [label] : ["+", label];
+  });
+}
+
+function shortcutPartLabel(part: string): string {
+  const isMac = /mac|iphone|ipad|ipod/i.test(globalThis.navigator?.platform ?? "");
+  const labels: Record<string, string> = {
+    Alt: "Alt",
+    AltGr: "AltGr",
+    Command: "Cmd",
+    CommandOrControl: isMac ? "Cmd" : "Ctrl",
+    Control: "Ctrl",
+    Escape: "Esc",
+    Option: "Opt",
+    Return: "Enter",
+    Space: "Space",
+    Super: "Super"
+  };
+
+  return labels[part] ?? part;
 }

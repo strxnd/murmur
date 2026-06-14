@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -25,6 +25,36 @@ describe("StorageService", () => {
     expect(config.settings).toMatchObject({ theme: "light" });
     expect(config.history).toBeUndefined();
     expect(existsSync(join(paths.dataDir, "murmur-config.json"))).toBe(false);
+  });
+
+  it("migrates legacy activation shortcuts to a single activation hotkey", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        settings: {
+          activeModeId: "default",
+          theme: "dark",
+          toggleHotkey: "CommandOrControl+Shift+Y",
+          pushToTalkHotkey: "CommandOrControl+Shift+U",
+          cancelHotkey: "CommandOrControl+Shift+X"
+        }
+      })
+    );
+    const storage = jsonStorage(paths);
+
+    const settings = storage.getState().settings as typeof defaultSettings & {
+      toggleHotkey?: string;
+      pushToTalkHotkey?: string;
+      cancelHotkey?: string;
+    };
+
+    expect(settings.activationMode).toBe("toggle");
+    expect(settings.activationHotkey).toBe("CommandOrControl+Shift+Y");
+    expect(settings.toggleHotkey).toBeUndefined();
+    expect(settings.pushToTalkHotkey).toBeUndefined();
+    expect(settings.cancelHotkey).toBeUndefined();
   });
 
   it("writes history state to the data dir", () => {

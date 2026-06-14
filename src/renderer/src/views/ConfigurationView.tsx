@@ -48,7 +48,12 @@ const selectedTextCaptureItems: Array<SelectItem<ConfigurationFormValues["settin
   { value: "disabled", label: "Disabled" }
 ];
 
-type ShortcutSettingPath = "settings.toggleHotkey" | "settings.pushToTalkHotkey" | "settings.cancelHotkey";
+const activationModeItems: Array<SelectItem<ConfigurationFormValues["settings"]["activationMode"]>> = [
+  { value: "toggle", label: "Toggle" },
+  { value: "push_to_talk", label: "Push-to-talk" }
+];
+
+type ShortcutSettingPath = "settings.activationHotkey";
 
 export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.Element {
   const updateSettings = useMurmurStore((store) => store.updateSettings);
@@ -73,11 +78,12 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
   ];
 
   useEffect(() => {
+    if (form.formState.isDirty) return;
     form.reset({
       settings: state.settings,
       replacements: state.replacements
     });
-  }, [form, state.replacements, state.settings]);
+  }, [form, form.formState.isDirty, state.replacements, state.settings]);
 
   const save = form.handleSubmit(async (values) => {
     await updateSettings(values.settings);
@@ -105,16 +111,25 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
         </Panel>
 
         <Panel title="Keyboard Shortcuts">
-          <div className="grid grid-cols-3 gap-3 max-[760px]:grid-cols-1">
-            <Field label="Toggle recording" error={form.formState.errors.settings?.toggleHotkey?.message}>
-              <FormShortcutRecorder control={form.control} name="settings.toggleHotkey" />
+          <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
+            <Field label="Activation mode" error={form.formState.errors.settings?.activationMode?.message}>
+              <FormSelect control={form.control} name="settings.activationMode" items={activationModeItems} />
             </Field>
-            <Field label="Push-to-talk" error={form.formState.errors.settings?.pushToTalkHotkey?.message}>
-              <FormShortcutRecorder control={form.control} name="settings.pushToTalkHotkey" />
+            <Field label="Activation shortcut" error={form.formState.errors.settings?.activationHotkey?.message}>
+              <FormShortcutRecorder
+                control={form.control}
+                name="settings.activationHotkey"
+                onCommit={async (activationHotkey) => {
+                  await updateSettings({ activationHotkey });
+                  form.resetField("settings.activationHotkey", { defaultValue: activationHotkey });
+                }}
+              />
             </Field>
-            <Field label="Cancel" error={form.formState.errors.settings?.cancelHotkey?.message}>
-              <FormShortcutRecorder control={form.control} name="settings.cancelHotkey" />
-            </Field>
+            {state.capabilities.hotkeys.diagnostics.length > 0 && (
+              <p className="col-span-full m-0 text-xs leading-5 text-muted-foreground">
+                {state.capabilities.hotkeys.diagnostics.join(" ")}
+              </p>
+            )}
           </div>
         </Panel>
       </section>
@@ -270,7 +285,15 @@ function FormSelect({
   );
 }
 
-function FormShortcutRecorder({ control, name }: { control: Control<ConfigurationFormValues>; name: ShortcutSettingPath }): JSX.Element {
+function FormShortcutRecorder({
+  control,
+  name,
+  onCommit
+}: {
+  control: Control<ConfigurationFormValues>;
+  name: ShortcutSettingPath;
+  onCommit?: (value: string) => Promise<void> | void;
+}): JSX.Element {
   return (
     <Controller
       control={control}
@@ -278,7 +301,10 @@ function FormShortcutRecorder({ control, name }: { control: Control<Configuratio
       render={({ field }) => (
         <ShortcutRecorder
           value={String(field.value ?? "")}
-          onChange={field.onChange}
+          onChange={(value) => {
+            field.onChange(value);
+            void onCommit?.(value);
+          }}
           onCaptureStart={murmurClient.beginHotkeyCapture}
           onCaptureEnd={murmurClient.endHotkeyCapture}
         />
