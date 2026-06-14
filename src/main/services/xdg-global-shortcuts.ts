@@ -1,0 +1,689 @@
+import { randomBytes } from "node:crypto";
+import * as dbusNative from "@homebridge/dbus-native";
+import type { BusConnection, MessageBus } from "@homebridge/dbus-native";
+import type { ActivationMode } from "../../shared/types";
+
+const portalDestination = "org.freedesktop.portal.Desktop";
+const portalPath = "/org/freedesktop/portal/desktop";
+const globalShortcutsInterface = "org.freedesktop.portal.GlobalShortcuts";
+const hostRegistryInterface = "org.freedesktop.host.portal.Registry";
+const propertiesInterface = "org.freedesktop.DBus.Properties";
+const requestInterface = "org.freedesktop.portal.Request";
+const sessionInterface = "org.freedesktop.portal.Session";
+const dbusDestination = "org.freedesktop.DBus";
+const dbusPath = "/org/freedesktop/DBus";
+const dbusInterface = "org.freedesktop.DBus";
+const appId = "dev.murmur.app";
+const shortcutId = "activation";
+const portalTimeoutMs = 3000;
+
+export interface XdgShortcutRegistrationResult {
+  attempted: boolean;
+  registered: boolean;
+  pushToTalkRelease: boolean;
+  triggerDescription?: string;
+  diagnostics: string[];
+}
+
+export interface XdgGlobalShortcutRegistrationOptions {
+  accelerator: string;
+  description: string;
+  activationMode: ActivationMode;
+  onActivated: () => void;
+  onDeactivated: () => void;
+}
+
+type DbusNativeModule = typeof dbusNative & {
+  sessionBus: (options?: Record<string, unknown>) => PortalMessageBus;
+};
+
+type PortalBusConnection = BusConnection & {
+  end?: () => void;
+};
+
+type PortalMessageBus = MessageBus & {
+  connection: PortalBusConnection;
+  name?: string;
+};
+
+type DbusVardict = Array<[string, DbusVariant]>;
+type DbusVariant = [string, unknown];
+
+interface DbusMessage {
+  path?: string;
+  interface?: string;
+  member?: string;
+  body?: unknown[];
+}
+
+interface PortalRequestResponse {
+  response: number;
+  results: DbusVardict;
+}
+
+interface PendingRequestResponse {
+  reject: (error: Error) => void;
+  resolve: (response: PortalRequestResponse) => void;
+  timer: NodeJS.Timeout;
+}
+
+interface ActiveRegistration {
+  onActivated: () => void;
+  onDeactivated: () => void;
+  sessionHandle: string;
+}
+
+const dbus = dbusNative as DbusNativeModule;
+
+export class XdgGlobalShortcutService {
+  private bus: PortalMessageBus | null = null;
+  private activeRegistration: ActiveRegistration | null = null;
+  private sessionHandle: string | null = null;
+  private matchRules = new Set<string>();
+  private pendingResponses = new Map<string, PendingRequestResponse>();
+  private completedResponses = new Map<string, PortalRequestResponse>();
+  private lastBusError: string | null = null;
+  private hostAppRegistered = false;
+
+  async register(options: XdgGlobalShortcutRegistrationOptions): Promise<XdgShortcutRegistrationResult> {
+    await this.unregister();
+
+    const diagnostics: string[] = [];
+    const result = (patch: Partial<XdgShortcutRegistrationResult>): XdgShortcutRegistrationResult => ({
+      attempted: patch.attempted ?? false,
+      registered: patch.registered ?? false,
+      pushToTalkRelease: patch.pushToTalkRelease ?? false,
+      triggerDescription: patch.triggerDescription,
+      diagnostics: [...diagnostics, ...(patch.diagnostics ?? [])]
+    });
+
+    if (process.platform !== "linux") {
+      diagnostics.push("XDG Desktop Portal global shortcuts are only available on Linux.");
+      return result({});
+    }
+
+    if (!process.env.DBUS_SESSION_BUS_ADDRESS) {
+      diagnostics.push("No D-Bus session bus is available for XDG Desktop Portal global shortcuts.");
+      return result({});
+    }
+
+    const preferredTrigger = acceleratorToPortalTrigger(options.accelerator);
+    if (!preferredTrigger) {
+      diagnostics.push(
+        `Activation shortcut "${options.accelerator}" cannot be represented as an XDG Desktop Portal trigger.`
+      );
+      return result({});
+    }
+
+    try {
+      const bus = this.getBus();
+      const uniqueName = await this.waitForUniqueBusName(bus);
+      await this.registerHostApp(bus, diagnostics);
+      const globalShortcutsVersion = await this.readGlobalShortcutsVersion(bus, diagnostics);
+      const createResponse = await this.callPortalRequest({
+        bus,
+        uniqueName,
+        member: "CreateSession",
+        signature: "a{sv}",
+        body: [
+          makeVardict({
+            handle_token: makeToken("create"),
+            session_handle_token: makeToken("session")
+          })
+        ]
+      });
+
+      if (createResponse.response !== 0) {
+        diagnostics.push(`XDG Desktop Portal shortcut session was not created: ${responseDescription(createResponse.response)}.`);
+        return result({ attempted: true });
+      }
+
+      const sessionHandle = vardictString(createResponse.results, "session_handle");
+      if (!sessionHandle) {
+        diagnostics.push("XDG Desktop Portal did not return a shortcut session handle.");
+        return result({ attempted: true });
+      }
+
+      this.sessionHandle = sessionHandle;
+
+      const description = options.description || shortcutDescriptionForActivationMode(options.activationMode);
+      const shortcutProperties = shortcutPropertiesForPortalVersion(description, preferredTrigger, globalShortcutsVersion);
+      if (!shortcutProperties.some(([key]) => key === "preferred_trigger")) {
+        diagnostics.push(
+          `XDG Desktop Portal global shortcuts version ${globalShortcutsVersion} does not accept preferred shortcut triggers; assign the system shortcut to ${appId}:${shortcutId}.`
+        );
+      }
+      const bindResponse = await this.callPortalRequest({
+        bus,
+        uniqueName,
+        member: "BindShortcuts",
+        signature: "oa(sa{sv})sa{sv}",
+        body: [
+          sessionHandle,
+          [
+            [
+              shortcutId,
+              shortcutProperties
+            ]
+          ],
+          "",
+          makeVardict({
+            handle_token: makeToken("bind")
+          })
+        ]
+      });
+
+      if (bindResponse.response !== 0) {
+        diagnostics.push(`XDG Desktop Portal shortcut binding was not completed: ${responseDescription(bindResponse.response)}.`);
+        await this.unregister();
+        return result({ attempted: true });
+      }
+
+      const boundShortcut = findBoundShortcut(bindResponse.results, shortcutId);
+      if (!boundShortcut) {
+        diagnostics.push("XDG Desktop Portal did not bind the requested activation shortcut.");
+        await this.unregister();
+        return result({ attempted: true });
+      }
+      if (!boundShortcut.triggerDescription) {
+        diagnostics.push(`XDG Desktop Portal registered shortcut action ${appId}:${shortcutId}, but the desktop did not report an assigned trigger.`);
+        await this.unregister();
+        return result({ attempted: true });
+      }
+
+      await this.addMatch("type='signal',path='/org/freedesktop/portal/desktop',interface='org.freedesktop.portal.GlobalShortcuts'");
+      this.activeRegistration = {
+        onActivated: options.onActivated,
+        onDeactivated: options.onDeactivated,
+        sessionHandle
+      };
+
+      return result({
+        attempted: true,
+        registered: true,
+        pushToTalkRelease: options.activationMode === "push_to_talk",
+        triggerDescription: boundShortcut.triggerDescription || undefined
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      diagnostics.push(`XDG Desktop Portal global shortcut registration failed: ${message}.`);
+      await this.unregister();
+      return result({ attempted: true });
+    }
+  }
+
+  async unregister(): Promise<void> {
+    this.activeRegistration = null;
+    this.completedResponses.clear();
+    for (const pending of this.pendingResponses.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("XDG Desktop Portal shortcut registration was cancelled."));
+    }
+    this.pendingResponses.clear();
+
+    const sessionHandle = this.sessionHandle;
+    this.sessionHandle = null;
+    if (this.bus && sessionHandle) {
+      await this.invoke({
+        bus: this.bus,
+        path: sessionHandle,
+        interfaceName: sessionInterface,
+        member: "Close"
+      }).catch(() => undefined);
+    }
+
+    await this.removeAllMatches();
+  }
+
+  dispose(): void {
+    void this.unregister().finally(() => {
+      this.bus?.connection.removeListener("message", this.handleMessage);
+      this.bus?.connection.removeListener("error", this.handleBusError);
+      this.bus?.connection.end?.();
+      this.bus = null;
+    });
+  }
+
+  private getBus(): PortalMessageBus {
+    if (this.bus) return this.bus;
+
+    const bus = dbus.sessionBus({ ReturnLongjs: false });
+    bus.connection.on("message", this.handleMessage);
+    bus.connection.on("error", this.handleBusError);
+    this.bus = bus;
+    return bus;
+  }
+
+  private async waitForUniqueBusName(bus: PortalMessageBus): Promise<string> {
+    const startedAt = Date.now();
+    while (!bus.name) {
+      if (this.lastBusError) throw new Error(this.lastBusError);
+      if (Date.now() - startedAt > portalTimeoutMs) {
+        throw new Error("Timed out waiting for the D-Bus session bus.");
+      }
+      await delay(20);
+    }
+    return bus.name;
+  }
+
+  private async callPortalRequest(options: {
+    bus: PortalMessageBus;
+    uniqueName: string;
+    member: string;
+    signature: string;
+    body: unknown[];
+  }): Promise<PortalRequestResponse> {
+    const token = vardictString(options.body.at(-1), "handle_token") ?? makeToken("request");
+    const expectedHandle = requestPathForToken(options.uniqueName, token);
+    await this.addMatch(requestResponseMatch(expectedHandle));
+
+    const requestHandle = await this.invoke<string>({
+      bus: options.bus,
+      path: portalPath,
+      interfaceName: globalShortcutsInterface,
+      member: options.member,
+      signature: options.signature,
+      body: options.body
+    });
+
+    const handle = requestHandle || expectedHandle;
+    if (handle !== expectedHandle) {
+      await this.addMatch(requestResponseMatch(handle));
+    }
+
+    try {
+      return await this.waitForRequestResponse(handle);
+    } catch (error) {
+      await this.closeRequest(handle);
+      throw error;
+    } finally {
+      await this.removeMatch(requestResponseMatch(expectedHandle));
+      if (handle !== expectedHandle) {
+        await this.removeMatch(requestResponseMatch(handle));
+      }
+    }
+  }
+
+  private async registerHostApp(bus: PortalMessageBus, diagnostics: string[]): Promise<void> {
+    if (this.hostAppRegistered) return;
+
+    try {
+      await this.invoke<void>({
+        bus,
+        path: portalPath,
+        interfaceName: hostRegistryInterface,
+        member: "Register",
+        signature: "sa{sv}",
+        body: [appId, []]
+      });
+      this.hostAppRegistered = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/already registered|already been registered/i.test(message)) {
+        this.hostAppRegistered = true;
+        return;
+      }
+      diagnostics.push(`XDG Desktop Portal app registration failed for ${appId}: ${message}.`);
+    }
+  }
+
+  private async readGlobalShortcutsVersion(bus: PortalMessageBus, diagnostics: string[]): Promise<number> {
+    try {
+      const versionVariant = await this.invoke<DbusVariant>({
+        bus,
+        path: portalPath,
+        interfaceName: propertiesInterface,
+        member: "Get",
+        signature: "ss",
+        body: [globalShortcutsInterface, "version"]
+      });
+      const parsed = parseVariant(versionVariant);
+      return typeof parsed?.value === "number" ? parsed.value : 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      diagnostics.push(`Unable to read XDG Desktop Portal global shortcuts version: ${message}.`);
+      return 1;
+    }
+  }
+
+  private invoke<T>(options: {
+    bus: PortalMessageBus;
+    path: string;
+    interfaceName: string;
+    member: string;
+    signature?: string;
+    body?: unknown[];
+  }): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`Timed out calling ${options.interfaceName}.${options.member}.`));
+      }, portalTimeoutMs);
+      timer.unref();
+
+      options.bus.invoke(
+        {
+          destination: options.interfaceName === dbusInterface ? dbusDestination : portalDestination,
+          path: options.path,
+          interface: options.interfaceName,
+          member: options.member,
+          signature: options.signature,
+          body: options.body
+        },
+        (error, value) => {
+          clearTimeout(timer);
+          if (error) {
+            reject(new Error(`${error.name}: ${String(error.message)}`));
+            return;
+          }
+          resolve(value as T);
+        }
+      );
+    });
+  }
+
+  private async addMatch(rule: string): Promise<void> {
+    if (this.matchRules.has(rule)) return;
+    const bus = this.getBus();
+    await this.invoke({
+      bus,
+      path: dbusPath,
+      interfaceName: dbusInterface,
+      member: "AddMatch",
+      signature: "s",
+      body: [rule]
+    });
+    this.matchRules.add(rule);
+  }
+
+  private async removeMatch(rule: string): Promise<void> {
+    if (!this.matchRules.has(rule) || !this.bus) return;
+    this.matchRules.delete(rule);
+    await this.invoke({
+      bus: this.bus,
+      path: dbusPath,
+      interfaceName: dbusInterface,
+      member: "RemoveMatch",
+      signature: "s",
+      body: [rule]
+    }).catch(() => undefined);
+  }
+
+  private async removeAllMatches(): Promise<void> {
+    const rules = [...this.matchRules];
+    await Promise.all(rules.map((rule) => this.removeMatch(rule)));
+  }
+
+  private waitForRequestResponse(handle: string): Promise<PortalRequestResponse> {
+    const completed = this.completedResponses.get(handle);
+    if (completed) {
+      this.completedResponses.delete(handle);
+      return Promise.resolve(completed);
+    }
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingResponses.delete(handle);
+        reject(new Error(`Timed out waiting for XDG Desktop Portal request response: ${handle}.`));
+      }, portalTimeoutMs);
+      timer.unref();
+      this.pendingResponses.set(handle, { reject, resolve, timer });
+    });
+  }
+
+  private async closeRequest(handle: string): Promise<void> {
+    if (!this.bus) return;
+    await this.invoke({
+      bus: this.bus,
+      path: handle,
+      interfaceName: requestInterface,
+      member: "Close"
+    }).catch(() => undefined);
+  }
+
+  private readonly handleMessage = (message: DbusMessage): void => {
+    if (message.interface === requestInterface && message.member === "Response" && message.path) {
+      const [response, results] = message.body ?? [];
+      const parsed = {
+        response: typeof response === "number" ? response : 2,
+        results: Array.isArray(results) ? (results as DbusVardict) : []
+      };
+      const pending = this.pendingResponses.get(message.path);
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pendingResponses.delete(message.path);
+        pending.resolve(parsed);
+      } else {
+        this.completedResponses.set(message.path, parsed);
+      }
+      return;
+    }
+
+    if (message.interface !== globalShortcutsInterface || !this.activeRegistration) return;
+    if (message.member !== "Activated" && message.member !== "Deactivated") return;
+
+    const [sessionHandle, id] = message.body ?? [];
+    if (sessionHandle !== this.activeRegistration.sessionHandle || id !== shortcutId) return;
+
+    if (message.member === "Activated") {
+      this.activeRegistration.onActivated();
+    } else {
+      this.activeRegistration.onDeactivated();
+    }
+  };
+
+  private readonly handleBusError = (error: Error): void => {
+    this.lastBusError = error.message;
+    for (const [handle, pending] of this.pendingResponses) {
+      clearTimeout(pending.timer);
+      this.pendingResponses.delete(handle);
+      pending.reject(error);
+    }
+  };
+}
+
+export function shortcutDescriptionForActivationMode(mode: ActivationMode): string {
+  return mode === "push_to_talk" ? "Push to talk with Murmur" : "Toggle Murmur recording";
+}
+
+export function acceleratorToPortalTrigger(accelerator: string): string | null {
+  const tokens = accelerator
+    .split("+")
+    .map((token) => token.trim())
+    .filter(Boolean);
+  const modifiers: string[] = [];
+  const seenModifiers = new Set<string>();
+  const keys: string[] = [];
+
+  for (const token of tokens) {
+    const modifier = portalModifier(token);
+    if (modifier === "unsupported") return null;
+    if (modifier) {
+      if (!seenModifiers.has(modifier)) {
+        seenModifiers.add(modifier);
+        modifiers.push(modifier);
+      }
+      continue;
+    }
+
+    const key = portalKey(token);
+    if (!key) return null;
+    keys.push(key);
+  }
+
+  if (keys.length !== 1) return null;
+  return [...modifiers, keys[0]].join("+");
+}
+
+export function shortcutPropertiesForPortalVersion(description: string, preferredTrigger: string, version: number): DbusVardict {
+  const properties: Record<string, string> = { description };
+  if (version >= 2) {
+    properties.preferred_trigger = preferredTrigger;
+  }
+  return makeVardict(properties);
+}
+
+function portalModifier(token: string): string | null | "unsupported" {
+  switch (normalizeToken(token)) {
+    case "commandorcontrol":
+    case "cmdorctrl":
+    case "control":
+    case "ctrl":
+      return "CTRL";
+    case "alt":
+    case "option":
+      return "ALT";
+    case "shift":
+      return "SHIFT";
+    case "super":
+    case "meta":
+    case "command":
+    case "cmd":
+      return "LOGO";
+    case "altgr":
+      return "unsupported";
+    default:
+      return null;
+  }
+}
+
+function portalKey(token: string): string | null {
+  const normalized = normalizeToken(token);
+
+  if (/^[a-z]$/.test(normalized)) return normalized;
+  if (/^[0-9]$/.test(normalized)) return normalized;
+  if (/^f([1-9]|1[0-9]|2[0-4])$/.test(normalized)) return normalized.toUpperCase();
+
+  return keyMap[normalized] ?? null;
+}
+
+const keyMap: Record<string, string> = {
+  "`": "grave",
+  "-": "minus",
+  "=": "equal",
+  "[": "bracketleft",
+  "]": "bracketright",
+  "\\": "backslash",
+  ";": "semicolon",
+  "'": "apostrophe",
+  ",": "comma",
+  ".": "period",
+  "/": "slash",
+  "+": "plus",
+  arrowdown: "Down",
+  arrowleft: "Left",
+  arrowright: "Right",
+  arrowup: "Up",
+  backquote: "grave",
+  backslash: "backslash",
+  backspace: "BackSpace",
+  bracketleft: "bracketleft",
+  bracketright: "bracketright",
+  comma: "comma",
+  delete: "Delete",
+  down: "Down",
+  end: "End",
+  enter: "Return",
+  equal: "equal",
+  escape: "Escape",
+  esc: "Escape",
+  grave: "grave",
+  home: "Home",
+  insert: "Insert",
+  left: "Left",
+  minus: "minus",
+  pagedown: "Page_Down",
+  pageup: "Page_Up",
+  period: "period",
+  plus: "plus",
+  quote: "apostrophe",
+  return: "Return",
+  right: "Right",
+  semicolon: "semicolon",
+  slash: "slash",
+  space: "space",
+  tab: "Tab",
+  up: "Up"
+};
+
+function normalizeToken(token: string): string {
+  return token.replace(/\s+/g, "").toLowerCase();
+}
+
+function makeVardict(values: Record<string, string>): DbusVardict {
+  return Object.entries(values).map(([key, value]) => [key, ["s", value]]);
+}
+
+function vardictString(value: unknown, key: string): string | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const entry = (value as Array<[unknown, unknown]>).find(([candidate]) => candidate === key);
+  if (!entry) return undefined;
+  const variant = parseVariant(entry[1]);
+  return typeof variant?.value === "string" ? variant.value : undefined;
+}
+
+function findBoundShortcut(results: DbusVardict, id: string): { triggerDescription?: string } | null {
+  const shortcutsVariant = parseVariant(results.find(([key]) => key === "shortcuts")?.[1]);
+  if (!Array.isArray(shortcutsVariant?.value)) return null;
+
+  for (const shortcut of shortcutsVariant.value) {
+    if (!Array.isArray(shortcut) || shortcut.length < 2 || shortcut[0] !== id) continue;
+    const properties = shortcut[1] as DbusVardict;
+    return {
+      triggerDescription: vardictString(properties, "trigger_description")
+    };
+  }
+
+  return null;
+}
+
+function parseVariant(value: unknown): { signature: string; value: unknown } | null {
+  if (!Array.isArray(value) || value.length !== 2) return null;
+  const [signature, variantValue] = value;
+
+  if (typeof signature === "string") {
+    return { signature, value: variantValue };
+  }
+
+  if (Array.isArray(signature)) {
+    const rawValues = Array.isArray(variantValue) ? variantValue : [variantValue];
+    return {
+      signature: signature.map(signatureNodeToString).join(""),
+      value: rawValues.length === 1 ? rawValues[0] : rawValues
+    };
+  }
+
+  return null;
+}
+
+function signatureNodeToString(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  const typedNode = node as { type?: string; child?: unknown[] };
+  if (!typedNode.type) return "";
+  if (typedNode.type === "(") return `(${(typedNode.child ?? []).map(signatureNodeToString).join("")})`;
+  if (typedNode.type === "{") return `{${(typedNode.child ?? []).map(signatureNodeToString).join("")}}`;
+  if (typedNode.type === "a") return `a${(typedNode.child ?? []).map(signatureNodeToString).join("")}`;
+  return typedNode.type;
+}
+
+function requestPathForToken(uniqueName: string, token: string): string {
+  const sender = uniqueName.replace(/^:/, "").replace(/\./g, "_");
+  return `/org/freedesktop/portal/desktop/request/${sender}/${token}`;
+}
+
+function requestResponseMatch(handle: string): string {
+  return `type='signal',path='${handle}',interface='${requestInterface}',member='Response'`;
+}
+
+function makeToken(prefix: string): string {
+  return `murmur_${prefix}_${randomBytes(8).toString("hex")}`;
+}
+
+function responseDescription(response: number): string {
+  if (response === 1) return "the user cancelled the request";
+  if (response === 2) return "the request ended without being completed";
+  return `portal response ${response}`;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

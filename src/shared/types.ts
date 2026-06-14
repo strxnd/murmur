@@ -3,6 +3,7 @@ export type ModePresetId = "voice_to_text" | "message" | "mail" | "note" | "cust
 
 export type SttStreamingMode = "none" | "completed_audio_sse" | "live_realtime";
 export type ActivationMode = "toggle" | "push_to_talk";
+export type RecordingPillPosition = "bottom_left" | "bottom_center" | "bottom_right";
 
 export type TranscriptionProviderType =
   | "whisper_cpp"
@@ -206,9 +207,9 @@ export interface AppSettings {
   activeModeId: string;
   activationMode: ActivationMode;
   activationHotkey: string;
+  recordingPillPosition: RecordingPillPosition;
   preferredAudioInputId?: string;
   typingBaselineWpm: number;
-  autoIncreaseMicVolume: boolean;
 }
 
 export interface DictationHistoryItem {
@@ -282,13 +283,14 @@ export interface AppStateSnapshot {
 export interface CapabilityReport {
   sttRuntimes: Record<SttRuntimeId, SttRuntimeAvailability>;
   hotkeys: {
-    backend: "electron_global_shortcut";
+    backend: "xdg_desktop_portal" | "gnome_custom_shortcut" | "kde_kglobalaccel" | "hyprland_bind" | "electron_global_shortcut";
     pushToTalkRelease: boolean;
     registered: boolean;
+    triggerDescription?: string;
     diagnostics: string[];
   };
   context: {
-    backend: "hyprctl_clipboard_fallback";
+    backend: "clipboard_fallback";
     appMetadata: boolean;
     focusedText: boolean;
     selectedText: boolean;
@@ -302,12 +304,6 @@ export interface CapabilityReport {
   };
   storage: {
     backend: "sqlite" | "json";
-    diagnostics: string[];
-  };
-  sound: {
-    backend: "wpctl_pactl";
-    wpctlAvailable: boolean;
-    pactlAvailable: boolean;
     diagnostics: string[];
   };
 }

@@ -25,6 +25,7 @@ import type {
   ModePresetId,
   ReleaseNote,
   ReplacementRule,
+  RecordingPillPosition,
   TranscriptionProviderConfig,
   VocabularyEntry
 } from "../../shared/types";
@@ -52,10 +53,12 @@ interface LegacySettings extends Partial<AppSettings> {
   cancelHotkey?: string;
 }
 
+const removedSoundVolumeSettingKey = ["auto", "Increase", "Mic", "Volume"].join("");
 const require = createRequire(import.meta.url);
 const oldBuiltInModeIds = new Set(["voice_to_text", "message", "email", "meeting", "super", "custom"]);
 const modePresetIds = new Set<ModePresetId>(["voice_to_text", "message", "mail", "note", "custom"]);
 const activationModes = new Set<ActivationMode>(["toggle", "push_to_talk"]);
+const recordingPillPositions = new Set<RecordingPillPosition>(["bottom_left", "bottom_center", "bottom_right"]);
 const customModeDefaults: ModeConfig = {
   id: "custom",
   kind: "custom",
@@ -425,14 +428,24 @@ export class StorageService {
   }
 
   private normalizeSettings(settings: LegacySettings | undefined, modes: ModeConfig[]): AppSettings {
-    const { toggleHotkey, pushToTalkHotkey: _pushToTalkHotkey, cancelHotkey: _cancelHotkey, ...currentSettings } = settings ?? {};
+    const legacySettings: LegacySettings & Record<string, unknown> = { ...(settings ?? {}) };
+    delete legacySettings[removedSoundVolumeSettingKey];
+    const {
+      toggleHotkey,
+      pushToTalkHotkey: _pushToTalkHotkey,
+      cancelHotkey: _cancelHotkey,
+      ...currentSettings
+    } = legacySettings;
     const normalized: AppSettings = {
       ...defaultSettings,
       ...currentSettings,
       activationMode: activationModes.has(currentSettings.activationMode as ActivationMode)
         ? (currentSettings.activationMode as ActivationMode)
         : defaultSettings.activationMode,
-      activationHotkey: currentSettings.activationHotkey ?? toggleHotkey ?? defaultSettings.activationHotkey
+      activationHotkey: currentSettings.activationHotkey ?? toggleHotkey ?? defaultSettings.activationHotkey,
+      recordingPillPosition: recordingPillPositions.has(currentSettings.recordingPillPosition as RecordingPillPosition)
+        ? (currentSettings.recordingPillPosition as RecordingPillPosition)
+        : defaultSettings.recordingPillPosition
     };
     const modeIds = new Set(modes.map((mode) => mode.id));
     if (oldBuiltInModeIds.has(normalized.activeModeId) || !modeIds.has(normalized.activeModeId)) {
@@ -441,7 +454,6 @@ export class StorageService {
     normalized.typingBaselineWpm = Number.isFinite(normalized.typingBaselineWpm)
       ? Math.max(1, normalized.typingBaselineWpm)
       : defaultSettings.typingBaselineWpm;
-    normalized.autoIncreaseMicVolume = Boolean(normalized.autoIncreaseMicVolume);
     return normalized;
   }
 

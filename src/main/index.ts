@@ -1,7 +1,11 @@
 import { app, BrowserWindow, globalShortcut, Menu } from "./electron-api";
 import { AppController } from "./app-controller";
 
-app.commandLine.appendSwitch("enable-features", "GlobalShortcutsPortal");
+if (process.platform === "linux") {
+  const linuxApp = app as typeof app & { setDesktopName?: (desktopName: string) => void };
+  linuxApp.setDesktopName?.("dev.murmur.app.desktop");
+}
+
 Menu.setApplicationMenu(null);
 
 let controller: AppController | null = null;

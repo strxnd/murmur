@@ -1,26 +1,17 @@
-import { URL } from "node:url";
 import type { AppSettings, ContextSnapshot } from "../../shared/types";
 import { commandExists, execFileText, sleep } from "./command";
 import { clipboard } from "../electron-api";
 
-interface HyprlandWindow {
-  class?: string;
-  title?: string;
-  initialClass?: string;
-}
-
 export class ContextService {
   private lastClipboardText = "";
   private lastClipboardAt = 0;
-  private hasHyprctl = false;
   private hasYdotool = false;
   private diagnostics: string[] = [];
 
   async initialize(): Promise<void> {
-    this.hasHyprctl = await commandExists("hyprctl");
     this.hasYdotool = await commandExists("ydotool");
     this.diagnostics = [
-      this.hasHyprctl ? "hyprctl available for active window metadata." : "hyprctl unavailable.",
+      "Active app metadata unavailable: no compositor-neutral provider is configured.",
       this.hasYdotool ? "ydotool available for selected text fallback." : "ydotool unavailable."
     ];
     this.startClipboardTracking();
@@ -37,7 +28,7 @@ export class ContextService {
     browserDomain: boolean;
   } {
     return {
-      appMetadata: this.hasHyprctl,
+      appMetadata: false,
       focusedText: false,
       selectedText: this.hasYdotool,
       browserDomain: false
@@ -45,27 +36,8 @@ export class ContextService {
   }
 
   async capture(settings: AppSettings): Promise<ContextSnapshot> {
-    const diagnostics: string[] = [];
-    let appName: string | undefined;
-    let appId: string | undefined;
-    let windowTitle: string | undefined;
+    const diagnostics: string[] = ["Active app metadata unavailable: no compositor-neutral provider is configured."];
     let selectedText: string | undefined;
-    let browserDomain: string | undefined;
-
-    if (this.hasHyprctl) {
-      try {
-        const raw = await execFileText("hyprctl", ["activewindow", "-j"]);
-        const activeWindow = JSON.parse(raw) as HyprlandWindow;
-        appName = activeWindow.class || activeWindow.initialClass;
-        appId = activeWindow.initialClass || activeWindow.class;
-        windowTitle = activeWindow.title;
-        browserDomain = inferDomainFromTitle(windowTitle);
-      } catch (error) {
-        diagnostics.push(`Unable to read active window: ${String(error)}`);
-      }
-    } else {
-      diagnostics.push("Active app metadata unavailable on this compositor.");
-    }
 
     if (settings.selectedTextCapture === "clipboard_restore" && this.hasYdotool) {
       selectedText = await this.captureSelectionViaClipboard(diagnostics);
@@ -78,14 +50,9 @@ export class ContextService {
         ? currentClipboard
         : undefined;
 
-    const quality =
-      appName || selectedText || clipboardText ? (selectedText ? "partial" : "fallback") : "unavailable";
+    const quality = selectedText || clipboardText ? (selectedText ? "partial" : "fallback") : "unavailable";
 
     return {
-      appName,
-      appId,
-      windowTitle,
-      browserDomain,
       selectedText,
       clipboardText,
       capturedAt: new Date().toISOString(),
@@ -123,16 +90,5 @@ export class ContextService {
       clipboard.writeText(original);
       return undefined;
     }
-  }
-}
-
-function inferDomainFromTitle(title: string | undefined): string | undefined {
-  if (!title) return undefined;
-  const urlMatch = title.match(/https?:\/\/[^\s]+/);
-  if (!urlMatch) return undefined;
-  try {
-    return new URL(urlMatch[0]).hostname;
-  } catch {
-    return undefined;
   }
 }
