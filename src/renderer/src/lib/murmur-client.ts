@@ -1,0 +1,76 @@
+import type {
+  AppSettings,
+  AppStateSnapshot,
+  AutoModeRule,
+  LlmProviderConfig,
+  ModelDownloadState,
+  ModelLibrarySnapshot,
+  ModeConfig,
+  ProviderValidationResult,
+  ReplacementRule,
+  TranscriptionProviderConfig,
+  VocabularyEntry
+} from "../../../shared/types";
+import {
+  appStateSnapshotSchema,
+  completeRecordingPayloadSchema,
+  copyResultSchema,
+  modelDownloadStateSchema,
+  modelLibrarySnapshotSchema,
+  pasteResultSchema,
+  providerValidationResultSchema
+} from "../../../shared/schemas";
+
+export const murmurClient = {
+  getState: (): Promise<AppStateSnapshot> => window.murmur.getState().then(parseState),
+  updateSettings: (patch: Partial<AppSettings>): Promise<AppStateSnapshot> => window.murmur.updateSettings(patch).then(parseState),
+  setModes: (modes: ModeConfig[]): Promise<AppStateSnapshot> => window.murmur.setModes(modes).then(parseState),
+  activateMode: (modeId: string): Promise<AppStateSnapshot> => window.murmur.activateMode(modeId).then(parseState),
+  setSttProviders: (providers: TranscriptionProviderConfig[]): Promise<AppStateSnapshot> => window.murmur.setSttProviders(providers).then(parseState),
+  setLlmProviders: (providers: LlmProviderConfig[]): Promise<AppStateSnapshot> => window.murmur.setLlmProviders(providers).then(parseState),
+  validateSttProvider: (provider: TranscriptionProviderConfig): Promise<ProviderValidationResult> =>
+    window.murmur.validateSttProvider(provider).then(parseProviderValidation),
+  validateLlmProvider: (provider: LlmProviderConfig): Promise<ProviderValidationResult> =>
+    window.murmur.validateLlmProvider(provider).then(parseProviderValidation),
+  setAutoModeRules: (rules: AutoModeRule[]): Promise<AppStateSnapshot> => window.murmur.setAutoModeRules(rules).then(parseState),
+  setReplacements: (replacements: ReplacementRule[]): Promise<AppStateSnapshot> => window.murmur.setReplacements(replacements).then(parseState),
+  setVocabulary: (vocabulary: VocabularyEntry[]): Promise<AppStateSnapshot> => window.murmur.setVocabulary(vocabulary).then(parseState),
+  getModelLibrary: (): Promise<ModelLibrarySnapshot> => window.murmur.getModelLibrary().then(parseModelLibrary),
+  downloadModel: (modelId: string): Promise<ModelLibrarySnapshot> => window.murmur.downloadModel(modelId).then(parseModelLibrary),
+  deleteDownloadedModel: (modelId: string): Promise<ModelLibrarySnapshot> =>
+    window.murmur.deleteDownloadedModel(modelId).then(parseModelLibrary),
+  toggleFavoriteModel: (modelId: string): Promise<ModelLibrarySnapshot> =>
+    window.murmur.toggleFavoriteModel(modelId).then(parseModelLibrary),
+  startDictation: (): Promise<AppStateSnapshot> => window.murmur.startDictation().then(parseState),
+  stopDictation: (): Promise<AppStateSnapshot> => window.murmur.stopDictation().then(parseState),
+  cancelDictation: (): Promise<AppStateSnapshot> => window.murmur.cancelDictation().then(parseState),
+  completeRecording: (payload: { sessionId: string; audio: ArrayBuffer; mimeType: string }): Promise<AppStateSnapshot> =>
+    window.murmur.completeRecording(completeRecordingPayloadSchema.parse(payload)).then(parseState),
+  copyHistoryOutput: (text: string): Promise<{ ok: boolean }> => window.murmur.copyHistoryOutput(text).then((value) => copyResultSchema.parse(value)),
+  repasteHistoryOutput: (text: string): Promise<{ pasted: boolean; message: string }> =>
+    window.murmur.repasteHistoryOutput(text).then((value) => pasteResultSchema.parse(value)),
+  deleteHistoryItem: (id: string): Promise<AppStateSnapshot> => window.murmur.deleteHistoryItem(id).then(parseState),
+  clearHistory: (): Promise<AppStateSnapshot> => window.murmur.clearHistory().then(parseState),
+  reprocessHistoryItem: (id: string): Promise<AppStateSnapshot> => window.murmur.reprocessHistoryItem(id).then(parseState),
+  clearLocalData: (): Promise<AppStateSnapshot> => window.murmur.clearLocalData().then(parseState),
+  onStateChanged: (callback: (state: AppStateSnapshot) => void): (() => void) =>
+    window.murmur.onStateChanged((state) => callback(parseState(state))),
+  onRecordingStart: (callback: (payload: { sessionId: string }) => void): (() => void) => window.murmur.onRecordingStart(callback),
+  onRecordingStop: (callback: (payload: { sessionId: string }) => void): (() => void) => window.murmur.onRecordingStop(callback),
+  onRecordingCancel: (callback: (payload: { sessionId: string }) => void): (() => void) => window.murmur.onRecordingCancel(callback),
+  onTranscriptDelta: (callback: (delta: string) => void): (() => void) => window.murmur.onTranscriptDelta(callback),
+  onModelDownloadProgress: (callback: (state: ModelDownloadState) => void): (() => void) =>
+    window.murmur.onModelDownloadProgress((state) => callback(modelDownloadStateSchema.parse(state) as ModelDownloadState))
+};
+
+function parseState(value: unknown): AppStateSnapshot {
+  return appStateSnapshotSchema.parse(value) as AppStateSnapshot;
+}
+
+function parseProviderValidation(value: unknown): ProviderValidationResult {
+  return providerValidationResultSchema.parse(value) as ProviderValidationResult;
+}
+
+function parseModelLibrary(value: unknown): ModelLibrarySnapshot {
+  return modelLibrarySnapshotSchema.parse(value) as ModelLibrarySnapshot;
+}

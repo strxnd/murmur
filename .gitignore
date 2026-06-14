@@ -1,0 +1,79 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Diagnostic reports
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Dependency directories
+node_modules/
+jspm_packages/
+web_modules/
+
+# Build output
+out/
+dist/
+release/
+build/Release/
+
+# TypeScript and tool caches
+*.tsbuildinfo
+.cache/
+.parcel-cache/
+.vite/
+.eslintcache
+.stylelintcache
+
+# Package artifacts
+*.tgz
+.npm/
+.yarn-integrity
+
+# dotenv environment variable files
+.env
+.env.*
+!.env.example
+
+# Yarn berry / pnpm local state
+.pnp.*
+.pnpm-store/
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# Vite timestamp files
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# Electron / Murmur local data
+*.sqlite
+*.sqlite-*
+murmur-state.json
+audio/
+
+# Local editor state
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
