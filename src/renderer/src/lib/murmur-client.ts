@@ -37,6 +37,7 @@ export const murmurClient = {
   setVocabulary: (vocabulary: VocabularyEntry[]): Promise<AppStateSnapshot> => window.murmur.setVocabulary(vocabulary).then(parseState),
   getModelLibrary: (): Promise<ModelLibrarySnapshot> => window.murmur.getModelLibrary().then(parseModelLibrary),
   downloadModel: (modelId: string): Promise<ModelLibrarySnapshot> => window.murmur.downloadModel(modelId).then(parseModelLibrary),
+  activateModel: (modelId: string): Promise<ModelLibrarySnapshot> => window.murmur.activateModel(modelId).then(parseModelLibrary),
   deleteDownloadedModel: (modelId: string): Promise<ModelLibrarySnapshot> =>
     window.murmur.deleteDownloadedModel(modelId).then(parseModelLibrary),
   toggleFavoriteModel: (modelId: string): Promise<ModelLibrarySnapshot> =>

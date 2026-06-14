@@ -36,6 +36,7 @@ interface MurmurStore {
   setReplacements: (rules: ReplacementRule[]) => Promise<void>;
   getModelLibrary: () => Promise<void>;
   downloadModel: (modelId: string) => Promise<void>;
+  activateModel: (modelId: string) => Promise<void>;
   deleteDownloadedModel: (modelId: string) => Promise<void>;
   toggleFavoriteModel: (modelId: string) => Promise<void>;
   startDictation: () => Promise<void>;
@@ -114,6 +115,7 @@ export const useMurmurStore = create<MurmurStore>()((set, get) => {
     setReplacements: (rules) => commit(() => murmurClient.setReplacements(rules)),
     getModelLibrary: () => commitLibrary(() => murmurClient.getModelLibrary()),
     downloadModel: (modelId) => commitLibrary(() => murmurClient.downloadModel(modelId)),
+    activateModel: (modelId) => commitLibrary(() => murmurClient.activateModel(modelId)),
     deleteDownloadedModel: (modelId) => commitLibrary(() => murmurClient.deleteDownloadedModel(modelId)),
     toggleFavoriteModel: (modelId) => commitLibrary(() => murmurClient.toggleFavoriteModel(modelId)),
     startDictation: () => commit(() => murmurClient.startDictation()),

@@ -17,6 +17,7 @@ import type {
   DictationHistoryItem,
   DictationModeKind,
   LlmProviderConfig,
+  ModelKind,
   ModelDownloadState,
   ModelLibrarySnapshot,
   ModeConfig,
@@ -156,7 +157,8 @@ export class StorageService {
     const downloads = state.modelLibrary.downloads.filter((candidate) => candidate.modelId !== download.modelId);
     state.modelLibrary = this.normalizeModelLibrary({
       catalog: modelCatalog,
-      downloads: [download, ...downloads]
+      downloads: [download, ...downloads],
+      activeModelIds: state.modelLibrary.activeModelIds
     });
     this.writeState(state);
     return state;
@@ -166,7 +168,21 @@ export class StorageService {
     const state = this.getState();
     state.modelLibrary = this.normalizeModelLibrary({
       catalog: modelCatalog,
-      downloads: state.modelLibrary.downloads.filter((download) => download.modelId !== modelId)
+      downloads: state.modelLibrary.downloads.filter((download) => download.modelId !== modelId),
+      activeModelIds: state.modelLibrary.activeModelIds
+    });
+    this.writeState(state);
+    return state;
+  }
+
+  setActiveModel(kind: ModelKind, modelId: string | undefined): PersistedState {
+    const state = this.getState();
+    state.modelLibrary = this.normalizeModelLibrary({
+      ...state.modelLibrary,
+      activeModelIds: {
+        ...state.modelLibrary.activeModelIds,
+        [kind]: modelId
+      }
     });
     this.writeState(state);
     return state;
@@ -395,6 +411,17 @@ export class StorageService {
 
   private normalizeModelLibrary(modelLibrary: ModelLibrarySnapshot | undefined): ModelLibrarySnapshot {
     const catalogIds = new Set(modelCatalog.map((item) => item.id));
+    const activeModelIds: ModelLibrarySnapshot["activeModelIds"] = {};
+    const activeVoiceModelId = modelLibrary?.activeModelIds?.voice;
+    const activeLanguageModelId = modelLibrary?.activeModelIds?.language;
+
+    if (activeVoiceModelId && catalogIds.has(activeVoiceModelId)) {
+      activeModelIds.voice = activeVoiceModelId;
+    }
+    if (activeLanguageModelId && catalogIds.has(activeLanguageModelId)) {
+      activeModelIds.language = activeLanguageModelId;
+    }
+
     return {
       catalog: modelCatalog,
       downloads: (modelLibrary?.downloads ?? [])
@@ -408,7 +435,8 @@ export class StorageService {
           error: download.error,
           downloadedAt: download.downloadedAt,
           favorite: Boolean(download.favorite)
-        }))
+        })),
+      activeModelIds
     };
   }
 }

@@ -166,7 +166,8 @@ export const defaultAutoModeRules: AutoModeRule[] = [];
 
 export const defaultModelLibrary: ModelLibrarySnapshot = {
   catalog: modelCatalog,
-  downloads: []
+  downloads: [],
+  activeModelIds: {}
 };
 
 export { defaultReleaseNotes };

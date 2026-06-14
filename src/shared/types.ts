@@ -112,6 +112,7 @@ export interface ModelDownloadState {
 export interface ModelLibrarySnapshot {
   catalog: ModelCatalogItem[];
   downloads: ModelDownloadState[];
+  activeModelIds: Partial<Record<ModelKind, string>>;
 }
 
 export interface TranscriptionProviderConfig {

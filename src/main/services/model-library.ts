@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, rmSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { canActivateModel } from "../../shared/model-activation";
 import { modelCatalog } from "../../shared/model-catalog";
-import type { ModelCatalogItem, ModelDownloadState, ModelLibrarySnapshot } from "../../shared/types";
+import type { ModelCatalogItem, ModelDownloadState, ModelKind, ModelLibrarySnapshot } from "../../shared/types";
 import { StorageService } from "./storage";
 
 const ollamaBaseUrl = "http://127.0.0.1:11434";
@@ -42,6 +43,18 @@ export class ModelLibraryService {
       this.activeDownloads.delete(modelId);
     }
 
+    if (this.isModelReady(item) && !this.hasUsableActiveModel(item.kind)) {
+      this.storage.setActiveModel(item.kind, item.id);
+    }
+
+    return this.snapshot();
+  }
+
+  async activateModel(modelId: string): Promise<ModelLibrarySnapshot> {
+    const item = this.findCatalogItem(modelId);
+    if (!item || !this.isModelReady(item)) return this.snapshot();
+
+    this.storage.setActiveModel(item.kind, item.id);
     return this.snapshot();
   }
 
@@ -78,6 +91,9 @@ export class ModelLibraryService {
     } else {
       this.storage.deleteModelDownload(modelId);
     }
+    if (item && this.storage.getState().modelLibrary.activeModelIds[item.kind] === modelId) {
+      this.storage.setActiveModel(item.kind, undefined);
+    }
     return this.snapshot();
   }
 
@@ -97,9 +113,11 @@ export class ModelLibraryService {
   }
 
   snapshot(): ModelLibrarySnapshot {
+    const state = this.storage.getState();
     return {
       catalog: modelCatalog,
-      downloads: this.storage.getState().modelLibrary.downloads
+      downloads: state.modelLibrary.downloads,
+      activeModelIds: state.modelLibrary.activeModelIds
     };
   }
 
@@ -413,6 +431,18 @@ export class ModelLibraryService {
 
   private getDownloadState(modelId: string): ModelDownloadState | undefined {
     return this.storage.getState().modelLibrary.downloads.find((download) => download.modelId === modelId);
+  }
+
+  private hasUsableActiveModel(kind: ModelKind): boolean {
+    const activeModelId = this.storage.getState().modelLibrary.activeModelIds[kind];
+    const item = activeModelId ? this.findCatalogItem(activeModelId) : undefined;
+    return Boolean(item && item.kind === kind && this.isModelReady(item));
+  }
+
+  private isModelReady(item: ModelCatalogItem): boolean {
+    if (!canActivateModel(item)) return false;
+    if (item.downloadStrategy === "none") return true;
+    return this.getDownloadState(item.id)?.status === "downloaded";
   }
 
   private persistAndEmit(state: ModelDownloadState): void {

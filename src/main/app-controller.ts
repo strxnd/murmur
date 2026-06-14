@@ -9,12 +9,15 @@ import type {
   DictationHistoryItem,
   DictationSession,
   LlmProviderConfig,
+  ModelCatalogItem,
+  ModelLibrarySnapshot,
   ModeConfig,
   ReplacementRule,
   TranscriptionProviderConfig,
   VocabularyEntry
 } from "../shared/types";
 import { defaultSession } from "../shared/defaults";
+import { llmProviderFromModel, transcriptionProviderFromModel } from "../shared/model-activation";
 import { buildProcessingPrompt, buildVocabularyPrompt } from "../shared/prompts";
 import { applyReplacements } from "../shared/replacements";
 import { resolveModeByContext } from "./services/auto-mode";
@@ -187,6 +190,11 @@ export class AppController {
       this.broadcastState();
       return snapshot;
     });
+    ipcMain.handle("models:activate", async (_event, modelId: string) => {
+      const snapshot = await this.modelLibrary.activateModel(modelId);
+      this.broadcastState();
+      return snapshot;
+    });
     ipcMain.handle("models:delete", async (_event, modelId: string) => {
       const snapshot = await this.modelLibrary.deleteDownloadedModel(modelId);
       this.broadcastState();
@@ -264,8 +272,8 @@ export class AppController {
     await this.sound.prepareForRecording(persisted.settings);
     const context = await this.context.capture(persisted.settings);
     const mode = resolveModeByContext(context, persisted.modes, persisted.autoModeRules, persisted.settings.activeModeId);
-    const sttProvider = this.selectTranscriptionProvider(persisted.transcriptionProviders);
-    const llmProvider = mode.aiEnabled ? this.selectLlmProvider(persisted.llmProviders) : undefined;
+    const sttProvider = this.selectTranscriptionProvider(persisted);
+    const llmProvider = mode.aiEnabled ? this.selectLlmProvider(persisted) : undefined;
 
     this.sessionContext = context;
     this.recordingStoppedAt = null;
@@ -315,7 +323,7 @@ export class AppController {
 
     const persisted = this.storage.getState();
     const mode = persisted.modes.find((candidate) => candidate.id === this.session.modeId) ?? persisted.modes[0];
-    const sttProvider = this.selectTranscriptionProvider(persisted.transcriptionProviders);
+    const sttProvider = this.selectTranscriptionProvider(persisted);
     if (!sttProvider) {
       return this.failSession("No enabled transcription provider is configured.");
     }
@@ -345,7 +353,7 @@ export class AppController {
 
       const beforeLlm = applyReplacements(transcription.text, persisted.replacements, "before");
       let processedText = beforeLlm;
-      let llmProvider = mode.aiEnabled ? this.selectLlmProvider(persisted.llmProviders) : undefined;
+      let llmProvider = mode.aiEnabled ? this.selectLlmProvider(persisted) : undefined;
       let llmModel: string | undefined;
 
       if (mode.aiEnabled && llmProvider) {
@@ -424,7 +432,7 @@ export class AppController {
     if (!item) return this.getSnapshot();
 
     const mode = state.modes.find((candidate) => candidate.id === state.settings.activeModeId) ?? state.modes[0];
-    const provider = this.selectLlmProvider(state.llmProviders);
+    const provider = this.selectLlmProvider(state);
     if (!mode.aiEnabled || !provider) return this.getSnapshot();
 
     const context: ContextSnapshot = {
@@ -468,12 +476,27 @@ export class AppController {
     return audioPath;
   }
 
-  private selectTranscriptionProvider(providers: TranscriptionProviderConfig[]): TranscriptionProviderConfig | undefined {
-    return providers.find((provider) => provider.enabled);
+  private selectTranscriptionProvider(state: {
+    transcriptionProviders: TranscriptionProviderConfig[];
+    modelLibrary: ModelLibrarySnapshot;
+  }): TranscriptionProviderConfig | undefined {
+    const activeModel = this.selectActiveModel(state.modelLibrary, "voice");
+    const activeProvider = activeModel ? transcriptionProviderFromModel(activeModel, state.transcriptionProviders) : null;
+    return activeProvider ?? state.transcriptionProviders.find((provider) => provider.enabled);
   }
 
-  private selectLlmProvider(providers: LlmProviderConfig[]): LlmProviderConfig | undefined {
-    return providers.find((provider) => provider.enabled);
+  private selectLlmProvider(state: { llmProviders: LlmProviderConfig[]; modelLibrary: ModelLibrarySnapshot }): LlmProviderConfig | undefined {
+    const activeModel = this.selectActiveModel(state.modelLibrary, "language");
+    const activeProvider = activeModel ? llmProviderFromModel(activeModel, state.llmProviders) : null;
+    return activeProvider ?? state.llmProviders.find((provider) => provider.enabled);
+  }
+
+  private selectActiveModel(modelLibrary: ModelLibrarySnapshot, kind: ModelCatalogItem["kind"]): ModelCatalogItem | undefined {
+    const modelId = modelLibrary.activeModelIds[kind];
+    const item = modelId ? modelLibrary.catalog.find((candidate) => candidate.id === modelId && candidate.kind === kind) : undefined;
+    if (!item) return undefined;
+    if (item.downloadStrategy === "none") return item;
+    return modelLibrary.downloads.some((download) => download.modelId === item.id && download.status === "downloaded") ? item : undefined;
   }
 
   private showPill(): void {

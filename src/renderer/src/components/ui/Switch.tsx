@@ -25,7 +25,7 @@ export const Switch = forwardRef<ElementRef<typeof BaseSwitch.Root>, SwitchProps
         )}
         {...props}
       >
-        <BaseSwitch.Thumb className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-muted-foreground transition-transform data-[checked]:translate-x-4 data-[checked]:bg-background" />
+        <BaseSwitch.Thumb className="absolute left-px top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-muted-foreground transition-transform data-[checked]:translate-x-4 data-[checked]:bg-background" />
       </BaseSwitch.Root>
     </label>
   )

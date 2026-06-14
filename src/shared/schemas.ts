@@ -107,7 +107,13 @@ export const modelDownloadStateSchema = z.object({
 
 export const modelLibrarySnapshotSchema = z.object({
   catalog: z.array(modelCatalogItemSchema),
-  downloads: z.array(modelDownloadStateSchema)
+  downloads: z.array(modelDownloadStateSchema),
+  activeModelIds: z
+    .object({
+      voice: optionalStringSchema,
+      language: optionalStringSchema
+    })
+    .catch({})
 });
 
 export const transcriptionProviderConfigSchema = z

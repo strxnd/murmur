@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { AppStateSnapshot } from "../../../shared/types";
 import { appSettingsSchema, replacementRuleSchema } from "../../../shared/schemas";
 import { Metric } from "../components/Metric";
+import { ProviderConfigurationPanels } from "../components/ProviderConfigurationPanels";
 import { View } from "../components/View";
 import { Button } from "../components/ui/Button";
 import { Checkbox } from "../components/ui/Checkbox";
@@ -142,6 +143,7 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
 
       <section id="advanced-settings" className="flex flex-col gap-4">
         <h2 className="m-0 text-sm font-semibold text-foreground">Advanced Settings</h2>
+        <ProviderConfigurationPanels state={state} />
         <Panel
           title="Text replacements"
           actions={

@@ -1,6 +1,7 @@
-import { Check, Download, Heart, Settings, Trash2 } from "lucide-react";
+import { Check, Download, Heart, Trash2 } from "lucide-react";
 import type { JSX } from "react";
 import type { ModelCatalogItem, ModelDownloadState } from "../../../shared/types";
+import { canActivateModel } from "../../../shared/model-activation";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { Badge } from "./ui/Badge";
 import { Button } from "./ui/Button";
@@ -14,8 +15,7 @@ interface ModelCardProps {
   onToggleFavorite: () => void;
   onDownload: () => void;
   onDelete: () => void;
-  onConfigureProvider: () => void;
-  onUseAsDefault: () => void;
+  onActivate: () => void;
 }
 
 export function ModelCard({
@@ -24,14 +24,13 @@ export function ModelCard({
   onToggleFavorite,
   onDownload,
   onDelete,
-  onConfigureProvider,
-  onUseAsDefault
+  onActivate
 }: ModelCardProps): JSX.Element {
   const status = download?.status ?? "not_downloaded";
   const progress = status === "downloading" ? progressLabel(download) : statusLabel(status);
   const canDownload = item.downloadStrategy !== "none" && status !== "downloading" && status !== "downloaded";
   const canDelete = item.downloadStrategy !== "none" && status === "downloaded";
-  const canUse = item.provider === "ollama" && status === "downloaded";
+  const canActivate = canActivateModel(item) && (item.downloadStrategy === "none" || status === "downloaded");
   const cardParent = useAutoAnimateRef<HTMLElement>();
 
   return (
@@ -62,11 +61,7 @@ export function ModelCard({
       )}
 
       <Toolbar className="mt-auto">
-        {item.downloadStrategy === "none" ? (
-          <Button onClick={onConfigureProvider}>
-            <Settings size={18} /> Configure provider
-          </Button>
-        ) : (
+        {item.downloadStrategy !== "none" && (
           <>
             <Button onClick={onDownload} disabled={!canDownload}>
               <Download size={18} /> {status === "error" ? "Retry" : "Download"}
@@ -76,12 +71,15 @@ export function ModelCard({
             </Button>
           </>
         )}
-        {canUse && (
-          <Button variant="primary" onClick={onUseAsDefault}>
-            <Check size={18} /> Use as default
+        {canActivate && (
+          <Button variant="primary" onClick={onActivate}>
+            <Check size={18} /> Activate
           </Button>
         )}
-        {status === "downloaded" && !canUse && (
+        {item.downloadStrategy === "none" && !canActivate && (
+          <span className="inline-flex min-h-9 items-center gap-2 text-sm text-muted-foreground">Advanced setup required</span>
+        )}
+        {status === "downloaded" && !canActivate && (
           <span className="inline-flex min-h-9 items-center gap-2 text-sm text-muted-foreground">
             <Check size={18} /> Downloaded
           </span>

@@ -34,6 +34,7 @@ const api = {
   setVocabulary: (vocabulary: VocabularyEntry[]): Promise<AppStateSnapshot> => ipcRenderer.invoke("vocabulary:set", vocabulary),
   getModelLibrary: (): Promise<ModelLibrarySnapshot> => ipcRenderer.invoke("models:get-library"),
   downloadModel: (modelId: string): Promise<ModelLibrarySnapshot> => ipcRenderer.invoke("models:download", modelId),
+  activateModel: (modelId: string): Promise<ModelLibrarySnapshot> => ipcRenderer.invoke("models:activate", modelId),
   deleteDownloadedModel: (modelId: string): Promise<ModelLibrarySnapshot> => ipcRenderer.invoke("models:delete", modelId),
   toggleFavoriteModel: (modelId: string): Promise<ModelLibrarySnapshot> => ipcRenderer.invoke("models:toggle-favorite", modelId),
   startDictation: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("dictation:start"),

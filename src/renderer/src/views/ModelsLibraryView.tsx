@@ -1,15 +1,13 @@
 import { Popover } from "@base-ui/react/popover";
-import { BrainCircuit, Check, ChevronRight, Download, HardDrive, Heart, Mic, Search, Settings, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type JSX } from "react";
+import { BrainCircuit, Check, ChevronRight, Download, HardDrive, Heart, Mic, Search, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useState, type JSX } from "react";
 import type {
   AppStateSnapshot,
-  LlmProviderConfig,
   ModelCatalogItem,
   ModelDownloadState,
-  ModelProvider,
-  TranscriptionProviderConfig
+  ModelProvider
 } from "../../../shared/types";
-import { ProviderConfigurationPanels } from "../components/ProviderConfigurationPanels";
+import { canActivateModel, providerLabel } from "../../../shared/model-activation";
 import { View } from "../components/View";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -49,15 +47,13 @@ const filters: Array<{ id: ModelFilter; label: string }> = [
 export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.Element {
   const getModelLibrary = useMurmurStore((store) => store.getModelLibrary);
   const downloadModel = useMurmurStore((store) => store.downloadModel);
+  const activateModel = useMurmurStore((store) => store.activateModel);
   const deleteDownloadedModel = useMurmurStore((store) => store.deleteDownloadedModel);
   const toggleFavoriteModel = useMurmurStore((store) => store.toggleFavoriteModel);
-  const setSttProviders = useMurmurStore((store) => store.setSttProviders);
-  const setLlmProviders = useMurmurStore((store) => store.setLlmProviders);
   const [query, setQuery] = useState("");
   const [provider, setProvider] = useState<"all" | ModelProvider>("all");
   const [filter, setFilter] = useState<ModelFilter>("all");
   const [openModelId, setOpenModelId] = useState<string | null>(null);
-  const providerConfigurationRef = useRef<HTMLDivElement | null>(null);
   const modelListParent = useAutoAnimateRef<HTMLDivElement>();
   const downloadsById = useMemo(
     () => new Map(state.modelLibrary.downloads.map((download) => [download.modelId, download])),
@@ -88,25 +84,6 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
   useEffect(() => {
     setOpenModelId((current) => (current && models.some((model) => model.id === current) ? current : null));
   }, [models]);
-
-  const scrollToProviderConfiguration = (): void => {
-    providerConfigurationRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-
-  const useAsDefaultModel = async (item: ModelCatalogItem): Promise<void> => {
-    if (item.kind === "voice") {
-      const result = upsertTranscriptionProvider(state.transcriptionProviders, item);
-      if (!result) return;
-
-      await setSttProviders(result.providers);
-      return;
-    }
-
-    const result = upsertLlmProvider(state.llmProviders, item);
-    if (!result) return;
-
-    await setLlmProviders(result.providers);
-  };
 
   return (
     <View title="Models">
@@ -144,7 +121,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
           <div ref={modelListParent} className="flex flex-col gap-2">
             {models.map((item) => {
               const download = downloadsById.get(item.id);
-              const active = isDefaultModel(state, item);
+              const active = isActiveModel(state, item, download);
               return (
                 <Popover.Root
                   key={item.id}
@@ -163,7 +140,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
                       <span className="truncate text-sm font-medium text-foreground">{item.name}</span>
                       {active && (
                         <Badge tone="success" className="shrink-0">
-                          Default
+                          Active
                         </Badge>
                       )}
                       {download?.favorite && <Heart size={14} fill="currentColor" className="shrink-0 text-muted-foreground" />}
@@ -192,11 +169,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
                           onToggleFavorite={() => void toggleFavoriteModel(item.id)}
                           onDownload={() => void downloadModel(item.id)}
                           onDelete={() => void deleteDownloadedModel(item.id)}
-                          onConfigureProvider={() => {
-                            setOpenModelId(null);
-                            scrollToProviderConfiguration();
-                          }}
-                          onUseAsDefault={() => void useAsDefaultModel(item)}
+                          onActivate={() => void activateModel(item.id)}
                           onClose={() => setOpenModelId(null)}
                         />
                       </Popover.Popup>
@@ -209,9 +182,6 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
         </section>
       )}
 
-      <div ref={providerConfigurationRef}>
-        <ProviderConfigurationPanels state={state} />
-      </div>
     </View>
   );
 }
@@ -223,8 +193,7 @@ function ModelPopover({
   onToggleFavorite,
   onDownload,
   onDelete,
-  onConfigureProvider,
-  onUseAsDefault,
+  onActivate,
   onClose
 }: {
   item: ModelCatalogItem;
@@ -233,8 +202,7 @@ function ModelPopover({
   onToggleFavorite: () => void;
   onDownload: () => void;
   onDelete: () => void;
-  onConfigureProvider: () => void;
-  onUseAsDefault: () => void;
+  onActivate: () => void;
   onClose: () => void;
 }): JSX.Element {
   const status = download?.status ?? "not_downloaded";
@@ -246,7 +214,7 @@ function ModelPopover({
         : statusLabel(status);
   const canDownload = item.downloadStrategy !== "none" && status !== "downloading" && status !== "downloaded";
   const canDelete = item.downloadStrategy !== "none" && status === "downloaded";
-  const canUseAsDefault = hasDefaultProviderConfig(item) && (item.downloadStrategy === "none" || status === "downloaded");
+  const canActivate = canActivateModel(item) && (item.downloadStrategy === "none" || status === "downloaded");
   const popoverParent = useAutoAnimateRef<HTMLDivElement>();
 
   return (
@@ -295,11 +263,7 @@ function ModelPopover({
       {status === "downloading" && <ProgressBar value={progressValue(download)} label={`Downloading ${item.name}`} />}
 
       <Toolbar>
-        {item.downloadStrategy === "none" ? (
-          <Button onClick={onConfigureProvider}>
-            <Settings size={18} /> Configure provider
-          </Button>
-        ) : (
+        {item.downloadStrategy !== "none" && (
           <>
             <Button onClick={onDownload} disabled={!canDownload}>
               <Download size={18} /> {status === "error" ? "Retry" : "Download"}
@@ -309,12 +273,15 @@ function ModelPopover({
             </Button>
           </>
         )}
-        {canUseAsDefault && (
-          <Button variant={active ? "secondary" : "primary"} onClick={onUseAsDefault} disabled={active}>
-            <Check size={18} /> {active ? "Default" : "Use as default"}
+        {canActivate && (
+          <Button variant={active ? "secondary" : "primary"} onClick={onActivate} disabled={active}>
+            <Check size={18} /> {active ? "Active" : "Activate"}
           </Button>
         )}
-        {status === "downloaded" && !canUseAsDefault && (
+        {item.downloadStrategy === "none" && !canActivate && (
+          <span className="inline-flex min-h-9 items-center gap-2 text-sm text-muted-foreground">Advanced setup required</span>
+        )}
+        {status === "downloaded" && !canActivate && (
           <span className="inline-flex min-h-9 items-center gap-2 text-sm text-muted-foreground">
             <Check size={18} /> Downloaded
           </span>
@@ -367,7 +334,7 @@ function ModelGlyph({ item, active = false }: { item: ModelCatalogItem; active?:
 
 function StatusBadge({ item, download }: { item: ModelCatalogItem; download?: ModelDownloadState }): JSX.Element {
   if (item.downloadStrategy === "none") {
-    return <Badge tone={item.isCloud ? "cloud" : "local"}>{item.isCloud ? "Provider config" : "Local runtime"}</Badge>;
+    return <Badge tone={item.isCloud ? "cloud" : "local"}>{item.isCloud ? "Cloud setup" : "Local runtime"}</Badge>;
   }
 
   const status = download?.status ?? "not_downloaded";
@@ -386,135 +353,41 @@ function kindLabel(kind: ModelCatalogItem["kind"]): string {
   return kind === "voice" ? "Voice" : "Language";
 }
 
-function hasDefaultProviderConfig(item: ModelCatalogItem): boolean {
-  const config = item.defaultProviderConfig;
-  return item.kind === "voice" ? Boolean(config?.sttProviderType) : Boolean(config?.llmProviderType);
-}
-
-function upsertTranscriptionProvider(
-  providers: TranscriptionProviderConfig[],
-  item: ModelCatalogItem
-): { providerId: string; providers: TranscriptionProviderConfig[] } | null {
-  const config = item.defaultProviderConfig;
-  if (!config?.sttProviderType) return null;
-
-  const providerId = sttProviderId(item);
-  const existing = providers.find((provider) => provider.id === providerId);
-  const nextProvider: TranscriptionProviderConfig = {
-    id: existing?.id ?? providerId,
-    type: config.sttProviderType,
-    name: existing?.name || sttProviderName(item),
-    baseUrl: config.baseUrl ?? existing?.baseUrl ?? "",
-    endpointPath: config.endpointPath ?? existing?.endpointPath,
-    apiKeySecretId: existing?.apiKeySecretId,
-    apiKey: existing?.apiKey,
-    isCloud: item.isCloud,
-    isLocal: !item.isCloud,
-    defaultModel: config.model ?? existing?.defaultModel,
-    defaultLanguage: existing?.defaultLanguage ?? "auto",
-    streamingMode: existing?.streamingMode ?? "none",
-    enabled: true
-  };
-
-  return {
-    providerId: nextProvider.id,
-    providers: [nextProvider, ...providers.filter((provider) => provider.id !== nextProvider.id)]
-  };
-}
-
-function upsertLlmProvider(
-  providers: LlmProviderConfig[],
-  item: ModelCatalogItem
-): { providerId: string; providers: LlmProviderConfig[] } | null {
-  const config = item.defaultProviderConfig;
-  if (!config?.llmProviderType) return null;
-
-  const providerId = llmProviderId(item);
-  const existing = providers.find((provider) => provider.id === providerId);
-  const nextProvider: LlmProviderConfig = {
-    id: existing?.id ?? providerId,
-    type: config.llmProviderType,
-    name: existing?.name || llmProviderName(item),
-    baseUrl: config.baseUrl ?? existing?.baseUrl,
-    apiKeySecretId: existing?.apiKeySecretId,
-    apiKey: existing?.apiKey,
-    isCloud: item.isCloud,
-    defaultModel: modelName(item) ?? existing?.defaultModel,
-    enabled: true
-  };
-
-  return {
-    providerId: nextProvider.id,
-    providers: [nextProvider, ...providers.filter((provider) => provider.id !== nextProvider.id)]
-  };
-}
-
-function isDefaultModel(state: AppStateSnapshot, item: ModelCatalogItem): boolean {
-  if (item.kind === "voice") {
-    const provider = state.transcriptionProviders.find((candidate) => candidate.enabled);
-    return Boolean(provider && provider.id === sttProviderId(item) && providerMatchesModel(provider.defaultModel, item));
-  }
-
-  const provider = state.llmProviders.find((candidate) => candidate.enabled);
-  return Boolean(provider && provider.id === llmProviderId(item) && providerMatchesModel(provider.defaultModel, item));
-}
-
-function providerMatchesModel(providerModel: string | undefined, item: ModelCatalogItem): boolean {
-  const expectedModel = modelName(item);
-  return expectedModel ? providerModel === expectedModel : true;
-}
-
-function modelName(item: ModelCatalogItem): string | undefined {
-  return item.defaultProviderConfig?.model ?? item.ollamaModel ?? item.filename;
-}
-
-function sttProviderId(item: ModelCatalogItem): string {
-  const type = item.defaultProviderConfig?.sttProviderType;
-  if (type === "whisper_cpp") return "local-whisper-cpp";
-  if (item.provider === "nvidia") return "local-nvidia-parakeet-stt";
-  if (type === "local_openai_compatible_stt") return "local-openai-stt";
-  return `${item.id}-stt`;
-}
-
-function sttProviderName(item: ModelCatalogItem): string {
-  if (item.defaultProviderConfig?.sttProviderType === "whisper_cpp") return "Local whisper.cpp";
-  if (item.provider === "nvidia") return "Local NVIDIA Parakeet STT";
-  return `${providerLabel(item.provider)} transcription`;
-}
-
-function llmProviderId(item: ModelCatalogItem): string {
-  const type = item.defaultProviderConfig?.llmProviderType;
-  if (type === "ollama") return "ollama";
-  if (type === "lmstudio") return "lmstudio";
-  if (type === "openai") return "openai-llm";
-  if (type === "anthropic") return "anthropic";
-  if (type === "google") return "google";
-  if (type === "openrouter") return "openrouter";
-  if (type === "llama_cpp_openai") return "llama-cpp-openai";
-  return `${item.id}-llm`;
-}
-
-function llmProviderName(item: ModelCatalogItem): string {
-  if (item.defaultProviderConfig?.llmProviderType === "ollama") return "Ollama";
-  return `${providerLabel(item.provider)} language`;
+function isActiveModel(state: AppStateSnapshot, item: ModelCatalogItem, download?: ModelDownloadState): boolean {
+  if (state.modelLibrary.activeModelIds[item.kind] !== item.id) return false;
+  return item.downloadStrategy === "none" || download?.status === "downloaded";
 }
 
 type ProviderIcon = ({ className }: { className?: string }) => JSX.Element;
 
+const openAiLogoPath = [
+  "M22.282 9.821a6 6 0 0 0-.516-4.91 6.05 6.05 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a6 6 0 0 0-3.998 2.9 6.05 6.05 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.05 6.05 0 0 0 6.515 2.9A6 6 0 0 0 13.26 24a6.06 6.06 0 0 0 5.772-4.206 6 6 0 0 0 3.997-2.9 6.06 6.06 0 0 0-.747-7.073",
+  "M13.26 22.43a4.48 4.48 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.8.8 0 0 0 .392-.681v-6.737l2.02 1.168a.07.07 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494",
+  "M3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.77.77 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646",
+  "M2.34 7.896a4.5 4.5 0 0 1 2.366-1.973V11.6a.77.77 0 0 0 .388.677l5.815 3.354-2.02 1.168a.08.08 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872z",
+  "m16.597 3.855-5.833-3.387L15.119 7.2a.08.08 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667",
+  "m2.01-3.023-.141-.085-4.774-2.782a.78.78 0 0 0-.785 0L9.409 9.23V6.897a.07.07 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66z",
+  "m-12.64 4.135-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08L8.704 5.46a.8.8 0 0 0-.393.681z",
+  "m1.097-2.365 2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5Z"
+].join(" ");
+
+const nvidiaLogoPath = [
+  "M8.948 8.798v-1.43a6.7 6.7 0 0 1 .424-.018c3.922-.124 6.493 3.374 6.493 3.374s-2.774 3.851-5.75 3.851c-.398 0-.787-.062-1.158-.185v-4.346c1.528.185 1.837.857 2.747 2.385l2.04-1.714s-1.492-1.952-4-1.952a6.016 6.016 0 0 0-.796.035",
+  "m0-4.735v2.138l.424-.027c5.45-.185 9.01 4.47 9.01 4.47s-4.08 4.964-8.33 4.964c-.37 0-.733-.035-1.095-.097v1.325c.3.035.61.062.91.062 3.957 0 6.82-2.023 9.593-4.408.459.371 2.34 1.263 2.73 1.652-2.633 2.208-8.772 3.984-12.253 3.984-.335 0-.653-.018-.971-.053v1.864H24V4.063z",
+  "m0 10.326v1.131c-3.657-.654-4.673-4.46-4.673-4.46s1.758-1.944 4.673-2.262v1.237H8.94c-1.528-.186-2.73 1.245-2.73 1.245s.68 2.412 2.739 3.11",
+  "M2.456 10.9s2.164-3.197 6.5-3.533V6.201C4.153 6.59 0 10.653 0 10.653s2.35 6.802 8.948 7.42v-1.237c-4.84-.6-6.492-5.936-6.492-5.936z"
+].join(" ");
+
 function providerIcon(provider: ModelProvider): ProviderIcon | null {
-  if (provider === "openai") return OpenAiMark;
+  if (provider === "openai" || provider === "whisper_cpp") return OpenAiMark;
   if (provider === "nvidia") return NvidiaMark;
   return null;
 }
 
 function OpenAiMark({ className }: { className?: string }): JSX.Element {
   return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M8.5 4.5a4 4 0 0 1 7.2 1.7 4 4 0 0 1 3.2 6.6 4 4 0 0 1-3.3 6.6 4 4 0 0 1-7.2-1.7 4 4 0 0 1-3.2-6.6A4 4 0 0 1 8.5 4.5Z" />
-      <path d="m8.5 4.5 7 4v8" />
-      <path d="m15.7 6.2-7.2 4.2v7.8" />
-      <path d="m5.2 11.1 6.8 3.9 6.9-4" />
-      <path d="m5.2 12.8 6.8-3.9 6.8 3.9" />
+    <svg aria-hidden="true" viewBox="0 0 24 24" className={className} fill="currentColor">
+      <path d={openAiLogoPath} />
     </svg>
   );
 }
@@ -522,21 +395,9 @@ function OpenAiMark({ className }: { className?: string }): JSX.Element {
 function NvidiaMark({ className }: { className?: string }): JSX.Element {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" className={className}>
-      <rect x="3" y="4" width="18" height="16" rx="2.5" fill="#76b900" />
-      <path
-        d="M5.8 12c2.4-2.8 7.2-2.8 9.7 0-2.5 2.8-7.3 2.8-9.7 0Z"
-        fill="#0b1308"
-      />
-      <circle cx="10.6" cy="12" r="1.8" fill="#76b900" />
-      <circle cx="10.6" cy="12" r="0.85" fill="#0b1308" />
-      <path d="M12.9 8.8c2.3.4 4.2 1.5 5.2 3.2-1 1.7-2.9 2.8-5.2 3.2" fill="none" stroke="#0b1308" strokeWidth="1.35" strokeLinecap="round" />
+      <path d={nvidiaLogoPath} fill="#76B900" />
     </svg>
   );
-}
-
-function providerLabel(provider: ModelProvider): string {
-  const option = providers.find((candidate) => candidate.value === provider);
-  return option?.label ?? provider;
 }
 
 function statusLabel(status: ModelDownloadState["status"] | "not_downloaded"): string {
