@@ -8,7 +8,28 @@
     "dev": "env -u ELECTRON_RUN_AS_NODE electron-vite dev",
     "build": "tsc --noEmit && electron-vite build",
     "preview": "env -u ELECTRON_RUN_AS_NODE electron-vite preview",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "runtimes:prepare": "node scripts/prepare-runtimes.mjs --platform current",
+    "runtimes:doctor": "node scripts/check-runtimes.mjs",
+    "pack": "npm run build && npm run runtimes:doctor && electron-builder --dir",
+    "dist": "npm run build && npm run runtimes:doctor && electron-builder"
+  },
+  "build": {
+    "appId": "dev.murmur.app",
+    "files": [
+      "out/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/runtimes",
+        "to": "runtimes",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ]
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
@@ -34,9 +55,11 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
     "electron": "^39.2.7",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^4.0.0",
     "tailwindcss": "^4.3.0",
     "typescript": "^5.9.3",
-    "vite": "^7.2.7"
+    "vite": "^7.2.7",
+    "vitest": "^4.1.8"
   }
 }

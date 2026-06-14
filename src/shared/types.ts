@@ -35,6 +35,19 @@ export type ModelProvider =
 
 export type ModelDownloadStrategy = "direct_file" | "archive" | "ollama_pull" | "none";
 export type ModelDownloadStatus = "not_downloaded" | "downloading" | "downloaded" | "error";
+export type SttRuntimeId = "whisper.cpp" | "sherpa-onnx";
+export type RuntimeAvailabilityStatus = "available" | "missing" | "unsupported";
+
+export interface SttRuntimeAvailability {
+  id: SttRuntimeId;
+  label: string;
+  status: RuntimeAvailabilityStatus;
+  platformKey: string;
+  binaryPath?: string;
+  source?: "env" | "resources" | "vendor" | "legacy_vendor";
+  version?: string;
+  message: string;
+}
 
 export interface ContextSnapshot {
   appName?: string;
@@ -267,6 +280,7 @@ export interface AppStateSnapshot {
 }
 
 export interface CapabilityReport {
+  sttRuntimes: Record<SttRuntimeId, SttRuntimeAvailability>;
   hotkeys: {
     backend: "electron_global_shortcut";
     pushToTalkRelease: boolean;

@@ -64,6 +64,7 @@ vite.config.ts.timestamp-*
 *.sqlite-*
 murmur-state.json
 audio/
+vendor/runtimes/
 
 # Local editor state
 .vscode/*

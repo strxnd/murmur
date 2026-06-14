@@ -29,6 +29,8 @@ import { PasteService } from "./services/paste";
 import { SoundService } from "./services/sound";
 import { StorageService } from "./services/storage";
 import { TranscriptionService } from "./services/stt";
+import { SttRuntimeService } from "./services/stt-runtime";
+import { resolveAppPaths, type AppPaths } from "./services/app-paths";
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, nativeTheme } from "./electron-api";
 
 export class AppController {
@@ -38,6 +40,8 @@ export class AppController {
   private context = new ContextService();
   private paste = new PasteService();
   private sound = new SoundService();
+  private runtimeService = new SttRuntimeService();
+  private paths: AppPaths;
   private stt: TranscriptionService;
   private llm = new LlmService();
   private modelLibrary: ModelLibraryService;
@@ -46,16 +50,17 @@ export class AppController {
   private recordingStoppedAt: string | null = null;
   private hotkeyRegistered = false;
   private hotkeyDiagnostics: string[] = [];
+  private hotkeyCaptureDepth = 0;
 
   constructor() {
-    const userDataPath = app.getPath("userData");
-    this.storage = new StorageService(userDataPath);
-    this.stt = new TranscriptionService(userDataPath);
-    this.modelLibrary = new ModelLibraryService(userDataPath, this.storage, (state) => {
+    this.paths = resolveAppPaths(app);
+    this.storage = new StorageService(this.paths);
+    this.stt = new TranscriptionService(this.paths, this.runtimeService);
+    this.modelLibrary = new ModelLibraryService(this.paths, this.storage, (state) => {
       this.mainWindow?.webContents.send("models:download-progress", state);
       this.pillWindow?.webContents.send("models:download-progress", state);
       this.broadcastState();
-    });
+    }, this.runtimeService);
   }
 
   dispose(): void {
@@ -145,6 +150,14 @@ export class AppController {
       this.registerHotkeys();
       this.broadcastState();
       return this.getSnapshot();
+    });
+    ipcMain.handle("hotkeys:capture-start", () => {
+      this.beginHotkeyCapture();
+      return { ok: true };
+    });
+    ipcMain.handle("hotkeys:capture-end", () => {
+      this.endHotkeyCapture();
+      return { ok: true };
     });
     ipcMain.handle("modes:set", (_event, modes: ModeConfig[]) => {
       this.storage.setModes(modes);
@@ -240,28 +253,58 @@ export class AppController {
     app.setLoginItemSettings({ openAtLogin: settings.launchAtLogin });
   }
 
+  private beginHotkeyCapture(): void {
+    this.hotkeyCaptureDepth += 1;
+    globalShortcut.unregisterAll();
+    this.hotkeyRegistered = false;
+    this.hotkeyDiagnostics = ["Keyboard shortcut recording is active."];
+  }
+
+  private endHotkeyCapture(): void {
+    if (this.hotkeyCaptureDepth === 0) return;
+    this.hotkeyCaptureDepth -= 1;
+    if (this.hotkeyCaptureDepth > 0) return;
+    this.registerHotkeys();
+  }
+
   private registerHotkeys(): void {
     globalShortcut.unregisterAll();
     const settings = this.storage.getState().settings;
     this.hotkeyDiagnostics = [];
 
-    const toggleOk = globalShortcut.register(settings.toggleHotkey, () => {
+    if (this.hotkeyCaptureDepth > 0) {
+      this.hotkeyRegistered = false;
+      this.hotkeyDiagnostics = ["Keyboard shortcut recording is active."];
+      return;
+    }
+
+    const toggleOk = this.tryRegisterHotkey("toggle", settings.toggleHotkey, () => {
       if (this.session.status === "recording") {
         void this.stopRecording();
       } else {
         void this.startRecording("toggle_hotkey");
       }
     });
-    const cancelOk = globalShortcut.register(settings.cancelHotkey, () => {
+    const cancelOk = this.tryRegisterHotkey("cancel", settings.cancelHotkey, () => {
       void this.cancelRecording();
     });
 
     this.hotkeyRegistered = toggleOk && cancelOk;
-    if (!toggleOk) this.hotkeyDiagnostics.push(`Unable to register toggle hotkey: ${settings.toggleHotkey}`);
-    if (!cancelOk) this.hotkeyDiagnostics.push(`Unable to register cancel hotkey: ${settings.cancelHotkey}`);
     this.hotkeyDiagnostics.push(
       "Electron globalShortcut does not expose key release events here; push-to-talk is represented as a configured capability but toggle is the active backend."
     );
+  }
+
+  private tryRegisterHotkey(label: string, accelerator: string, callback: () => void): boolean {
+    try {
+      const registered = globalShortcut.register(accelerator, callback);
+      if (!registered) this.hotkeyDiagnostics.push(`Unable to register ${label} hotkey: ${accelerator}`);
+      return registered;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.hotkeyDiagnostics.push(`Invalid ${label} hotkey "${accelerator}": ${message}`);
+      return false;
+    }
   }
 
   private async startRecording(_trigger: string): Promise<AppStateSnapshot> {
@@ -468,7 +511,7 @@ export class AppController {
   }
 
   private writeAudioFile(sessionId: string, audio: Uint8Array, mimeType: string): string {
-    const dir = join(app.getPath("userData"), "audio");
+    const dir = this.paths.audioDir;
     mkdirSync(dir, { recursive: true });
     const ext = mimeType.includes("wav") ? "wav" : mimeType.includes("ogg") ? "ogg" : "webm";
     const audioPath = join(dir, `${sessionId}.${ext}`);
@@ -519,6 +562,7 @@ export class AppController {
   private getCapabilities(): CapabilityReport {
     const contextFlags = this.context.getCapabilityFlags();
     return {
+      sttRuntimes: this.runtimeService.getAvailabilities(),
       hotkeys: {
         backend: "electron_global_shortcut",
         pushToTalkRelease: false,

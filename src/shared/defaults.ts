@@ -55,14 +55,37 @@ export const defaultTranscriptionProviders: TranscriptionProviderConfig[] = [
   {
     id: "local-whisper-cpp",
     type: "whisper_cpp",
-    name: "Local whisper.cpp server",
+    name: "Bundled whisper.cpp",
+    baseUrl: "murmur://runtime/whisper.cpp",
+    endpointPath: "/inference",
+    isCloud: false,
+    isLocal: true,
+    defaultLanguage: "auto",
+    streamingMode: "none",
+    enabled: false
+  },
+  {
+    id: "external-whisper-cpp",
+    type: "whisper_cpp",
+    name: "External whisper.cpp server",
     baseUrl: "http://127.0.0.1:8080",
     endpointPath: "/inference",
     isCloud: false,
     isLocal: true,
     defaultLanguage: "auto",
     streamingMode: "none",
-    enabled: true
+    enabled: false
+  },
+  {
+    id: "local-nvidia-parakeet-stt",
+    type: "sherpa_onnx",
+    name: "Bundled NVIDIA Parakeet STT",
+    baseUrl: "murmur://runtime/sherpa-onnx",
+    isCloud: false,
+    isLocal: true,
+    defaultLanguage: "auto",
+    streamingMode: "none",
+    enabled: false
   },
   {
     id: "local-openai-stt",

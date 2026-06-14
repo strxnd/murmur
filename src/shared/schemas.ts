@@ -25,6 +25,8 @@ export const modelKindSchema = z.enum(["voice", "language"]);
 export const modelProviderSchema = z.enum(["whisper_cpp", "nvidia", "ollama", "openai", "groq", "anthropic", "google", "openrouter"]);
 export const modelDownloadStrategySchema = z.enum(["direct_file", "archive", "ollama_pull", "none"]);
 export const modelDownloadStatusSchema = z.enum(["not_downloaded", "downloading", "downloaded", "error"]);
+export const sttRuntimeIdSchema = z.enum(["whisper.cpp", "sherpa-onnx"]);
+export const runtimeAvailabilityStatusSchema = z.enum(["available", "missing", "unsupported"]);
 
 const optionalStringSchema = z.string().optional();
 
@@ -248,8 +250,22 @@ export const dictationSessionSchema = z
     streamingMode: sttStreamingModeSchema
   });
 
+export const sttRuntimeAvailabilitySchema = z
+  .object({
+    id: sttRuntimeIdSchema,
+    label: z.string(),
+    status: runtimeAvailabilityStatusSchema,
+    platformKey: z.string(),
+    binaryPath: optionalStringSchema,
+    source: z.enum(["env", "resources", "vendor", "legacy_vendor"]).optional(),
+    version: optionalStringSchema,
+    message: z.string()
+  })
+  .passthrough();
+
 export const capabilityReportSchema = z
   .object({
+    sttRuntimes: z.record(sttRuntimeIdSchema, sttRuntimeAvailabilitySchema),
     hotkeys: z
       .object({
         backend: z.literal("electron_global_shortcut"),

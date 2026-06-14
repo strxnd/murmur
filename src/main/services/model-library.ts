@@ -3,8 +3,10 @@ import { createWriteStream, existsSync, mkdirSync, rmSync, renameSync } from "no
 import { dirname, join } from "node:path";
 import { canActivateModel } from "../../shared/model-activation";
 import { modelCatalog } from "../../shared/model-catalog";
-import type { ModelCatalogItem, ModelDownloadState, ModelKind, ModelLibrarySnapshot } from "../../shared/types";
+import type { ModelCatalogItem, ModelDownloadState, ModelKind, ModelLibrarySnapshot, SttRuntimeId } from "../../shared/types";
+import type { AppPaths } from "./app-paths";
 import { StorageService } from "./storage";
+import { SttRuntimeService } from "./stt-runtime";
 
 const ollamaBaseUrl = "http://127.0.0.1:11434";
 const ollamaNotRunning = "Ollama is not running at http://127.0.0.1:11434.";
@@ -15,12 +17,16 @@ export class ModelLibraryService {
   private activeDownloads = new Set<string>();
 
   constructor(
-    private userDataPath: string,
+    private paths: AppPaths,
     private storage: StorageService,
-    private emitProgress: ProgressEmitter
-  ) {}
+    private emitProgress: ProgressEmitter,
+    private runtimeService = new SttRuntimeService()
+  ) {
+    this.refreshCachedModelDownloadStates();
+  }
 
   async getLibrary(): Promise<ModelLibrarySnapshot> {
+    this.refreshCachedModelDownloadStates();
     await this.refreshOllamaDownloadStates();
     return this.snapshot();
   }
@@ -61,8 +67,9 @@ export class ModelLibraryService {
   async deleteDownloadedModel(modelId: string): Promise<ModelLibrarySnapshot> {
     const item = this.findCatalogItem(modelId);
     const existing = this.getDownloadState(modelId);
-    if ((item?.downloadStrategy === "direct_file" || item?.downloadStrategy === "archive") && existing?.localPath && existsSync(existing.localPath)) {
-      rmSync(existing.localPath, { recursive: item.downloadStrategy === "archive", force: true });
+    const expectedPath = item ? this.expectedLocalPath(item) : undefined;
+    if ((item?.downloadStrategy === "direct_file" || item?.downloadStrategy === "archive") && expectedPath && existsSync(expectedPath)) {
+      rmSync(expectedPath, { recursive: item.downloadStrategy === "archive", force: true });
     }
     if (item?.downloadStrategy === "ollama_pull" && item.ollamaModel) {
       try {
@@ -124,7 +131,7 @@ export class ModelLibraryService {
   private async downloadDirectFile(item: ModelCatalogItem): Promise<void> {
     if (!item.downloadUrl || !item.filename) return;
 
-    const targetPath = join(this.userDataPath, "models", "stt", item.filename);
+    const targetPath = join(this.paths.modelDir, item.filename);
     const partPath = `${targetPath}.part`;
     mkdirSync(dirname(targetPath), { recursive: true });
     if (existsSync(partPath)) rmSync(partPath, { force: true });
@@ -197,7 +204,7 @@ export class ModelLibraryService {
   private async downloadArchive(item: ModelCatalogItem): Promise<void> {
     if (!item.downloadUrl || !item.filename || !item.extractDir) return;
 
-    const modelRoot = join(this.userDataPath, "models", "stt");
+    const modelRoot = this.paths.modelDir;
     const targetPath = join(modelRoot, item.extractDir);
     const archivePath = join(modelRoot, item.filename);
     const partPath = `${archivePath}.part`;
@@ -393,6 +400,45 @@ export class ModelLibraryService {
     }
   }
 
+  private refreshCachedModelDownloadStates(): void {
+    for (const item of modelCatalog.filter((candidate) => candidate.downloadStrategy === "direct_file" || candidate.downloadStrategy === "archive")) {
+      const expectedPath = this.expectedLocalPath(item);
+      if (!expectedPath) continue;
+
+      const existing = this.getDownloadState(item.id);
+      const exists = existsSync(expectedPath);
+
+      if (exists && existing?.status !== "downloaded") {
+        this.persistDownload({
+          modelId: item.id,
+          status: "downloaded",
+          progressBytes: existing?.progressBytes ?? item.sizeBytes ?? 0,
+          totalBytes: existing?.totalBytes ?? item.sizeBytes,
+          localPath: expectedPath,
+          downloadedAt: existing?.downloadedAt ?? new Date().toISOString(),
+          favorite: Boolean(existing?.favorite)
+        });
+      } else if (!exists && existing?.status === "downloaded") {
+        this.persistDownload({
+          modelId: item.id,
+          status: "not_downloaded",
+          progressBytes: 0,
+          totalBytes: existing.totalBytes ?? item.sizeBytes,
+          favorite: Boolean(existing.favorite)
+        });
+        if (this.storage.getState().modelLibrary.activeModelIds[item.kind] === item.id) {
+          this.storage.setActiveModel(item.kind, undefined);
+        }
+      } else if (exists && existing && existing.localPath !== expectedPath) {
+        this.persistDownload({
+          ...existing,
+          localPath: expectedPath,
+          favorite: Boolean(existing.favorite)
+        });
+      }
+    }
+  }
+
   private async deleteOllamaModel(model: string): Promise<void> {
     const response = await fetchWithTimeout(
       `${ollamaBaseUrl}/api/delete`,
@@ -441,8 +487,24 @@ export class ModelLibraryService {
 
   private isModelReady(item: ModelCatalogItem): boolean {
     if (!canActivateModel(item)) return false;
+    if (!this.isRequiredRuntimeAvailable(item)) return false;
     if (item.downloadStrategy === "none") return true;
+    if (item.downloadStrategy === "direct_file" || item.downloadStrategy === "archive") {
+      const expectedPath = this.expectedLocalPath(item);
+      return Boolean(expectedPath && existsSync(expectedPath) && this.getDownloadState(item.id)?.status === "downloaded");
+    }
     return this.getDownloadState(item.id)?.status === "downloaded";
+  }
+
+  private expectedLocalPath(item: ModelCatalogItem): string | undefined {
+    if (item.downloadStrategy === "direct_file" && item.filename) return join(this.paths.modelDir, item.filename);
+    if (item.downloadStrategy === "archive" && item.extractDir) return join(this.paths.modelDir, item.extractDir);
+    return undefined;
+  }
+
+  private isRequiredRuntimeAvailable(item: ModelCatalogItem): boolean {
+    const runtimeId = sttRuntimeIdForModel(item);
+    return runtimeId ? this.runtimeService.getAvailability(runtimeId).status === "available" : true;
   }
 
   private persistAndEmit(state: ModelDownloadState): void {
@@ -456,6 +518,14 @@ export class ModelLibraryService {
       favorite: Boolean(state.favorite)
     });
   }
+}
+
+function sttRuntimeIdForModel(item: ModelCatalogItem): SttRuntimeId | null {
+  if (item.kind !== "voice") return null;
+  const type = item.defaultProviderConfig?.sttProviderType;
+  if (type === "whisper_cpp") return "whisper.cpp";
+  if (type === "sherpa_onnx") return "sherpa-onnx";
+  return null;
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {

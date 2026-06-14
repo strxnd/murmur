@@ -9,7 +9,9 @@ import type {
   TranscriptionProviderConfig,
   TranscriptionResult
 } from "../../shared/types";
+import type { AppPaths } from "./app-paths";
 import { fetchWithTimeout, extractTextFromTranscriptionResponse, joinUrl, parseJsonOrText } from "./http";
+import { SttRuntimeService, type ResolvedSttRuntime } from "./stt-runtime";
 
 interface TranscribeOptions {
   audio: Uint8Array;
@@ -33,13 +35,15 @@ interface WhisperServerProcess {
 }
 
 const bundledWhisperCppRuntimeUrl = "murmur://runtime/whisper.cpp";
-const runtimeReadyTimeoutMs = 10000;
 const transcriptionTimeoutMs = 120000;
 
 export class TranscriptionService {
   private whisperServer: WhisperServerProcess | null = null;
 
-  constructor(private userDataPath: string) {}
+  constructor(
+    private paths: AppPaths,
+    private runtimeService = new SttRuntimeService()
+  ) {}
 
   dispose(): void {
     this.stopWhisperServer();
@@ -81,11 +85,11 @@ export class TranscriptionService {
     }
 
     if (this.isBundledWhisperCppProvider(provider)) {
-      return this.validateBundledRuntime(provider, "MURMUR_WHISPER_CPP_SERVER", "whisper.cpp", "whisper.cpp", "whisper-server");
+      return this.validateBundledRuntime(provider, "whisper.cpp");
     }
 
     if (provider.type === "sherpa_onnx") {
-      return this.validateBundledRuntime(provider, "MURMUR_SHERPA_ONNX_OFFLINE", "sherpa-onnx", "Sherpa ONNX", "sherpa-onnx-offline");
+      return this.validateBundledRuntime(provider, "sherpa-onnx");
     }
 
     if (provider.type === "cloud_openai" || provider.type === "cloud_groq" || provider.type.includes("openai")) {
@@ -112,23 +116,12 @@ export class TranscriptionService {
     };
   }
 
-  private validateBundledRuntime(
-    provider: TranscriptionProviderConfig,
-    envName: string,
-    runtimeDir: string,
-    label: string,
-    executable: string
-  ): ProviderValidationResult {
-    const binary = this.resolveRuntimeBinary(envName, runtimeDir, executable);
-    if (!binary) {
-      return {
-        ok: false,
-        message: `${label} runtime binary was not found. Set ${envName} or install it under vendor/runtimes/${this.runtimeKey()}/${runtimeDir}.`
-      };
-    }
+  private validateBundledRuntime(provider: TranscriptionProviderConfig, runtimeId: "whisper.cpp" | "sherpa-onnx"): ProviderValidationResult {
+    const runtime = this.runtimeService.getAvailability(runtimeId);
+    if (runtime.status !== "available") return { ok: false, message: runtime.message };
 
     if (!provider.defaultModel) {
-      return { ok: false, message: `${label} needs a downloaded model selected as default.` };
+      return { ok: false, message: `${runtime.label} needs a downloaded model selected as default.` };
     }
 
     const modelPath = this.resolveModelPath(provider.defaultModel);
@@ -138,7 +131,7 @@ export class TranscriptionService {
 
     return {
       ok: true,
-      message: `${label} runtime and model are available.`,
+      message: `${runtime.label} runtime and model are available.`,
       capabilities: { fileTranscription: true, completedAudioStreaming: false, liveRealtimeStreaming: false, modelDiscovery: false }
     };
   }
@@ -187,12 +180,12 @@ export class TranscriptionService {
       throw new Error("Sherpa ONNX expects WAV input. Restart recording so Murmur can capture WAV audio.");
     }
 
-    const binary = this.requiredRuntimeBinary("MURMUR_SHERPA_ONNX_OFFLINE", "sherpa-onnx", "sherpa-onnx-offline");
+    const runtime = this.runtimeService.requireRuntime("sherpa-onnx");
     const modelPath = this.requiredModelPath(options.provider.defaultModel, "Sherpa ONNX");
     const audioPath = this.writeTempAudio(options.audio, "wav");
 
     try {
-      const result = await runProcess(binary, this.sherpaArgs(modelPath, audioPath), transcriptionTimeoutMs);
+      const result = await runProcess(runtime.binaryPath, buildSherpaArgs(modelPath, audioPath), transcriptionTimeoutMs, runtime);
       const text = extractSherpaText(result.stdout) || extractSherpaText(result.stderr);
       return {
         text,
@@ -203,43 +196,6 @@ export class TranscriptionService {
     } finally {
       rmSync(audioPath, { force: true });
     }
-  }
-
-  private sherpaArgs(modelPath: string, audioPath: string): string[] {
-    const tokensPath = join(modelPath, "tokens.txt");
-    const threadCount = process.env.MURMUR_STT_THREADS || "4";
-    if (!existsSync(tokensPath)) {
-      throw new Error(`Sherpa ONNX model is missing tokens.txt in ${modelPath}.`);
-    }
-
-    const ctcModel = firstExisting([join(modelPath, "model.int8.onnx"), join(modelPath, "model.onnx")]);
-    if (ctcModel) {
-      return [
-        `--nemo-ctc-model=${ctcModel}`,
-        `--tokens=${tokensPath}`,
-        `--num-threads=${threadCount}`,
-        "--decoding-method=greedy_search",
-        audioPath
-      ];
-    }
-
-    const encoder = firstExisting([join(modelPath, "encoder.int8.onnx"), join(modelPath, "encoder.onnx")]);
-    const decoder = firstExisting([join(modelPath, "decoder.int8.onnx"), join(modelPath, "decoder.onnx")]);
-    const joiner = firstExisting([join(modelPath, "joiner.int8.onnx"), join(modelPath, "joiner.onnx")]);
-    if (encoder && decoder && joiner) {
-      return [
-        `--encoder=${encoder}`,
-        `--decoder=${decoder}`,
-        `--joiner=${joiner}`,
-        `--tokens=${tokensPath}`,
-        "--model-type=nemo_transducer",
-        `--num-threads=${threadCount}`,
-        "--decoding-method=greedy_search",
-        audioPath
-      ];
-    }
-
-    throw new Error(`Sherpa ONNX model directory is missing supported ONNX files: ${modelPath}`);
   }
 
   private async transcribeOpenAiCompatible(options: TranscribeOptions): Promise<TranscriptionResult> {
@@ -296,11 +252,11 @@ export class TranscriptionService {
     }
 
     this.stopWhisperServer();
-    const binary = this.requiredRuntimeBinary("MURMUR_WHISPER_CPP_SERVER", "whisper.cpp", "whisper-server");
+    const runtime = this.runtimeService.requireRuntime("whisper.cpp");
     const port = await findOpenPort();
     const baseUrl = `http://127.0.0.1:${port}`;
-    const args = ["--host", "127.0.0.1", "--port", String(port), "--model", modelPath, "--inference-path", "/inference"];
-    const child = spawn(binary, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const args = buildWhisperServerArgs(port, modelPath);
+    const child = spawn(runtime.binaryPath, args, { stdio: ["pipe", "pipe", "pipe"], env: runtime.env, cwd: runtime.cwd });
     let output = "";
 
     child.stdout.on("data", (chunk: Buffer) => {
@@ -326,31 +282,6 @@ export class TranscriptionService {
     }
   }
 
-  private requiredRuntimeBinary(envName: string, runtimeDir: string, executable: string): string {
-    const binary = this.resolveRuntimeBinary(envName, runtimeDir, executable);
-    if (!binary) {
-      throw new Error(`Runtime binary "${executable}" was not found. Set ${envName} or install it under vendor/runtimes/${this.runtimeKey()}/${runtimeDir}.`);
-    }
-    return binary;
-  }
-
-  private resolveRuntimeBinary(envName: string, runtimeDir: string, executable: string): string | null {
-    const executableName = process.platform === "win32" ? `${executable}.exe` : executable;
-    const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-    const candidates = [
-      process.env[envName],
-      resourcesPath ? join(resourcesPath, "runtimes", this.runtimeKey(), runtimeDir, executableName) : undefined,
-      join(process.cwd(), "vendor", "runtimes", this.runtimeKey(), runtimeDir, executableName),
-      join(process.cwd(), "vendor", "runtimes", runtimeDir, executableName)
-    ].filter((candidate): candidate is string => Boolean(candidate));
-
-    return candidates.find((candidate) => existsSync(candidate)) ?? null;
-  }
-
-  private runtimeKey(): string {
-    return `${process.platform}-${process.arch}`;
-  }
-
   private requiredModelPath(model: string | undefined, label: string): string {
     if (!model) throw new Error(`${label} needs a downloaded model selected as default.`);
     const modelPath = this.resolveModelPath(model);
@@ -359,13 +290,12 @@ export class TranscriptionService {
   }
 
   private resolveModelPath(model: string): string {
-    return isAbsolute(model) ? model : join(this.userDataPath, "models", "stt", model);
+    return isAbsolute(model) ? model : join(this.paths.modelDir, model);
   }
 
   private writeTempAudio(audio: Uint8Array, extension: string): string {
-    const dir = join(this.userDataPath, "tmp");
-    mkdirSync(dir, { recursive: true });
-    const path = join(dir, `dictation-${Date.now()}-${randomUUID()}.${extension}`);
+    mkdirSync(this.paths.tempDir, { recursive: true });
+    const path = join(this.paths.tempDir, `dictation-${Date.now()}-${randomUUID()}.${extension}`);
     writeFileSync(path, audio);
     return path;
   }
@@ -441,9 +371,67 @@ export class TranscriptionService {
   }
 }
 
-function runProcess(command: string, args: string[], timeoutMs: number): Promise<RuntimeProcessResult> {
+export function buildSherpaArgs(modelPath: string, audioPath: string, threadCount = process.env.MURMUR_STT_THREADS || "4"): string[] {
+  const tokensPath = join(modelPath, "tokens.txt");
+  if (!existsSync(tokensPath)) {
+    throw new Error(`Sherpa ONNX model is missing tokens.txt in ${modelPath}.`);
+  }
+
+  const ctcModel = firstExisting([join(modelPath, "model.int8.onnx"), join(modelPath, "model.onnx")]);
+  if (ctcModel) {
+    return [
+      `--nemo-ctc-model=${ctcModel}`,
+      `--tokens=${tokensPath}`,
+      `--num-threads=${threadCount}`,
+      "--decoding-method=greedy_search",
+      "--debug=false",
+      audioPath
+    ];
+  }
+
+  const encoder = firstExisting([join(modelPath, "encoder.int8.onnx"), join(modelPath, "encoder.onnx")]);
+  const decoder = firstExisting([join(modelPath, "decoder.int8.onnx"), join(modelPath, "decoder.onnx")]);
+  const joiner = firstExisting([join(modelPath, "joiner.int8.onnx"), join(modelPath, "joiner.onnx")]);
+  if (encoder && decoder && joiner) {
+    return [
+      `--encoder=${encoder}`,
+      `--decoder=${decoder}`,
+      `--joiner=${joiner}`,
+      `--tokens=${tokensPath}`,
+      "--model-type=nemo_transducer",
+      `--num-threads=${threadCount}`,
+      "--decoding-method=greedy_search",
+      "--debug=false",
+      audioPath
+    ];
+  }
+
+  throw new Error(`Sherpa ONNX model directory is missing supported ONNX files: ${modelPath}`);
+}
+
+export function buildWhisperServerArgs(port: number, modelPath: string, threadCount = process.env.MURMUR_STT_THREADS || "4"): string[] {
+  return [
+    "--host",
+    "127.0.0.1",
+    "--port",
+    String(port),
+    "--model",
+    modelPath,
+    "--inference-path",
+    "/inference",
+    "--threads",
+    threadCount
+  ];
+}
+
+function runProcess(
+  command: string,
+  args: string[],
+  timeoutMs: number,
+  runtime?: Pick<ResolvedSttRuntime, "env" | "cwd">
+): Promise<RuntimeProcessResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env: runtime?.env, cwd: runtime?.cwd });
     let stdout = "";
     let stderr = "";
     const timeout = setTimeout(() => {
@@ -518,7 +506,8 @@ function findOpenPort(): Promise<number> {
 
 async function waitForHttp(baseUrl: string, child: ChildProcessWithoutNullStreams, output: () => string): Promise<void> {
   const startedAt = Date.now();
-  while (Date.now() - startedAt < runtimeReadyTimeoutMs) {
+  const timeoutMs = runtimeReadyTimeoutMs();
+  while (Date.now() - startedAt < timeoutMs) {
     if (child.exitCode !== null) {
       throw new Error(`whisper-server exited before becoming ready: ${output().trim()}`);
     }
@@ -531,11 +520,16 @@ async function waitForHttp(baseUrl: string, child: ChildProcessWithoutNullStream
   }
 
   child.kill();
-  throw new Error(`whisper-server did not become ready within ${runtimeReadyTimeoutMs}ms: ${output().trim()}`);
+  throw new Error(`whisper-server did not become ready within ${timeoutMs}ms: ${output().trim()}`);
 }
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function runtimeReadyTimeoutMs(): number {
+  const value = Number(process.env.MURMUR_RUNTIME_READY_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? value : 45000;
 }

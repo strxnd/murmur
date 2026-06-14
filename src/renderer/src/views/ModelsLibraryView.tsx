@@ -5,7 +5,8 @@ import type {
   AppStateSnapshot,
   ModelCatalogItem,
   ModelDownloadState,
-  ModelProvider
+  ModelProvider,
+  SttRuntimeAvailability
 } from "../../../shared/types";
 import { canActivateModel, providerLabel } from "../../../shared/model-activation";
 import { View } from "../components/View";
@@ -122,6 +123,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
             {models.map((item) => {
               const download = downloadsById.get(item.id);
               const active = isActiveModel(state, item, download);
+              const runtime = runtimeAvailabilityForModel(state, item);
               return (
                 <Popover.Root
                   key={item.id}
@@ -149,7 +151,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
                       <Badge>{providerLabel(item.provider)}</Badge>
                       <StatusBadge item={item} download={download} />
                       {item.sizeBytes && <Badge>{formatBytes(item.sizeBytes)}</Badge>}
-                      <RuntimeBadge item={item} />
+                      <RuntimeBadge item={item} runtime={runtime} />
                     </span>
                     <ChevronRight
                       size={16}
@@ -171,6 +173,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
                           onDelete={() => void deleteDownloadedModel(item.id)}
                           onActivate={() => void activateModel(item.id)}
                           onClose={() => setOpenModelId(null)}
+                          runtime={runtime}
                         />
                       </Popover.Popup>
                     </Popover.Positioner>
@@ -194,7 +197,8 @@ function ModelPopover({
   onDownload,
   onDelete,
   onActivate,
-  onClose
+  onClose,
+  runtime
 }: {
   item: ModelCatalogItem;
   download?: ModelDownloadState;
@@ -204,6 +208,7 @@ function ModelPopover({
   onDelete: () => void;
   onActivate: () => void;
   onClose: () => void;
+  runtime?: SttRuntimeAvailability;
 }): JSX.Element {
   const status = download?.status ?? "not_downloaded";
   const progress =
@@ -214,6 +219,7 @@ function ModelPopover({
         : statusLabel(status);
   const canDownload = item.downloadStrategy !== "none" && status !== "downloading" && status !== "downloaded";
   const canDelete = item.downloadStrategy !== "none" && status === "downloaded";
+  const runtimeReady = !runtime || runtime.status === "available";
   const canActivate = canActivateModel(item) && (item.downloadStrategy === "none" || status === "downloaded");
   const popoverParent = useAutoAnimateRef<HTMLDivElement>();
 
@@ -239,7 +245,7 @@ function ModelPopover({
 
       <div className="flex flex-wrap gap-2">
         <Badge>{kindLabel(item.kind)}</Badge>
-        <RuntimeBadge item={item} />
+        <RuntimeBadge item={item} runtime={runtime} />
         <Badge>{progress}</Badge>
         {item.sizeBytes && <Badge>{formatBytes(item.sizeBytes)}</Badge>}
         {item.downloadStrategy === "direct_file" && <Badge>Direct file</Badge>}
@@ -259,6 +265,7 @@ function ModelPopover({
       )}
 
       {download?.error && <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">{download.error}</p>}
+      {runtime && <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">{runtime.message}</p>}
 
       {status === "downloading" && <ProgressBar value={progressValue(download)} label={`Downloading ${item.name}`} />}
 
@@ -274,7 +281,7 @@ function ModelPopover({
           </>
         )}
         {canActivate && (
-          <Button variant={active ? "secondary" : "primary"} onClick={onActivate} disabled={active}>
+          <Button variant={active ? "secondary" : "primary"} onClick={onActivate} disabled={active || !runtimeReady}>
             <Check size={18} /> {active ? "Active" : "Activate"}
           </Button>
         )}
@@ -285,6 +292,9 @@ function ModelPopover({
           <span className="inline-flex min-h-9 items-center gap-2 text-sm text-muted-foreground">
             <Check size={18} /> Downloaded
           </span>
+        )}
+        {status === "downloaded" && canActivate && runtime && !runtimeReady && (
+          <span className="inline-flex min-h-9 items-center gap-2 text-sm text-muted-foreground">{runtimeStatusLabel(runtime.status)}</span>
         )}
       </Toolbar>
     </div>
@@ -343,7 +353,10 @@ function StatusBadge({ item, download }: { item: ModelCatalogItem; download?: Mo
   return <Badge tone={tone}>{statusLabel(status)}</Badge>;
 }
 
-function RuntimeBadge({ item }: { item: ModelCatalogItem }): JSX.Element {
+function RuntimeBadge({ item, runtime }: { item: ModelCatalogItem; runtime?: SttRuntimeAvailability }): JSX.Element {
+  if (runtime) {
+    return <Badge tone={runtime.status === "available" ? "success" : "warning"}>{runtimeStatusLabel(runtime.status)}</Badge>;
+  }
   if (item.isCloud) return <Badge tone="cloud">Cloud</Badge>;
   if (item.isOffline) return <Badge tone="local">Offline</Badge>;
   return <Badge>Runtime</Badge>;
@@ -356,6 +369,19 @@ function kindLabel(kind: ModelCatalogItem["kind"]): string {
 function isActiveModel(state: AppStateSnapshot, item: ModelCatalogItem, download?: ModelDownloadState): boolean {
   if (state.modelLibrary.activeModelIds[item.kind] !== item.id) return false;
   return item.downloadStrategy === "none" || download?.status === "downloaded";
+}
+
+function runtimeAvailabilityForModel(state: AppStateSnapshot, item: ModelCatalogItem): SttRuntimeAvailability | undefined {
+  if (item.kind !== "voice") return undefined;
+  if (item.defaultProviderConfig?.sttProviderType === "whisper_cpp") return state.capabilities.sttRuntimes["whisper.cpp"];
+  if (item.defaultProviderConfig?.sttProviderType === "sherpa_onnx") return state.capabilities.sttRuntimes["sherpa-onnx"];
+  return undefined;
+}
+
+function runtimeStatusLabel(status: SttRuntimeAvailability["status"]): string {
+  if (status === "available") return "Runtime ready";
+  if (status === "unsupported") return "Unsupported platform";
+  return "Runtime missing";
 }
 
 type ProviderIcon = ({ className }: { className?: string }) => JSX.Element;

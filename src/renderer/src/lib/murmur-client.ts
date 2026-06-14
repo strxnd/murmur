@@ -24,6 +24,8 @@ import {
 export const murmurClient = {
   getState: (): Promise<AppStateSnapshot> => window.murmur.getState().then(parseState),
   updateSettings: (patch: Partial<AppSettings>): Promise<AppStateSnapshot> => window.murmur.updateSettings(patch).then(parseState),
+  beginHotkeyCapture: (): Promise<void> => window.murmur.beginHotkeyCapture().then(() => undefined),
+  endHotkeyCapture: (): Promise<void> => window.murmur.endHotkeyCapture().then(() => undefined),
   setModes: (modes: ModeConfig[]): Promise<AppStateSnapshot> => window.murmur.setModes(modes).then(parseState),
   activateMode: (modeId: string): Promise<AppStateSnapshot> => window.murmur.activateMode(modeId).then(parseState),
   setSttProviders: (providers: TranscriptionProviderConfig[]): Promise<AppStateSnapshot> => window.murmur.setSttProviders(providers).then(parseState),

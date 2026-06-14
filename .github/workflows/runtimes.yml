@@ -1,0 +1,55 @@
+name: Runtime Artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "scripts/prepare-runtimes.mjs"
+      - "scripts/check-runtimes.mjs"
+      - "scripts/runtime-manifest.json"
+      - "patches/whisper.cpp/**"
+      - ".github/workflows/runtimes.yml"
+  pull_request:
+    paths:
+      - "scripts/prepare-runtimes.mjs"
+      - "scripts/check-runtimes.mjs"
+      - "scripts/runtime-manifest.json"
+      - "patches/whisper.cpp/**"
+      - ".github/workflows/runtimes.yml"
+
+jobs:
+  runtimes:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+          - os: macos-13
+            platform: darwin-x64
+          - os: macos-latest
+            platform: darwin-arm64
+          - os: windows-latest
+            platform: win32-x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: node scripts/prepare-runtimes.mjs --platform current
+
+      - run: node scripts/check-runtimes.mjs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtimes-${{ matrix.platform }}
+          path: vendor/runtimes/${{ matrix.platform }}
+          if-no-files-found: error

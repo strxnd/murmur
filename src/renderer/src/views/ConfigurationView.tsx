@@ -7,6 +7,7 @@ import type { AppStateSnapshot } from "../../../shared/types";
 import { appSettingsSchema, replacementRuleSchema } from "../../../shared/schemas";
 import { Metric } from "../components/Metric";
 import { ProviderConfigurationPanels } from "../components/ProviderConfigurationPanels";
+import { ShortcutRecorder } from "../components/ShortcutRecorder";
 import { View } from "../components/View";
 import { Button } from "../components/ui/Button";
 import { Checkbox } from "../components/ui/Checkbox";
@@ -21,6 +22,7 @@ import { Toolbar } from "../components/ui/Toolbar";
 import { useAudioDevices } from "../hooks/useAudioDevices";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { makeClientId } from "../lib/ids";
+import { murmurClient } from "../lib/murmur-client";
 import { useMurmurStore } from "../state/murmur-store";
 
 const configurationFormSchema = z.object({
@@ -45,6 +47,8 @@ const selectedTextCaptureItems: Array<SelectItem<ConfigurationFormValues["settin
   { value: "clipboard_restore", label: "Clipboard restore" },
   { value: "disabled", label: "Disabled" }
 ];
+
+type ShortcutSettingPath = "settings.toggleHotkey" | "settings.pushToTalkHotkey" | "settings.cancelHotkey";
 
 export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.Element {
   const updateSettings = useMurmurStore((store) => store.updateSettings);
@@ -103,13 +107,13 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
         <Panel title="Keyboard Shortcuts">
           <div className="grid grid-cols-3 gap-3 max-[760px]:grid-cols-1">
             <Field label="Toggle recording" error={form.formState.errors.settings?.toggleHotkey?.message}>
-              <Input {...form.register("settings.toggleHotkey")} />
+              <FormShortcutRecorder control={form.control} name="settings.toggleHotkey" />
             </Field>
             <Field label="Push-to-talk" error={form.formState.errors.settings?.pushToTalkHotkey?.message}>
-              <Input {...form.register("settings.pushToTalkHotkey")} />
+              <FormShortcutRecorder control={form.control} name="settings.pushToTalkHotkey" />
             </Field>
             <Field label="Cancel" error={form.formState.errors.settings?.cancelHotkey?.message}>
-              <Input {...form.register("settings.cancelHotkey")} />
+              <FormShortcutRecorder control={form.control} name="settings.cancelHotkey" />
             </Field>
           </div>
         </Panel>
@@ -261,6 +265,23 @@ function FormSelect({
       name={name}
       render={({ field }) => (
         <Select items={items} value={(field.value as string | undefined) ?? ""} onValueChange={field.onChange} disabled={disabled} />
+      )}
+    />
+  );
+}
+
+function FormShortcutRecorder({ control, name }: { control: Control<ConfigurationFormValues>; name: ShortcutSettingPath }): JSX.Element {
+  return (
+    <Controller
+      control={control}
+      name={name}
+      render={({ field }) => (
+        <ShortcutRecorder
+          value={String(field.value ?? "")}
+          onChange={field.onChange}
+          onCaptureStart={murmurClient.beginHotkeyCapture}
+          onCaptureEnd={murmurClient.endHotkeyCapture}
+        />
       )}
     />
   );
