@@ -148,11 +148,6 @@ export class XdgGlobalShortcutService {
 
       const description = options.description || shortcutDescriptionForActivationMode(options.activationMode);
       const shortcutProperties = shortcutPropertiesForPortalVersion(description, preferredTrigger, globalShortcutsVersion);
-      if (!shortcutProperties.some(([key]) => key === "preferred_trigger")) {
-        diagnostics.push(
-          `XDG Desktop Portal global shortcuts version ${globalShortcutsVersion} does not accept preferred shortcut triggers; assign the system shortcut to ${appId}:${shortcutId}.`
-        );
-      }
       const bindResponse = await this.callPortalRequest({
         bus,
         uniqueName,
@@ -186,7 +181,9 @@ export class XdgGlobalShortcutService {
         return result({ attempted: true });
       }
       if (!boundShortcut.triggerDescription) {
-        diagnostics.push(`XDG Desktop Portal registered shortcut action ${appId}:${shortcutId}, but the desktop did not report an assigned trigger.`);
+        diagnostics.push(
+          `XDG Desktop Portal did not assign a system shortcut to ${portalActivationActionId()}; assign it in system keyboard settings.`
+        );
         await this.unregister();
         return result({ attempted: true });
       }
@@ -520,6 +517,10 @@ export function shortcutPropertiesForPortalVersion(description: string, preferre
     properties.preferred_trigger = preferredTrigger;
   }
   return makeVardict(properties);
+}
+
+function portalActivationActionId(): string {
+  return `${appId}:${shortcutId}`;
 }
 
 function portalModifier(token: string): string | null | "unsupported" {

@@ -377,12 +377,12 @@ export class AppController {
       return;
     }
 
-    this.hotkeyDiagnostics = [...this.hotkeyDiagnostics, ...nativeResult.diagnostics];
     if (nativeResult.registered && nativeResult.backend) {
       this.hotkeyBackend = nativeResult.backend;
       this.hotkeyRegistered = true;
       this.hotkeyPushToTalkRelease = nativeResult.pushToTalkRelease;
       this.hotkeyTriggerDescription = nativeResult.triggerDescription;
+      this.hotkeyDiagnostics = nativeResult.diagnostics;
       if (settings.activationMode === "push_to_talk" && !nativeResult.pushToTalkRelease) {
         this.hotkeyDiagnostics.push(
           `${this.hotkeyBackendLabel(nativeResult.backend)} does not expose key release events; push-to-talk uses press to start and stop recording.`
@@ -391,13 +391,18 @@ export class AppController {
       return;
     }
 
+    const fallbackDiagnostics = [...this.hotkeyDiagnostics, ...nativeResult.diagnostics];
+    this.hotkeyDiagnostics = [];
+
     const activationOk = this.tryRegisterHotkey("activation", settings.activationHotkey, () => {
       void this.handleActivationHotkey(`${settings.activationMode}_global_hotkey`);
     });
+    const electronDiagnostics = this.hotkeyDiagnostics;
     this.hotkeyBackend = "electron_global_shortcut";
     this.hotkeyRegistered = activationOk;
     this.hotkeyPushToTalkRelease = false;
     this.hotkeyTriggerDescription = undefined;
+    this.hotkeyDiagnostics = activationOk ? [] : [...fallbackDiagnostics, ...electronDiagnostics];
 
     if (!activationOk) this.hotkeyDiagnostics.push(`Global activation shortcut is not registered: ${settings.activationHotkey}.`);
     if (settings.activationMode === "push_to_talk") {
