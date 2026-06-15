@@ -1,4 +1,4 @@
-import { Clock3, Mic, Square } from "lucide-react";
+import { Clock3, Mic, Square, Wrench } from "lucide-react";
 import { useMemo, type JSX } from "react";
 import type { AppStateSnapshot, DictationHistoryItem } from "../../../shared/types";
 import { StatCard } from "../components/StatCard";
@@ -7,15 +7,18 @@ import { Button } from "../components/ui/Button";
 import { Panel } from "../components/ui/Panel";
 import { Toolbar } from "../components/ui/Toolbar";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
+import { recordingUnavailableReason, shouldShowSttSetupCallout } from "../lib/stt-setup";
 import { useMurmurStore } from "../state/murmur-store";
 
-export function HomeView({ state }: { state: AppStateSnapshot }): JSX.Element {
+export function HomeView({ state, onOpenModels }: { state: AppStateSnapshot; onOpenModels: () => void }): JSX.Element {
   const metrics = useMemo(() => computeHomeMetrics(state), [state]);
   const recentHistoryParent = useAutoAnimateRef<HTMLDivElement>();
   const releaseNotesParent = useAutoAnimateRef<HTMLDivElement>();
 
   return (
     <View title="Home" actions={<SessionActions state={state} />}>
+      {shouldShowSttSetupCallout(state) && <SttSetupCallout onOpenModels={onOpenModels} />}
+
       <section className="grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[640px]:grid-cols-1">
         <StatCard label="Average speed" value={metrics.averageSpeed} detail="spoken words per recorded minute" />
         <StatCard label="Words" value={metrics.words} detail="raw transcript words" />
@@ -44,13 +47,17 @@ export function HomeView({ state }: { state: AppStateSnapshot }): JSX.Element {
         </Panel>
         <Panel title="What's new">
           <div ref={releaseNotesParent} className="flex flex-col gap-3">
-            {state.releaseNotes.map((note) => (
-              <article key={note.id} className="border-t border-border pt-3 first:border-t-0 first:pt-0">
-                <div className="text-xs text-muted-foreground">{new Date(note.date).toLocaleDateString()}</div>
-                <h3 className="m-0 mt-1 text-sm font-medium text-foreground">{note.heading}</h3>
-                {note.summary && <p className="m-0 mt-1 text-sm text-muted-foreground">{note.summary}</p>}
-              </article>
-            ))}
+            {state.releaseNotes.length === 0 ? (
+              <p className="m-0 text-sm text-muted-foreground">No updates yet.</p>
+            ) : (
+              state.releaseNotes.map((note) => (
+                <article key={note.id} className="border-t border-border pt-3 first:border-t-0 first:pt-0">
+                  <div className="text-xs text-muted-foreground">{new Date(note.date).toLocaleDateString()}</div>
+                  <h3 className="m-0 mt-1 text-sm font-medium text-foreground">{note.heading}</h3>
+                  {note.summary && <p className="m-0 mt-1 text-sm text-muted-foreground">{note.summary}</p>}
+                </article>
+              ))
+            )}
           </div>
         </Panel>
       </section>
@@ -63,14 +70,36 @@ function SessionActions({ state }: { state: AppStateSnapshot }): JSX.Element {
   const stopDictation = useMurmurStore((store) => store.stopDictation);
   const isRecording = state.session.status === "recording";
   const isBusy = ["transcribing", "processing", "pasting"].includes(state.session.status);
+  const unavailableReason = recordingUnavailableReason(state);
 
   return (
     <Toolbar>
-      <Button variant="primary" onClick={() => void (isRecording ? stopDictation() : startDictation())} disabled={isBusy}>
+      <Button
+        variant="primary"
+        onClick={() => void (isRecording ? stopDictation() : startDictation())}
+        disabled={isBusy || (!isRecording && Boolean(unavailableReason))}
+        title={unavailableReason ?? undefined}
+      >
         {isRecording ? <Square size={18} /> : <Mic size={18} />}
         {isRecording ? "Stop" : "Record"}
       </Button>
     </Toolbar>
+  );
+}
+
+function SttSetupCallout({ onOpenModels }: { onOpenModels: () => void }): JSX.Element {
+  return (
+    <Panel>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="m-0 text-sm font-medium text-foreground">Local dictation is not set up</h2>
+          <p className="m-0 mt-1 text-sm text-muted-foreground">Recording is disabled until a speech-to-text provider or local voice model is ready.</p>
+        </div>
+        <Button variant="primary" onClick={onOpenModels}>
+          <Wrench size={18} /> Set up local dictation
+        </Button>
+      </div>
+    </Panel>
   );
 }
 

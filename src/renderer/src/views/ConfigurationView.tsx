@@ -5,7 +5,6 @@ import { Controller, useForm, type Control, type Path } from "react-hook-form";
 import { z } from "zod";
 import type { AppStateSnapshot } from "../../../shared/types";
 import { appSettingsSchema, replacementRuleSchema } from "../../../shared/schemas";
-import { Metric } from "../components/Metric";
 import { ProviderConfigurationPanels } from "../components/ProviderConfigurationPanels";
 import { ShortcutRecorder } from "../components/ShortcutRecorder";
 import { View } from "../components/View";
@@ -75,6 +74,7 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
   });
   const replacements = form.watch("replacements");
   const replacementsParent = useAutoAnimateRef<HTMLDivElement>();
+  const actionableHotkeyDiagnostics = state.capabilities.hotkeys.diagnostics.filter(isActionableHotkeyDiagnostic);
   const audioInputItems: Array<SelectItem<string>> = [
     { value: "", label: "System default" },
     ...devices.map((device) => ({
@@ -118,7 +118,6 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
               <FormSelect control={form.control} name="settings.recordingPillPosition" items={recordingPillPositionItems} />
             </Field>
           </div>
-          <p className="m-0 mt-3 text-xs text-muted-foreground">The interface remains monochrome in this pass.</p>
         </Panel>
 
         <Panel title="Keyboard Shortcuts">
@@ -136,14 +135,9 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
                 }}
               />
             </Field>
-            {state.capabilities.hotkeys.triggerDescription && (
+            {actionableHotkeyDiagnostics.length > 0 && (
               <p className="col-span-full m-0 text-xs leading-5 text-muted-foreground">
-                System shortcut: {state.capabilities.hotkeys.triggerDescription}
-              </p>
-            )}
-            {state.capabilities.hotkeys.diagnostics.length > 0 && (
-              <p className="col-span-full m-0 text-xs leading-5 text-muted-foreground">
-                {state.capabilities.hotkeys.diagnostics.join(" ")}
+                {actionableHotkeyDiagnostics.join(" ")}
               </p>
             )}
           </div>
@@ -260,23 +254,34 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
           </div>
         </Panel>
 
-        <section className="grid grid-cols-2 gap-4 max-[980px]:grid-cols-1">
-          <Panel title="Storage diagnostics">
-            <Metric label="Backend" value={state.capabilities.storage.backend} />
-            <Metric label="Diagnostics" value={state.capabilities.storage.diagnostics.join(" ")} />
-          </Panel>
-          <Panel title="Clear local data">
-            <div className="flex flex-col gap-3">
-              <p className="m-0 text-sm text-muted-foreground">Clears persisted settings, modes, providers, vocabulary, replacements, and history.</p>
-              <Button variant="danger" onClick={() => void clearLocalData()}>
-                <Trash2 size={18} /> Clear local data
-              </Button>
-            </div>
-          </Panel>
-        </section>
+        <Panel title="Clear local data">
+          <div className="flex flex-col gap-3">
+            <p className="m-0 text-sm text-muted-foreground">Clears persisted settings, modes, providers, vocabulary, replacements, and history.</p>
+            <Button variant="danger" onClick={() => void clearLocalData()}>
+              <Trash2 size={18} /> Clear local data
+            </Button>
+          </div>
+        </Panel>
       </section>
     </View>
   );
+}
+
+function isActionableHotkeyDiagnostic(message: string): boolean {
+  const normalized = message.toLowerCase();
+
+  if (message === "Keyboard shortcut recording is active.") return true;
+  if (message.startsWith("Global activation shortcut is not registered: ")) return true;
+  if (/^Unable to register .+ hotkey globally: /.test(message)) return true;
+  if (/^Invalid .+ hotkey ".+": /.test(message)) return true;
+  if (normalized.includes("does not support activation shortcut")) return true;
+  if (normalized.includes("does not expose key release events")) return true;
+  if (normalized.includes("assign it in system keyboard settings")) return true;
+  if (normalized.includes("assigned a different shortcut")) return true;
+  if (normalized.includes("already used")) return normalized.includes("shortcut") || normalized.includes("hotkey");
+  if (normalized.includes("already owned")) return normalized.includes("shortcut") || normalized.includes("hotkey");
+
+  return false;
 }
 
 function FormSelect({

@@ -3,17 +3,25 @@ name: Runtime Artifacts
 on:
   workflow_dispatch:
   push:
+    tags:
+      - "v*"
     paths:
       - "scripts/prepare-runtimes.mjs"
       - "scripts/check-runtimes.mjs"
+      - "scripts/package-runtimes.mjs"
+      - "scripts/check-runtime-manifest.mjs"
       - "scripts/runtime-manifest.json"
+      - "src/shared/stt-runtime-catalog.ts"
       - "patches/whisper.cpp/**"
       - ".github/workflows/runtimes.yml"
   pull_request:
     paths:
       - "scripts/prepare-runtimes.mjs"
       - "scripts/check-runtimes.mjs"
+      - "scripts/package-runtimes.mjs"
+      - "scripts/check-runtime-manifest.mjs"
       - "scripts/runtime-manifest.json"
+      - "src/shared/stt-runtime-catalog.ts"
       - "patches/whisper.cpp/**"
       - ".github/workflows/runtimes.yml"
 
@@ -27,6 +35,8 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux-x64
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
           - os: macos-13
             platform: darwin-x64
           - os: macos-latest
@@ -48,8 +58,19 @@ jobs:
 
       - run: node scripts/check-runtimes.mjs
 
+      - run: node scripts/package-runtimes.mjs --platform current
+
       - uses: actions/upload-artifact@v4
         with:
-          name: runtimes-${{ matrix.platform }}
-          path: vendor/runtimes/${{ matrix.platform }}
+          name: stt-runtime-archives-${{ matrix.platform }}
+          path: dist/runtimes/*.tar.gz
           if-no-files-found: error
+
+      - name: Attach archives to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes ""
+          gh release upload "${GITHUB_REF_NAME}" dist/runtimes/*.tar.gz --clobber

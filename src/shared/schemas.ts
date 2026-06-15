@@ -28,6 +28,17 @@ export const modelDownloadStrategySchema = z.enum(["direct_file", "archive", "ol
 export const modelDownloadStatusSchema = z.enum(["not_downloaded", "downloading", "downloaded", "error"]);
 export const sttRuntimeIdSchema = z.enum(["whisper.cpp", "sherpa-onnx"]);
 export const runtimeAvailabilityStatusSchema = z.enum(["available", "missing", "unsupported"]);
+export const sttPreferredLanguageScopeSchema = z.enum(["multilingual", "english"]);
+export const sttRuntimeInstallStatusSchema = z.enum([
+  "ready",
+  "not_installed",
+  "downloading",
+  "installing",
+  "repairable",
+  "error",
+  "unsupported"
+]);
+export const sttRuntimeSourceSchema = z.enum(["env", "resources", "cache", "vendor", "legacy_vendor"]);
 
 const optionalStringSchema = z.string().optional();
 
@@ -205,7 +216,11 @@ export const appSettingsSchema = z
     activationHotkey: z.string().min(1),
     recordingPillPosition: recordingPillPositionSchema,
     preferredAudioInputId: optionalStringSchema,
-    typingBaselineWpm: z.number().min(1)
+    typingBaselineWpm: z.number().min(1),
+    trayCloseNoticeShownAt: optionalStringSchema,
+    sttSetupSkippedAt: optionalStringSchema,
+    sttSetupCompletedAt: optionalStringSchema,
+    sttPreferredLanguageScope: sttPreferredLanguageScopeSchema
   });
 
 export const dictationHistoryItemSchema = z
@@ -257,15 +272,70 @@ export const sttRuntimeAvailabilitySchema = z
     status: runtimeAvailabilityStatusSchema,
     platformKey: z.string(),
     binaryPath: optionalStringSchema,
-    source: z.enum(["env", "resources", "vendor", "legacy_vendor"]).optional(),
+    source: sttRuntimeSourceSchema.optional(),
     version: optionalStringSchema,
     message: z.string()
+  })
+  .passthrough();
+
+export const sttRuntimeInstallStateSchema = z
+  .object({
+    id: sttRuntimeIdSchema,
+    label: z.string(),
+    platformKey: z.string(),
+    requiredVersion: z.string(),
+    installedVersion: optionalStringSchema,
+    status: sttRuntimeInstallStatusSchema,
+    source: sttRuntimeSourceSchema.optional(),
+    binaryPath: optionalStringSchema,
+    rootDir: optionalStringSchema,
+    progressBytes: z.number().min(0),
+    totalBytes: z.number().min(0).optional(),
+    error: optionalStringSchema,
+    message: z.string(),
+    canDownload: z.boolean(),
+    canRepair: z.boolean()
+  })
+  .passthrough();
+
+export const sttBenchmarkResultSchema = z
+  .object({
+    modelId: z.string().min(1),
+    audioDurationMs: z.number().min(0),
+    elapsedMs: z.number().min(0),
+    realtimeFactor: z.number().min(0),
+    totalMemoryBytes: z.number().min(0),
+    cpuThreadCount: z.number().min(1),
+    createdAt: z.string()
+  })
+  .passthrough();
+
+export const sttModelRecommendationSchema = z
+  .object({
+    recommendedModelId: z.string().min(1),
+    fallbackModelId: z.string().min(1),
+    reason: z.string(),
+    benchmark: sttBenchmarkResultSchema.optional(),
+    alternatives: z.array(z.object({ modelId: z.string().min(1), reason: z.string() }))
+  })
+  .passthrough();
+
+export const sttSetupSnapshotSchema = z
+  .object({
+    skipped: z.boolean(),
+    completed: z.boolean(),
+    needsSetup: z.boolean(),
+    runtimes: z.record(sttRuntimeIdSchema, sttRuntimeInstallStateSchema),
+    recommendation: sttModelRecommendationSchema.optional()
   })
   .passthrough();
 
 export const capabilityReportSchema = z
   .object({
     sttRuntimes: z.record(sttRuntimeIdSchema, sttRuntimeAvailabilitySchema),
+    stt: z.object({
+      diagnostics: z.array(z.string())
+    }),
     hotkeys: z
       .object({
         backend: z.enum(["xdg_desktop_portal", "gnome_custom_shortcut", "kde_kglobalaccel", "hyprland_bind", "electron_global_shortcut"]),
@@ -276,7 +346,7 @@ export const capabilityReportSchema = z
       }),
     context: z
       .object({
-        backend: z.literal("clipboard_fallback"),
+        backend: z.enum(["desktop_metadata", "clipboard_fallback"]),
         appMetadata: z.boolean(),
         focusedText: z.boolean(),
         selectedText: z.boolean(),
@@ -309,6 +379,7 @@ export const appStateSnapshotSchema = z
     history: z.array(dictationHistoryItemSchema),
     modelLibrary: modelLibrarySnapshotSchema,
     releaseNotes: z.array(releaseNoteSchema),
+    sttSetup: sttSetupSnapshotSchema,
     session: dictationSessionSchema,
     capabilities: capabilityReportSchema
   })

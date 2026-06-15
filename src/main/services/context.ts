@@ -1,20 +1,27 @@
 import type { AppSettings, ContextSnapshot } from "../../shared/types";
 import { commandExists, execFileText, sleep } from "./command";
 import { clipboard } from "../electron-api";
+import { DesktopMetadataService } from "./context-metadata";
 
 export class ContextService {
   private lastClipboardText = "";
   private lastClipboardAt = 0;
   private hasYdotool = false;
+  private metadata = new DesktopMetadataService();
   private diagnostics: string[] = [];
 
   async initialize(): Promise<void> {
-    this.hasYdotool = await commandExists("ydotool");
+    const [hasYdotool] = await Promise.all([commandExists("ydotool"), this.metadata.initialize()]);
+    this.hasYdotool = hasYdotool;
     this.diagnostics = [
-      "Active app metadata unavailable: no compositor-neutral provider is configured.",
+      ...this.metadata.getDiagnostics(),
       this.hasYdotool ? "ydotool available for selected text fallback." : "ydotool unavailable."
     ];
     this.startClipboardTracking();
+  }
+
+  dispose(): void {
+    this.metadata.dispose();
   }
 
   getDiagnostics(): string[] {
@@ -28,7 +35,7 @@ export class ContextService {
     browserDomain: boolean;
   } {
     return {
-      appMetadata: false,
+      appMetadata: this.metadata.hasAppMetadataProvider(),
       focusedText: false,
       selectedText: this.hasYdotool,
       browserDomain: false
@@ -36,7 +43,8 @@ export class ContextService {
   }
 
   async capture(settings: AppSettings): Promise<ContextSnapshot> {
-    const diagnostics: string[] = ["Active app metadata unavailable: no compositor-neutral provider is configured."];
+    const diagnostics: string[] = [];
+    const activeWindow = await this.metadata.capture(diagnostics);
     let selectedText: string | undefined;
 
     if (settings.selectedTextCapture === "clipboard_restore" && this.hasYdotool) {
@@ -50,9 +58,20 @@ export class ContextService {
         ? currentClipboard
         : undefined;
 
-    const quality = selectedText || clipboardText ? (selectedText ? "partial" : "fallback") : "unavailable";
+    const hasAppMetadata = Boolean(
+      activeWindow.appName || activeWindow.appId || activeWindow.windowTitle || activeWindow.browserDomain || activeWindow.browserUrl
+    );
+    const quality =
+      hasAppMetadata && selectedText
+        ? "full"
+        : hasAppMetadata || selectedText
+          ? "partial"
+          : clipboardText
+            ? "fallback"
+            : "unavailable";
 
     return {
+      ...activeWindow,
       selectedText,
       clipboardText,
       capturedAt: new Date().toISOString(),

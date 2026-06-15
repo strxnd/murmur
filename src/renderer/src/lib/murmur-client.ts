@@ -8,6 +8,11 @@ import type {
   ModeConfig,
   ProviderValidationResult,
   ReplacementRule,
+  SttModelRecommendation,
+  SttPreferredLanguageScope,
+  SttRuntimeId,
+  SttRuntimeInstallState,
+  SttSetupSnapshot,
   TranscriptionProviderConfig,
   VocabularyEntry
 } from "../../../shared/types";
@@ -18,7 +23,10 @@ import {
   modelDownloadStateSchema,
   modelLibrarySnapshotSchema,
   pasteResultSchema,
-  providerValidationResultSchema
+  providerValidationResultSchema,
+  sttModelRecommendationSchema,
+  sttRuntimeInstallStateSchema,
+  sttSetupSnapshotSchema
 } from "../../../shared/schemas";
 
 export const murmurClient = {
@@ -44,6 +52,17 @@ export const murmurClient = {
     window.murmur.deleteDownloadedModel(modelId).then(parseModelLibrary),
   toggleFavoriteModel: (modelId: string): Promise<ModelLibrarySnapshot> =>
     window.murmur.toggleFavoriteModel(modelId).then(parseModelLibrary),
+  getSttSetup: (): Promise<SttSetupSnapshot> => window.murmur.getSttSetup().then(parseSttSetup),
+  downloadSttRuntime: (runtimeId: SttRuntimeId): Promise<SttSetupSnapshot> =>
+    window.murmur.downloadSttRuntime(runtimeId).then(parseSttSetup),
+  repairSttRuntime: (runtimeId: SttRuntimeId): Promise<SttSetupSnapshot> =>
+    window.murmur.repairSttRuntime(runtimeId).then(parseSttSetup),
+  cancelSttRuntimeDownload: (runtimeId: SttRuntimeId): Promise<SttSetupSnapshot> =>
+    window.murmur.cancelSttRuntimeDownload(runtimeId).then(parseSttSetup),
+  runSttBenchmark: (languageScope: SttPreferredLanguageScope): Promise<SttModelRecommendation> =>
+    window.murmur.runSttBenchmark(languageScope).then(parseSttRecommendation),
+  setupBundledStt: (modelId: string): Promise<AppStateSnapshot> => window.murmur.setupBundledStt(modelId).then(parseState),
+  skipSttSetup: (): Promise<AppStateSnapshot> => window.murmur.skipSttSetup().then(parseState),
   startDictation: (): Promise<AppStateSnapshot> => window.murmur.startDictation().then(parseState),
   stopDictation: (): Promise<AppStateSnapshot> => window.murmur.stopDictation().then(parseState),
   cancelDictation: (): Promise<AppStateSnapshot> => window.murmur.cancelDictation().then(parseState),
@@ -63,7 +82,9 @@ export const murmurClient = {
   onRecordingCancel: (callback: (payload: { sessionId: string }) => void): (() => void) => window.murmur.onRecordingCancel(callback),
   onTranscriptDelta: (callback: (delta: string) => void): (() => void) => window.murmur.onTranscriptDelta(callback),
   onModelDownloadProgress: (callback: (state: ModelDownloadState) => void): (() => void) =>
-    window.murmur.onModelDownloadProgress((state) => callback(modelDownloadStateSchema.parse(state) as ModelDownloadState))
+    window.murmur.onModelDownloadProgress((state) => callback(modelDownloadStateSchema.parse(state) as ModelDownloadState)),
+  onSttRuntimeProgress: (callback: (state: SttRuntimeInstallState) => void): (() => void) =>
+    window.murmur.onSttRuntimeProgress((state) => callback(sttRuntimeInstallStateSchema.parse(state) as SttRuntimeInstallState))
 };
 
 function parseState(value: unknown): AppStateSnapshot {
@@ -76,4 +97,12 @@ function parseProviderValidation(value: unknown): ProviderValidationResult {
 
 function parseModelLibrary(value: unknown): ModelLibrarySnapshot {
   return modelLibrarySnapshotSchema.parse(value) as ModelLibrarySnapshot;
+}
+
+function parseSttSetup(value: unknown): SttSetupSnapshot {
+  return sttSetupSnapshotSchema.parse(value) as SttSetupSnapshot;
+}
+
+function parseSttRecommendation(value: unknown): SttModelRecommendation {
+  return sttModelRecommendationSchema.parse(value) as SttModelRecommendation;
 }

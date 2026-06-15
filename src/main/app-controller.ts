@@ -1,6 +1,11 @@
-import type { BrowserWindow as ElectronBrowserWindow } from "electron";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import type {
+  BrowserWindow as ElectronBrowserWindow,
+  MenuItemConstructorOptions,
+  Notification as ElectronNotification,
+  Tray as ElectronTray
+} from "electron";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import type {
   AppSettings,
   AppStateSnapshot,
@@ -13,6 +18,8 @@ import type {
   ModelLibrarySnapshot,
   ModeConfig,
   ReplacementRule,
+  SttPreferredLanguageScope,
+  SttRuntimeId,
   TranscriptionProviderConfig,
   VocabularyEntry
 } from "../shared/types";
@@ -27,30 +34,51 @@ import { LlmService } from "./services/llm";
 import { ModelLibraryService } from "./services/model-library";
 import { PasteService } from "./services/paste";
 import { StorageService } from "./services/storage";
+import { SttBenchmarkService } from "./services/stt-benchmark";
+import { getSttUsability, sttRuntimeIdForModel, SttSetupService } from "./services/stt-setup";
 import { TranscriptionService } from "./services/stt";
 import { SttRuntimeService } from "./services/stt-runtime";
 import { resolveAppPaths, type AppPaths } from "./services/app-paths";
 import { NativeDesktopGlobalShortcutService } from "./services/native-global-shortcuts";
 import { shortcutDescriptionForActivationMode, XdgGlobalShortcutService } from "./services/xdg-global-shortcuts";
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, nativeTheme, screen } from "./electron-api";
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  globalShortcut,
+  ipcMain,
+  Menu,
+  nativeImage,
+  nativeTheme,
+  Notification,
+  screen,
+  Tray
+} from "./electron-api";
 
 const pillWindowWidth = 360;
 const pillWindowHeight = 86;
 const pillWindowMargin = 24;
+const trayIconDataUrl =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAbklEQVR4nO3WQQ7AIAgEQJ7B/1/JrV4bg4kKXbTZTbzqoEYUYZgbo6qPN2CLm5k7PkeMKoftxLv6PpBdIIAAOKCfbAcQAhFwJGD1KU4FyEYzSgfIYjsOAyITpHTH2XMvac3w3xABpYDyy0fAb9MAo3Ifzf1J6oQAAAAASUVORK5CYII=";
 
 export class AppController {
   private mainWindow: ElectronBrowserWindow | null = null;
   private pillWindow: ElectronBrowserWindow | null = null;
+  private tray: ElectronTray | null = null;
+  private isQuitting = false;
+  private closeToTrayNotification: ElectronNotification | null = null;
   private storage: StorageService;
   private context = new ContextService();
   private paste = new PasteService();
-  private runtimeService = new SttRuntimeService();
+  private runtimeService: SttRuntimeService;
   private portalHotkeys = new XdgGlobalShortcutService();
   private nativeHotkeys = new NativeDesktopGlobalShortcutService();
   private paths: AppPaths;
   private stt: TranscriptionService;
   private llm = new LlmService();
   private modelLibrary: ModelLibraryService;
+  private sttSetup: SttSetupService;
+  private sttBenchmark: SttBenchmarkService;
   private session: DictationSession = defaultSession;
   private sessionContext: ContextSnapshot | null = null;
   private recordingStoppedAt: string | null = null;
@@ -69,32 +97,57 @@ export class AppController {
   constructor() {
     this.paths = resolveAppPaths(app);
     this.storage = new StorageService(this.paths);
+    this.runtimeService = new SttRuntimeService({
+      runtimeDir: this.paths.runtimeDir,
+      emitProgress: (state) => {
+        this.mainWindow?.webContents.send("stt-runtime:progress", state);
+        this.pillWindow?.webContents.send("stt-runtime:progress", state);
+        this.broadcastState();
+      },
+      onBeforeRuntimeMutation: (runtimeId) => this.stt?.stopRuntime(runtimeId)
+    });
     this.stt = new TranscriptionService(this.paths, this.runtimeService);
     this.modelLibrary = new ModelLibraryService(this.paths, this.storage, (state) => {
       this.mainWindow?.webContents.send("models:download-progress", state);
       this.pillWindow?.webContents.send("models:download-progress", state);
       this.broadcastState();
     }, this.runtimeService);
+    this.sttSetup = new SttSetupService(this.paths, this.storage, this.modelLibrary, this.runtimeService);
+    this.sttBenchmark = new SttBenchmarkService(this.paths, this.modelLibrary, this.runtimeService);
   }
 
   dispose(): void {
     globalShortcut.unregisterAll();
     this.portalHotkeys.dispose();
     this.nativeHotkeys.dispose();
+    this.context.dispose();
     this.stt.dispose();
+    this.closeToTrayNotification?.removeAllListeners();
+    this.closeToTrayNotification?.close();
+    this.closeToTrayNotification = null;
+    this.tray?.destroy();
+    this.tray = null;
   }
 
   async initialize(): Promise<void> {
     await this.context.initialize();
     await this.paste.initialize();
     this.registerIpc();
+    this.createTray();
     this.createWindows();
     this.applySettings(this.storage.getState().settings);
     await this.registerHotkeys();
   }
 
   private createWindows(): void {
-    this.mainWindow = new BrowserWindow({
+    this.createMainWindow();
+    this.createPillWindow();
+  }
+
+  private createMainWindow(): void {
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) return;
+
+    const window = new BrowserWindow({
       width: 1120,
       height: 760,
       minWidth: 940,
@@ -103,11 +156,38 @@ export class AppController {
       webPreferences: {
         preload: join(__dirname, "../preload/index.cjs"),
         contextIsolation: true,
-        nodeIntegration: false
+        nodeIntegration: false,
+        backgroundThrottling: false
       }
     });
+    this.mainWindow = window;
 
-    this.pillWindow = new BrowserWindow({
+    void this.loadRenderer(window);
+    this.attachWindowDiagnostics(window, "main");
+
+    window.on("close", (event) => {
+      if (this.isQuitting) return;
+      event.preventDefault();
+      this.hideMainWindow();
+      this.showCloseToTrayNoticeOnce();
+    });
+    window.on("show", () => this.refreshTrayMenu());
+    window.on("hide", () => this.refreshTrayMenu());
+    window.on("minimize", () => this.refreshTrayMenu());
+    window.on("restore", () => this.refreshTrayMenu());
+    window.on("closed", () => {
+      if (this.mainWindow === window) {
+        this.mainWindow = null;
+        this.refreshTrayMenu();
+      }
+    });
+    this.refreshTrayMenu();
+  }
+
+  private createPillWindow(): void {
+    if (this.pillWindow && !this.pillWindow.isDestroyed()) return;
+
+    const window = new BrowserWindow({
       width: pillWindowWidth,
       height: pillWindowHeight,
       show: false,
@@ -130,19 +210,117 @@ export class AppController {
         nodeIntegration: false
       }
     });
+    this.pillWindow = window;
 
-    void this.loadRenderer(this.mainWindow);
-    void this.loadRenderer(this.pillWindow, "?pill=1");
-    this.attachWindowDiagnostics(this.mainWindow, "main");
-    this.attachWindowDiagnostics(this.pillWindow, "pill");
+    void this.loadRenderer(window, "?pill=1");
+    this.attachWindowDiagnostics(window, "pill");
     this.configurePillWindow();
 
-    this.mainWindow.on("closed", () => {
-      this.mainWindow = null;
+    window.on("closed", () => {
+      if (this.pillWindow === window) this.pillWindow = null;
     });
-    this.pillWindow.on("closed", () => {
-      this.pillWindow = null;
+  }
+
+  private createTray(): void {
+    if (this.tray) return;
+
+    const image = nativeImage.createFromDataURL(trayIconDataUrl);
+    if (process.platform === "darwin") {
+      image.setTemplateImage(true);
+    }
+
+    this.tray = new Tray(image);
+    this.tray.setToolTip("Murmur");
+    this.refreshTrayMenu();
+  }
+
+  showMainWindow(): void {
+    if (this.isQuitting) return;
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+      this.createMainWindow();
+    }
+
+    const window = this.mainWindow;
+    if (!window || window.isDestroyed()) return;
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+    this.refreshTrayMenu();
+  }
+
+  private hideMainWindow(): void {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+      this.refreshTrayMenu();
+      return;
+    }
+
+    this.mainWindow.hide();
+    this.refreshTrayMenu();
+  }
+
+  private showCloseToTrayNoticeOnce(): void {
+    const settings = this.storage.getState().settings;
+    if (settings.trayCloseNoticeShownAt) return;
+
+    this.storage.updateSettings({ trayCloseNoticeShownAt: new Date().toISOString() });
+    if (!Notification.isSupported()) return;
+
+    this.closeToTrayNotification?.removeAllListeners();
+    this.closeToTrayNotification?.close();
+
+    const notification = new Notification({
+      title: "Murmur is still running",
+      body: "Use the tray icon to reopen or quit Murmur.",
+      silent: true
     });
+    notification.on("click", () => this.showMainWindow());
+    notification.on("close", () => {
+      if (this.closeToTrayNotification === notification) this.closeToTrayNotification = null;
+    });
+    this.closeToTrayNotification = notification;
+    notification.show();
+  }
+
+  private requestQuit(): void {
+    this.isQuitting = true;
+    this.closeToTrayNotification?.removeAllListeners();
+    this.closeToTrayNotification?.close();
+    this.closeToTrayNotification = null;
+    this.tray?.destroy();
+    this.tray = null;
+    app.quit();
+  }
+
+  prepareToQuit(): void {
+    this.isQuitting = true;
+  }
+
+  private refreshTrayMenu(): void {
+    if (!this.tray) return;
+
+    const isVisible = this.isMainWindowVisible();
+    const template: MenuItemConstructorOptions[] = [
+      {
+        label: isVisible ? "Hide Murmur" : "Show Murmur",
+        click: () => {
+          if (this.isMainWindowVisible()) {
+            this.hideMainWindow();
+          } else {
+            this.showMainWindow();
+          }
+        }
+      },
+      { type: "separator" },
+      {
+        label: "Quit Murmur",
+        click: () => this.requestQuit()
+      }
+    ];
+    this.tray.setContextMenu(Menu.buildFromTemplate(template));
+  }
+
+  private isMainWindowVisible(): boolean {
+    return Boolean(this.mainWindow && !this.mainWindow.isDestroyed() && this.mainWindow.isVisible() && !this.mainWindow.isMinimized());
   }
 
   private async loadRenderer(window: ElectronBrowserWindow, suffix = ""): Promise<void> {
@@ -154,9 +332,11 @@ export class AppController {
   }
 
   private attachWindowDiagnostics(window: ElectronBrowserWindow, label: string): void {
-    window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-      console.log(`[renderer:${label}:${level}] ${message} (${sourceId}:${line})`);
-    });
+    if (Boolean(process.env.ELECTRON_RENDERER_URL)) {
+      window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+        console.log(`[renderer:${label}:${level}] ${message} (${sourceId}:${line})`);
+      });
+    }
     window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
       console.error(`[renderer:${label}:load-failed] ${errorCode} ${errorDescription} ${validatedUrl}`);
     });
@@ -241,6 +421,40 @@ export class AppController {
       const snapshot = await this.modelLibrary.toggleFavorite(modelId);
       this.broadcastState();
       return snapshot;
+    });
+    ipcMain.handle("stt-setup:get", () => this.sttSetup.getSnapshot());
+    ipcMain.handle("stt-runtime:download", async (_event, runtimeId: SttRuntimeId) => {
+      await this.runtimeService.downloadRuntime(runtimeId);
+      this.broadcastState();
+      return this.sttSetup.getSnapshot();
+    });
+    ipcMain.handle("stt-runtime:repair", async (_event, runtimeId: SttRuntimeId) => {
+      await this.runtimeService.repairRuntime(runtimeId);
+      this.broadcastState();
+      return this.sttSetup.getSnapshot();
+    });
+    ipcMain.handle("stt-runtime:cancel-download", async (_event, runtimeId: SttRuntimeId) => {
+      await this.runtimeService.cancelRuntimeDownload(runtimeId);
+      this.broadcastState();
+      return this.sttSetup.getSnapshot();
+    });
+    ipcMain.handle("stt-setup:benchmark", async (_event, languageScope: SttPreferredLanguageScope) => {
+      this.storage.updateSettings({ sttPreferredLanguageScope: languageScope });
+      const recommendation = await this.sttBenchmark.run(languageScope);
+      this.sttSetup.setRecommendation(recommendation);
+      this.broadcastState();
+      return recommendation;
+    });
+    ipcMain.handle("stt-setup:setup-bundled", async (_event, modelId: string) => {
+      this.stt.stopRuntime();
+      await this.sttSetup.setupBundledStt(modelId);
+      this.broadcastState();
+      return this.getSnapshot();
+    });
+    ipcMain.handle("stt-setup:skip", () => {
+      this.sttSetup.skipSttSetup();
+      this.broadcastState();
+      return this.getSnapshot();
     });
     ipcMain.handle("dictation:start", () => this.startRecording("manual"));
     ipcMain.handle("dictation:stop", () => this.stopRecording());
@@ -481,6 +695,19 @@ export class AppController {
     if (["transcribing", "processing", "pasting"].includes(this.session.status)) return this.getSnapshot();
 
     const persisted = this.storage.getState();
+    const sttUsability = getSttUsability(persisted, this.runtimeService, this.paths);
+    if (!sttUsability.usable) {
+      this.session = {
+        ...defaultSession,
+        id: createId("blocked"),
+        status: "error",
+        modeId: persisted.settings.activeModeId,
+        error: sttUsability.reason
+      };
+      this.broadcastState();
+      return this.getSnapshot();
+    }
+
     const context = await this.context.capture(persisted.settings);
     const mode = resolveModeByContext(context, persisted.modes, persisted.autoModeRules, persisted.settings.activeModeId);
     const sttProvider = this.selectTranscriptionProvider(persisted);
@@ -575,13 +802,18 @@ export class AppController {
         this.session = { ...this.session, status: "processing" };
         this.broadcastState();
         const prompt = buildProcessingPrompt({ mode, context, rawTranscript: beforeLlm, vocabularyPrompt });
-        const processed = await this.llm.process({
-          provider: llmProvider,
-          prompt,
-          localOnly: persisted.settings.localOnly
-        });
-        processedText = processed.text || beforeLlm;
-        llmModel = processed.model;
+        try {
+          const processed = await this.llm.process({
+            provider: llmProvider,
+            prompt,
+            localOnly: persisted.settings.localOnly
+          });
+          processedText = processed.text || beforeLlm;
+          llmModel = processed.model;
+        } catch (error) {
+          console.warn(`LLM processing failed; using transcript without AI cleanup. ${errorMessage(error)}`);
+          llmProvider = undefined;
+        }
       } else {
         llmProvider = undefined;
       }
@@ -696,12 +928,14 @@ export class AppController {
   }
 
   private selectTranscriptionProvider(state: {
+    settings: AppSettings;
     transcriptionProviders: TranscriptionProviderConfig[];
     modelLibrary: ModelLibrarySnapshot;
   }): TranscriptionProviderConfig | undefined {
     const activeModel = this.selectActiveModel(state.modelLibrary, "voice");
     const activeProvider = activeModel ? transcriptionProviderFromModel(activeModel, state.transcriptionProviders) : null;
-    return activeProvider ?? state.transcriptionProviders.find((provider) => provider.enabled);
+    if (activeProvider && this.isTranscriptionProviderUsable(activeProvider, state.settings)) return activeProvider;
+    return state.transcriptionProviders.find((provider) => this.isTranscriptionProviderUsable(provider, state.settings));
   }
 
   private selectLlmProvider(state: { llmProviders: LlmProviderConfig[]; modelLibrary: ModelLibrarySnapshot }): LlmProviderConfig | undefined {
@@ -714,8 +948,32 @@ export class AppController {
     const modelId = modelLibrary.activeModelIds[kind];
     const item = modelId ? modelLibrary.catalog.find((candidate) => candidate.id === modelId && candidate.kind === kind) : undefined;
     if (!item) return undefined;
+    if (kind === "voice") {
+      const runtimeId = sttRuntimeIdForModel(item);
+      if (runtimeId && this.runtimeService.getAvailability(runtimeId).status !== "available") return undefined;
+    }
     if (item.downloadStrategy === "none") return item;
     return modelLibrary.downloads.some((download) => download.modelId === item.id && download.status === "downloaded") ? item : undefined;
+  }
+
+  private isTranscriptionProviderUsable(provider: TranscriptionProviderConfig, settings: AppSettings): boolean {
+    if (!provider.enabled) return false;
+    if (settings.localOnly && provider.isCloud) return false;
+    if (provider.isCloud && !provider.apiKey) return false;
+    if (provider.type === "whisper_cpp" && provider.baseUrl === "murmur://runtime/whisper.cpp") {
+      return this.bundledProviderUsable(provider, "whisper.cpp");
+    }
+    if (provider.type === "sherpa_onnx") {
+      return this.bundledProviderUsable(provider, "sherpa-onnx");
+    }
+    return Boolean(provider.baseUrl);
+  }
+
+  private bundledProviderUsable(provider: TranscriptionProviderConfig, runtimeId: SttRuntimeId): boolean {
+    if (this.runtimeService.getAvailability(runtimeId).status !== "available") return false;
+    if (!provider.defaultModel) return false;
+    const modelPath = isAbsolute(provider.defaultModel) ? provider.defaultModel : join(this.paths.modelDir, provider.defaultModel);
+    return existsSync(modelPath);
   }
 
   private showPill(): void {
@@ -763,6 +1021,7 @@ export class AppController {
     const state = this.storage.getState();
     return {
       ...state,
+      sttSetup: this.sttSetup.getSnapshot(),
       session: this.session,
       capabilities: this.getCapabilities()
     };
@@ -772,6 +1031,9 @@ export class AppController {
     const contextFlags = this.context.getCapabilityFlags();
     return {
       sttRuntimes: this.runtimeService.getAvailabilities(),
+      stt: {
+        diagnostics: this.stt.getDiagnostics()
+      },
       hotkeys: {
         backend: this.hotkeyBackend,
         pushToTalkRelease: this.hotkeyPushToTalkRelease,
@@ -780,7 +1042,7 @@ export class AppController {
         diagnostics: this.hotkeyDiagnostics
       },
       context: {
-        backend: "clipboard_fallback",
+        backend: contextFlags.appMetadata ? "desktop_metadata" : "clipboard_fallback",
         appMetadata: contextFlags.appMetadata,
         focusedText: contextFlags.focusedText,
         selectedText: contextFlags.selectedText,
@@ -819,4 +1081,8 @@ function countWords(text: string): number {
     .trim()
     .split(/\s+/)
     .filter(Boolean).length;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

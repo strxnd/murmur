@@ -2,7 +2,7 @@
 
 ## Sources
 
-Pinned versions are defined in `scripts/runtime-manifest.json`.
+Build inputs are defined in `scripts/runtime-manifest.json`. Downloadable Murmur runtime archive metadata is pinned in `src/shared/stt-runtime-catalog.ts`.
 
 - `whisper.cpp`: `v1.8.6`
   - Repository: `https://github.com/ggml-org/whisper.cpp.git`
@@ -41,11 +41,13 @@ npm run runtimes:doctor
 Package after runtimes are present:
 
 ```sh
+npm run runtimes:package
+npm run runtimes:manifest-check
 npm run pack
 npm run dist
 ```
 
-CI builds runtime artifacts per supported hosted runner and uploads `vendor/runtimes/<platform-key>`.
+CI builds runtime artifacts per supported hosted runner, packages one archive per runtime/platform, uploads the archives as workflow artifacts, and attaches them to GitHub Releases on release tags.
 
 ## Manual Smoke Tests
 
@@ -100,11 +102,12 @@ Missing executable:
 - Run `npm run runtimes:prepare`.
 - Confirm `npm run runtimes:doctor` reports both runtimes available.
 - Check that the executable is under `vendor/runtimes/<platform-key>/<runtime>/`.
+- For production downloads, confirm `npm run runtimes:manifest-check` passes and the release archive exists.
 
 Unsupported platform:
 
 - Confirm `node -p "process.platform + '-' + process.arch"` returns one of the supported platform keys.
-- Windows ARM64 is not bundled in this pass.
+- Windows ARM64 is not currently bundled.
 
 Dynamic library load failure:
 

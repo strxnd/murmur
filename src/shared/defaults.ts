@@ -23,7 +23,8 @@ export const defaultSettings: AppSettings = {
   activationMode: "toggle",
   activationHotkey: "CommandOrControl+Alt+Space",
   recordingPillPosition: "bottom_center",
-  typingBaselineWpm: 40
+  typingBaselineWpm: 40,
+  sttPreferredLanguageScope: "multilingual"
 };
 
 export const defaultSession: DictationSession = {

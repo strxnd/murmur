@@ -1,6 +1,6 @@
 # Local STT Runtimes
 
-Murmur bundles native runtime binaries for local voice models:
+Murmur manages native runtime binaries for local voice models:
 
 - `whisper.cpp` for local Whisper GGML models.
 - `sherpa-onnx` for NVIDIA Parakeet ONNX models.
@@ -13,7 +13,7 @@ Supported platform keys:
 - `darwin-arm64`
 - `win32-x64`
 
-Windows ARM64 and GPU-specific runtime variants are out of scope for this pass.
+Windows ARM64 and GPU-specific runtime variants are not currently bundled.
 
 ## Runtime Layout
 
@@ -24,14 +24,13 @@ vendor/runtimes/<platform-key>/whisper.cpp/...
 vendor/runtimes/<platform-key>/sherpa-onnx/...
 ```
 
-Packaged apps copy the same tree to Electron resources:
+Managed installs live in the user cache:
 
 ```text
-resources/runtimes/<platform-key>/whisper.cpp/...
-resources/runtimes/<platform-key>/sherpa-onnx/...
+${XDG_CACHE_HOME:-$HOME/.cache}/murmur/runtimes/stt/<platform-key>/<runtime-id>/<version>/...
 ```
 
-The runtime tree is copied with `electron-builder` `extraResources`, not `files`, so binaries remain outside `app.asar`.
+Production builds download versioned runtime archives from GitHub Releases on demand, verify SHA-256 against `src/shared/stt-runtime-catalog.ts`, and install them into the cache. `vendor/runtimes` remains a development fallback and is not required by `pack` or `dist`.
 
 ## Preparing Runtimes
 
@@ -51,14 +50,21 @@ The prepare script downloads Sherpa ONNX, verifies SHA-256, extracts the archive
 
 Runtime binaries are generated/downloaded during release prep. They are not committed to source control.
 
+Create release archives and print their SHA-256/size values with:
+
+```sh
+npm run runtimes:package
+```
+
 ## Environment Overrides
 
 Runtime lookup order:
 
 1. `MURMUR_WHISPER_CPP_SERVER` or `MURMUR_SHERPA_ONNX_OFFLINE`
 2. `process.resourcesPath/runtimes/<platform-key>/...`
-3. `vendor/runtimes/<platform-key>/...`
-4. Legacy `vendor/runtimes/<runtime-dir>/...`
+3. Managed cache install under `runtimes/stt/<platform-key>/<runtime-id>/<version>/`
+4. `vendor/runtimes/<platform-key>/...`
+5. Legacy `vendor/runtimes/<runtime-dir>/...`
 
 Useful environment variables:
 

@@ -57,6 +57,57 @@ describe("StorageService", () => {
     expect(settings.cancelHotkey).toBeUndefined();
   });
 
+  it("defaults new STT setup settings during migration", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        settings: {
+          activeModeId: "default",
+          theme: "dark",
+          sttPreferredLanguageScope: "invalid"
+        }
+      })
+    );
+
+    const storage = jsonStorage(paths);
+    const settings = storage.getState().settings;
+
+    expect(settings.sttPreferredLanguageScope).toBe("multilingual");
+    expect(settings.sttSetupSkippedAt).toBeUndefined();
+    expect(settings.sttSetupCompletedAt).toBeUndefined();
+  });
+
+  it("normalizes configs without a tray close notice timestamp", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        settings: {
+          activeModeId: "default",
+          theme: "dark"
+        }
+      })
+    );
+
+    const storage = jsonStorage(paths);
+
+    expect(storage.getState().settings.trayCloseNoticeShownAt).toBeUndefined();
+  });
+
+  it("persists the tray close notice timestamp", () => {
+    const paths = testPaths();
+    const storage = jsonStorage(paths);
+    const trayCloseNoticeShownAt = "2026-06-15T12:00:00.000Z";
+
+    storage.updateSettings({ trayCloseNoticeShownAt });
+    const reopened = jsonStorage(paths);
+
+    expect(reopened.getState().settings.trayCloseNoticeShownAt).toBe(trayCloseNoticeShownAt);
+  });
+
   it("writes history state to the data dir", () => {
     const paths = testPaths();
     const storage = jsonStorage(paths);
@@ -78,6 +129,55 @@ describe("StorageService", () => {
 
     expect(storage.backend).toBe("json");
     expect(reopened.getState().history.map((item) => item.id)).toEqual(["dictation-json-fallback"]);
+  });
+
+  it("reports sanitized storage diagnostics", () => {
+    const paths = testPaths();
+    const storage = jsonStorage(paths);
+    const diagnostics = storage.getDiagnostics();
+    const diagnosticText = diagnostics.join(" ");
+
+    expect(diagnostics).toEqual(["History storage is using JSON fallback because SQLite is unavailable."]);
+    expect(diagnosticText).not.toContain(paths.configDir);
+    expect(diagnosticText).not.toContain(paths.dataDir);
+    expect(diagnosticText).not.toContain(paths.cacheDir);
+    expect(diagnosticText).not.toContain(paths.tempDir);
+    expect(diagnosticText).not.toContain("sqlite disabled for test");
+  });
+
+  it("filters the old initial release note while preserving other release notes", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        releaseNotes: [
+          {
+            id: "initial-prototype",
+            date: "2026-06-12",
+            heading: "Removed note",
+            summary: "Removed."
+          },
+          {
+            id: "future-update",
+            date: "2026-07-01",
+            heading: "Future update",
+            summary: "Preserved."
+          }
+        ]
+      })
+    );
+
+    const storage = jsonStorage(paths);
+
+    expect(storage.getState().releaseNotes).toEqual([
+      {
+        id: "future-update",
+        date: "2026-07-01",
+        heading: "Future update",
+        summary: "Preserved."
+      }
+    ]);
   });
 
   it("removes retained audio when deleting or clearing history", () => {

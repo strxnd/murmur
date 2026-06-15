@@ -5,6 +5,7 @@ import { createServer } from "node:net";
 import { isAbsolute, join } from "node:path";
 import type {
   ProviderValidationResult,
+  SttRuntimeId,
   SttStreamingMode,
   TranscriptionProviderConfig,
   TranscriptionResult
@@ -30,15 +31,19 @@ interface RuntimeProcessResult {
 
 interface WhisperServerProcess {
   key: string;
+  runtimeId: SttRuntimeId;
   baseUrl: string;
   process: ChildProcessWithoutNullStreams;
 }
 
 const bundledWhisperCppRuntimeUrl = "murmur://runtime/whisper.cpp";
 const transcriptionTimeoutMs = 120000;
+const whisperServerIdleShutdownMs = 10 * 60 * 1000;
 
 export class TranscriptionService {
   private whisperServer: WhisperServerProcess | null = null;
+  private whisperServerIdleTimer: NodeJS.Timeout | null = null;
+  private lastRuntimeDiagnostics: string[] = [];
 
   constructor(
     private paths: AppPaths,
@@ -47,6 +52,16 @@ export class TranscriptionService {
 
   dispose(): void {
     this.stopWhisperServer();
+  }
+
+  stopRuntime(runtimeId?: SttRuntimeId): void {
+    if (!runtimeId || runtimeId === "whisper.cpp") {
+      this.stopWhisperServer();
+    }
+  }
+
+  getDiagnostics(): string[] {
+    return this.lastRuntimeDiagnostics;
   }
 
   async transcribe(options: TranscribeOptions): Promise<TranscriptionResult> {
@@ -186,6 +201,7 @@ export class TranscriptionService {
 
     try {
       const result = await runProcess(runtime.binaryPath, buildSherpaArgs(modelPath, audioPath), transcriptionTimeoutMs, runtime);
+      this.lastRuntimeDiagnostics = runtimeDiagnostics("Sherpa ONNX", result.stdout, result.stderr);
       const text = extractSherpaText(result.stdout) || extractSherpaText(result.stderr);
       return {
         text,
@@ -193,6 +209,9 @@ export class TranscriptionService {
         model: options.provider.defaultModel,
         streamingMode: "none"
       };
+    } catch (error) {
+      this.lastRuntimeDiagnostics = [`Sherpa ONNX error: ${tail(error instanceof Error ? error.message : String(error))}`];
+      throw new Error("Sherpa ONNX transcription failed. Check runtime diagnostics for details.");
     } finally {
       rmSync(audioPath, { force: true });
     }
@@ -246,13 +265,15 @@ export class TranscriptionService {
   }
 
   private async ensureWhisperServer(modelPath: string): Promise<string> {
+    const runtime = this.runtimeService.requireRuntime("whisper.cpp");
+    const key = [runtime.id, runtime.platformKey, runtime.source, runtime.rootDir, runtime.version, modelPath].join("|");
     const existing = this.whisperServer;
-    if (existing?.key === modelPath && existing.process.exitCode === null && !existing.process.killed) {
+    if (existing?.key === key && existing.process.exitCode === null && !existing.process.killed) {
+      this.scheduleWhisperServerIdleShutdown();
       return existing.baseUrl;
     }
 
     this.stopWhisperServer();
-    const runtime = this.runtimeService.requireRuntime("whisper.cpp");
     const port = await findOpenPort();
     const baseUrl = `http://127.0.0.1:${port}`;
     const args = buildWhisperServerArgs(port, modelPath);
@@ -261,25 +282,41 @@ export class TranscriptionService {
 
     child.stdout.on("data", (chunk: Buffer) => {
       output += chunk.toString();
+      this.lastRuntimeDiagnostics = runtimeDiagnostics("whisper.cpp", output, "");
     });
     child.stderr.on("data", (chunk: Buffer) => {
       output += chunk.toString();
+      this.lastRuntimeDiagnostics = runtimeDiagnostics("whisper.cpp", "", output);
     });
     child.on("close", () => {
       if (this.whisperServer?.process === child) this.whisperServer = null;
     });
 
-    this.whisperServer = { key: modelPath, baseUrl, process: child };
-    await waitForHttp(baseUrl, child, () => output);
+    this.whisperServer = { key, runtimeId: "whisper.cpp", baseUrl, process: child };
+    await waitForHttp(baseUrl, child, () => {
+      this.lastRuntimeDiagnostics = runtimeDiagnostics("whisper.cpp", output, output);
+      return output;
+    });
+    this.scheduleWhisperServerIdleShutdown();
     return baseUrl;
   }
 
   private stopWhisperServer(): void {
+    if (this.whisperServerIdleTimer) {
+      clearTimeout(this.whisperServerIdleTimer);
+      this.whisperServerIdleTimer = null;
+    }
     const existing = this.whisperServer;
     this.whisperServer = null;
     if (existing && existing.process.exitCode === null && !existing.process.killed) {
       existing.process.kill();
     }
+  }
+
+  private scheduleWhisperServerIdleShutdown(): void {
+    if (this.whisperServerIdleTimer) clearTimeout(this.whisperServerIdleTimer);
+    this.whisperServerIdleTimer = setTimeout(() => this.stopWhisperServer(), whisperServerIdleShutdownMs);
+    this.whisperServerIdleTimer.unref();
   }
 
   private requiredModelPath(model: string | undefined, label: string): string {
@@ -509,7 +546,8 @@ async function waitForHttp(baseUrl: string, child: ChildProcessWithoutNullStream
   const timeoutMs = runtimeReadyTimeoutMs();
   while (Date.now() - startedAt < timeoutMs) {
     if (child.exitCode !== null) {
-      throw new Error(`whisper-server exited before becoming ready: ${output().trim()}`);
+      output();
+      throw new Error("whisper-server exited before becoming ready. Check runtime diagnostics for details.");
     }
     try {
       await fetchWithTimeout(baseUrl, {}, 500);
@@ -520,7 +558,8 @@ async function waitForHttp(baseUrl: string, child: ChildProcessWithoutNullStream
   }
 
   child.kill();
-  throw new Error(`whisper-server did not become ready within ${timeoutMs}ms: ${output().trim()}`);
+  output();
+  throw new Error(`whisper-server did not become ready within ${timeoutMs}ms. Check runtime diagnostics for details.`);
 }
 
 function delay(ms: number): Promise<void> {
@@ -532,4 +571,15 @@ function delay(ms: number): Promise<void> {
 function runtimeReadyTimeoutMs(): number {
   const value = Number(process.env.MURMUR_RUNTIME_READY_TIMEOUT_MS);
   return Number.isFinite(value) && value > 0 ? value : 45000;
+}
+
+function runtimeDiagnostics(label: string, stdout: string, stderr: string): string[] {
+  return [
+    stdout.trim() ? `${label} stdout: ${tail(stdout)}` : "",
+    stderr.trim() ? `${label} stderr: ${tail(stderr)}` : ""
+  ].filter(Boolean);
+}
+
+function tail(value: string): string {
+  return value.trim().slice(-2000);
 }

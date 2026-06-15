@@ -39,6 +39,16 @@ export type ModelDownloadStrategy = "direct_file" | "archive" | "ollama_pull" | 
 export type ModelDownloadStatus = "not_downloaded" | "downloading" | "downloaded" | "error";
 export type SttRuntimeId = "whisper.cpp" | "sherpa-onnx";
 export type RuntimeAvailabilityStatus = "available" | "missing" | "unsupported";
+export type SttPreferredLanguageScope = "multilingual" | "english";
+export type SttRuntimeInstallStatus =
+  | "ready"
+  | "not_installed"
+  | "downloading"
+  | "installing"
+  | "repairable"
+  | "error"
+  | "unsupported";
+export type SttRuntimeSource = "env" | "resources" | "cache" | "vendor" | "legacy_vendor";
 
 export interface SttRuntimeAvailability {
   id: SttRuntimeId;
@@ -46,9 +56,53 @@ export interface SttRuntimeAvailability {
   status: RuntimeAvailabilityStatus;
   platformKey: string;
   binaryPath?: string;
-  source?: "env" | "resources" | "vendor" | "legacy_vendor";
+  source?: SttRuntimeSource;
   version?: string;
   message: string;
+}
+
+export interface SttRuntimeInstallState {
+  id: SttRuntimeId;
+  label: string;
+  platformKey: string;
+  requiredVersion: string;
+  installedVersion?: string;
+  status: SttRuntimeInstallStatus;
+  source?: SttRuntimeSource;
+  binaryPath?: string;
+  rootDir?: string;
+  progressBytes: number;
+  totalBytes?: number;
+  error?: string;
+  message: string;
+  canDownload: boolean;
+  canRepair: boolean;
+}
+
+export interface SttBenchmarkResult {
+  modelId: string;
+  audioDurationMs: number;
+  elapsedMs: number;
+  realtimeFactor: number;
+  totalMemoryBytes: number;
+  cpuThreadCount: number;
+  createdAt: string;
+}
+
+export interface SttModelRecommendation {
+  recommendedModelId: string;
+  fallbackModelId: string;
+  reason: string;
+  benchmark?: SttBenchmarkResult;
+  alternatives: Array<{ modelId: string; reason: string }>;
+}
+
+export interface SttSetupSnapshot {
+  skipped: boolean;
+  completed: boolean;
+  needsSetup: boolean;
+  runtimes: Record<SttRuntimeId, SttRuntimeInstallState>;
+  recommendation?: SttModelRecommendation;
 }
 
 export interface ContextSnapshot {
@@ -210,6 +264,10 @@ export interface AppSettings {
   recordingPillPosition: RecordingPillPosition;
   preferredAudioInputId?: string;
   typingBaselineWpm: number;
+  trayCloseNoticeShownAt?: string;
+  sttSetupSkippedAt?: string;
+  sttSetupCompletedAt?: string;
+  sttPreferredLanguageScope: SttPreferredLanguageScope;
 }
 
 export interface DictationHistoryItem {
@@ -276,12 +334,16 @@ export interface AppStateSnapshot {
   history: DictationHistoryItem[];
   modelLibrary: ModelLibrarySnapshot;
   releaseNotes: ReleaseNote[];
+  sttSetup: SttSetupSnapshot;
   session: DictationSession;
   capabilities: CapabilityReport;
 }
 
 export interface CapabilityReport {
   sttRuntimes: Record<SttRuntimeId, SttRuntimeAvailability>;
+  stt: {
+    diagnostics: string[];
+  };
   hotkeys: {
     backend: "xdg_desktop_portal" | "gnome_custom_shortcut" | "kde_kglobalaccel" | "hyprland_bind" | "electron_global_shortcut";
     pushToTalkRelease: boolean;
@@ -290,7 +352,7 @@ export interface CapabilityReport {
     diagnostics: string[];
   };
   context: {
-    backend: "clipboard_fallback";
+    backend: "desktop_metadata" | "clipboard_fallback";
     appMetadata: boolean;
     focusedText: boolean;
     selectedText: boolean;

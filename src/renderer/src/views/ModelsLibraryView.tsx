@@ -1,12 +1,13 @@
+import { Dialog } from "@base-ui/react/dialog";
 import { Popover } from "@base-ui/react/popover";
-import { BrainCircuit, Check, ChevronRight, Download, HardDrive, Heart, Mic, Search, Trash2, X } from "lucide-react";
+import { BrainCircuit, Check, ChevronRight, Download, Gauge, Hammer, HardDrive, Heart, Mic, Search, Trash2, Wrench, X } from "lucide-react";
 import { useEffect, useMemo, useState, type JSX } from "react";
 import type {
   AppStateSnapshot,
   ModelCatalogItem,
   ModelDownloadState,
   ModelProvider,
-  SttRuntimeAvailability
+  SttRuntimeInstallState
 } from "../../../shared/types";
 import { canActivateModel, providerLabel } from "../../../shared/model-activation";
 import { View } from "../components/View";
@@ -51,6 +52,9 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
   const activateModel = useMurmurStore((store) => store.activateModel);
   const deleteDownloadedModel = useMurmurStore((store) => store.deleteDownloadedModel);
   const toggleFavoriteModel = useMurmurStore((store) => store.toggleFavoriteModel);
+  const downloadSttRuntime = useMurmurStore((store) => store.downloadSttRuntime);
+  const repairSttRuntime = useMurmurStore((store) => store.repairSttRuntime);
+  const runSttBenchmark = useMurmurStore((store) => store.runSttBenchmark);
   const [query, setQuery] = useState("");
   const [provider, setProvider] = useState<"all" | ModelProvider>("all");
   const [filter, setFilter] = useState<ModelFilter>("all");
@@ -123,7 +127,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
             {models.map((item) => {
               const download = downloadsById.get(item.id);
               const active = isActiveModel(state, item, download);
-              const runtime = runtimeAvailabilityForModel(state, item);
+              const runtime = runtimeInstallForModel(state, item);
               return (
                 <Popover.Root
                   key={item.id}
@@ -172,6 +176,9 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
                           onDownload={() => void downloadModel(item.id)}
                           onDelete={() => void deleteDownloadedModel(item.id)}
                           onActivate={() => void activateModel(item.id)}
+                          onInstallRuntime={() => runtime && void downloadSttRuntime(runtime.id)}
+                          onRepairRuntime={() => runtime && void repairSttRuntime(runtime.id)}
+                          onBenchmark={() => void runSttBenchmark(state.settings.sttPreferredLanguageScope)}
                           onClose={() => setOpenModelId(null)}
                           runtime={runtime}
                         />
@@ -197,6 +204,9 @@ function ModelPopover({
   onDownload,
   onDelete,
   onActivate,
+  onInstallRuntime,
+  onRepairRuntime,
+  onBenchmark,
   onClose,
   runtime
 }: {
@@ -207,8 +217,11 @@ function ModelPopover({
   onDownload: () => void;
   onDelete: () => void;
   onActivate: () => void;
+  onInstallRuntime: () => void;
+  onRepairRuntime: () => void;
+  onBenchmark: () => void;
   onClose: () => void;
-  runtime?: SttRuntimeAvailability;
+  runtime?: SttRuntimeInstallState;
 }): JSX.Element {
   const status = download?.status ?? "not_downloaded";
   const progress =
@@ -219,7 +232,8 @@ function ModelPopover({
         : statusLabel(status);
   const canDownload = item.downloadStrategy !== "none" && status !== "downloading" && status !== "downloaded";
   const canDelete = item.downloadStrategy !== "none" && status === "downloaded";
-  const runtimeReady = !runtime || runtime.status === "available";
+  const runtimeReady = !runtime || runtime.status === "ready";
+  const runtimeBusy = runtime?.status === "downloading" || runtime?.status === "installing";
   const canActivate = canActivateModel(item) && (item.downloadStrategy === "none" || status === "downloaded");
   const popoverParent = useAutoAnimateRef<HTMLDivElement>();
 
@@ -268,16 +282,49 @@ function ModelPopover({
       {runtime && <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">{runtime.message}</p>}
 
       {status === "downloading" && <ProgressBar value={progressValue(download)} label={`Downloading ${item.name}`} />}
+      {runtimeBusy && <ProgressBar value={runtimeProgressValue(runtime)} label={`${runtime.label} runtime progress`} />}
 
       <Toolbar>
+        {runtime && runtime.status !== "ready" && runtime.canDownload && (
+          <Button onClick={onInstallRuntime} disabled={runtimeBusy}>
+            <Hammer size={18} /> Install runtime
+          </Button>
+        )}
+        {runtime?.canRepair && (
+          <Button onClick={onRepairRuntime} disabled={runtimeBusy}>
+            <Wrench size={18} /> Repair runtime
+          </Button>
+        )}
+        {item.defaultProviderConfig?.sttProviderType === "whisper_cpp" && (
+          <Button onClick={onBenchmark} disabled={runtimeBusy || runtime?.status === "unsupported"}>
+            <Gauge size={18} /> Run benchmark
+          </Button>
+        )}
         {item.downloadStrategy !== "none" && (
           <>
             <Button onClick={onDownload} disabled={!canDownload}>
               <Download size={18} /> {status === "error" ? "Retry" : "Download"}
             </Button>
-            <Button onClick={onDelete} disabled={!canDelete}>
-              <Trash2 size={18} /> Delete
-            </Button>
+            <Dialog.Root>
+              <Dialog.Trigger disabled={!canDelete} render={<Button />}>
+                <Trash2 size={18} /> Delete
+              </Dialog.Trigger>
+              <Dialog.Portal>
+                <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/70" />
+                <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-2xl outline-none">
+                  <Dialog.Title className="m-0 text-base font-semibold text-foreground">Delete downloaded model?</Dialog.Title>
+                  <Dialog.Description className="m-0 mt-2 text-sm leading-6 text-muted-foreground">
+                    This will remove the local download for {item.name}. The model can be downloaded again later.
+                  </Dialog.Description>
+                  <div className="mt-5 flex justify-end gap-2">
+                    <Dialog.Close render={<Button variant="secondary" />}>Cancel</Dialog.Close>
+                    <Dialog.Close onClick={() => void onDelete()} render={<Button variant="danger" />}>
+                      Delete model
+                    </Dialog.Close>
+                  </div>
+                </Dialog.Popup>
+              </Dialog.Portal>
+            </Dialog.Root>
           </>
         )}
         {canActivate && (
@@ -294,7 +341,7 @@ function ModelPopover({
           </span>
         )}
         {status === "downloaded" && canActivate && runtime && !runtimeReady && (
-          <span className="inline-flex min-h-9 items-center gap-2 text-sm text-muted-foreground">{runtimeStatusLabel(runtime.status)}</span>
+          <span className="inline-flex min-h-9 items-center gap-2 text-sm text-muted-foreground">{runtimeStatusLabel(runtime)}</span>
         )}
       </Toolbar>
     </div>
@@ -353,9 +400,9 @@ function StatusBadge({ item, download }: { item: ModelCatalogItem; download?: Mo
   return <Badge tone={tone}>{statusLabel(status)}</Badge>;
 }
 
-function RuntimeBadge({ item, runtime }: { item: ModelCatalogItem; runtime?: SttRuntimeAvailability }): JSX.Element {
+function RuntimeBadge({ item, runtime }: { item: ModelCatalogItem; runtime?: SttRuntimeInstallState }): JSX.Element {
   if (runtime) {
-    return <Badge tone={runtime.status === "available" ? "success" : "warning"}>{runtimeStatusLabel(runtime.status)}</Badge>;
+    return <Badge tone={runtime.status === "ready" ? "success" : "warning"}>{runtimeStatusLabel(runtime)}</Badge>;
   }
   if (item.isCloud) return <Badge tone="cloud">Cloud</Badge>;
   if (item.isOffline) return <Badge tone="local">Offline</Badge>;
@@ -371,16 +418,20 @@ function isActiveModel(state: AppStateSnapshot, item: ModelCatalogItem, download
   return item.downloadStrategy === "none" || download?.status === "downloaded";
 }
 
-function runtimeAvailabilityForModel(state: AppStateSnapshot, item: ModelCatalogItem): SttRuntimeAvailability | undefined {
+function runtimeInstallForModel(state: AppStateSnapshot, item: ModelCatalogItem): SttRuntimeInstallState | undefined {
   if (item.kind !== "voice") return undefined;
-  if (item.defaultProviderConfig?.sttProviderType === "whisper_cpp") return state.capabilities.sttRuntimes["whisper.cpp"];
-  if (item.defaultProviderConfig?.sttProviderType === "sherpa_onnx") return state.capabilities.sttRuntimes["sherpa-onnx"];
+  if (item.defaultProviderConfig?.sttProviderType === "whisper_cpp") return state.sttSetup.runtimes["whisper.cpp"];
+  if (item.defaultProviderConfig?.sttProviderType === "sherpa_onnx") return state.sttSetup.runtimes["sherpa-onnx"];
   return undefined;
 }
 
-function runtimeStatusLabel(status: SttRuntimeAvailability["status"]): string {
-  if (status === "available") return "Runtime ready";
-  if (status === "unsupported") return "Unsupported platform";
+function runtimeStatusLabel(runtime: SttRuntimeInstallState): string {
+  if (runtime.status === "ready") return "Runtime ready";
+  if (runtime.status === "downloading") return "Runtime downloading";
+  if (runtime.status === "installing") return "Runtime installing";
+  if (runtime.status === "repairable") return "Runtime repairable";
+  if (runtime.status === "unsupported") return "Unsupported platform";
+  if (runtime.status === "error") return "Runtime error";
   return "Runtime missing";
 }
 
@@ -442,6 +493,11 @@ function progressLabel(download: ModelDownloadState | undefined): string {
 function progressValue(download: ModelDownloadState | undefined): number | null {
   if (!download?.totalBytes) return null;
   return Math.max(4, Math.min(100, (download.progressBytes / download.totalBytes) * 100));
+}
+
+function runtimeProgressValue(runtime: SttRuntimeInstallState | undefined): number | null {
+  if (!runtime?.totalBytes) return null;
+  return Math.max(4, Math.min(100, (runtime.progressBytes / runtime.totalBytes) * 100));
 }
 
 function formatBytes(bytes: number): string {

@@ -9,6 +9,11 @@ import type {
   ModeConfig,
   ProviderValidationResult,
   ReplacementRule,
+  SttModelRecommendation,
+  SttPreferredLanguageScope,
+  SttRuntimeId,
+  SttRuntimeInstallState,
+  SttSetupSnapshot,
   TranscriptionProviderConfig,
   VocabularyEntry
 } from "../shared/types";
@@ -39,6 +44,15 @@ const api = {
   activateModel: (modelId: string): Promise<ModelLibrarySnapshot> => ipcRenderer.invoke("models:activate", modelId),
   deleteDownloadedModel: (modelId: string): Promise<ModelLibrarySnapshot> => ipcRenderer.invoke("models:delete", modelId),
   toggleFavoriteModel: (modelId: string): Promise<ModelLibrarySnapshot> => ipcRenderer.invoke("models:toggle-favorite", modelId),
+  getSttSetup: (): Promise<SttSetupSnapshot> => ipcRenderer.invoke("stt-setup:get"),
+  downloadSttRuntime: (runtimeId: SttRuntimeId): Promise<SttSetupSnapshot> => ipcRenderer.invoke("stt-runtime:download", runtimeId),
+  repairSttRuntime: (runtimeId: SttRuntimeId): Promise<SttSetupSnapshot> => ipcRenderer.invoke("stt-runtime:repair", runtimeId),
+  cancelSttRuntimeDownload: (runtimeId: SttRuntimeId): Promise<SttSetupSnapshot> =>
+    ipcRenderer.invoke("stt-runtime:cancel-download", runtimeId),
+  runSttBenchmark: (languageScope: SttPreferredLanguageScope): Promise<SttModelRecommendation> =>
+    ipcRenderer.invoke("stt-setup:benchmark", languageScope),
+  setupBundledStt: (modelId: string): Promise<AppStateSnapshot> => ipcRenderer.invoke("stt-setup:setup-bundled", modelId),
+  skipSttSetup: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("stt-setup:skip"),
   startDictation: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("dictation:start"),
   stopDictation: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("dictation:stop"),
   cancelDictation: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("dictation:cancel"),
@@ -91,6 +105,13 @@ const api = {
     ipcRenderer.on("models:download-progress", listener);
     return () => {
       ipcRenderer.removeListener("models:download-progress", listener);
+    };
+  },
+  onSttRuntimeProgress: (callback: (state: SttRuntimeInstallState) => void) => {
+    const listener = (_event: IpcRendererEvent, state: SttRuntimeInstallState): void => callback(state);
+    ipcRenderer.on("stt-runtime:progress", listener);
+    return () => {
+      ipcRenderer.removeListener("stt-runtime:progress", listener);
     };
   }
 };

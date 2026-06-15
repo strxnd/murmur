@@ -26,6 +26,7 @@ import type {
   ReleaseNote,
   ReplacementRule,
   RecordingPillPosition,
+  SttPreferredLanguageScope,
   TranscriptionProviderConfig,
   VocabularyEntry
 } from "../../shared/types";
@@ -57,8 +58,10 @@ const removedSoundVolumeSettingKey = ["auto", "Increase", "Mic", "Volume"].join(
 const require = createRequire(import.meta.url);
 const oldBuiltInModeIds = new Set(["voice_to_text", "message", "email", "meeting", "super", "custom"]);
 const modePresetIds = new Set<ModePresetId>(["voice_to_text", "message", "mail", "note", "custom"]);
+const removedReleaseNoteIds = new Set(["initial-prototype"]);
 const activationModes = new Set<ActivationMode>(["toggle", "push_to_talk"]);
 const recordingPillPositions = new Set<RecordingPillPosition>(["bottom_left", "bottom_center", "bottom_right"]);
+const sttPreferredLanguageScopes = new Set<SttPreferredLanguageScope>(["multilingual", "english"]);
 const customModeDefaults: ModeConfig = {
   id: "custom",
   kind: "custom",
@@ -78,7 +81,6 @@ const customModeDefaults: ModeConfig = {
 export class StorageService {
   private db: any | null = null;
   private backendDiagnostic = "";
-  private readonly pathDiagnostics: string[];
   backend: "sqlite" | "json" = "json";
 
   constructor(
@@ -90,17 +92,11 @@ export class StorageService {
     mkdirSync(paths.cacheDir, { recursive: true });
     mkdirSync(paths.tempDir, { recursive: true });
     mkdirSync(paths.audioDir, { recursive: true });
-    this.pathDiagnostics = [
-      `Config directory: ${paths.configDir}`,
-      `Data directory: ${paths.dataDir}`,
-      `Cache directory: ${paths.cacheDir}`,
-      `Temp directory: ${paths.tempDir}`
-    ];
     this.open();
   }
 
   getDiagnostics(): string[] {
-    return this.backendDiagnostic ? [...this.pathDiagnostics, this.backendDiagnostic] : this.pathDiagnostics;
+    return this.backendDiagnostic ? [this.backendDiagnostic] : [];
   }
 
   getState(): PersistedState {
@@ -117,7 +113,7 @@ export class StorageService {
       vocabulary: state.vocabulary ?? [],
       history: state.history ?? [],
       modelLibrary: this.normalizeModelLibrary(state.modelLibrary),
-      releaseNotes: state.releaseNotes?.length ? state.releaseNotes : clone(defaultReleaseNotes)
+      releaseNotes: this.normalizeReleaseNotes(state.releaseNotes)
     };
   }
 
@@ -285,11 +281,11 @@ export class StorageService {
         );
       `);
       this.backend = "sqlite";
-      this.backendDiagnostic = `Using node:sqlite history storage: ${this.paths.historyDbPath}`;
-    } catch (error) {
+      this.backendDiagnostic = "History storage is ready.";
+    } catch {
       this.db = null;
       this.backend = "json";
-      this.backendDiagnostic = `SQLite unavailable; using JSON history storage: ${this.paths.historyJsonPath}. ${String(error)}`;
+      this.backendDiagnostic = "History storage is using JSON fallback because SQLite is unavailable.";
       if (!existsSync(this.paths.historyJsonPath)) {
         this.writeHistoryJson([]);
       }
@@ -423,7 +419,7 @@ export class StorageService {
       vocabulary: [],
       history: [],
       modelLibrary: clone(defaultModelLibrary),
-      releaseNotes: clone(defaultReleaseNotes)
+      releaseNotes: this.normalizeReleaseNotes(defaultReleaseNotes)
     };
   }
 
@@ -445,7 +441,12 @@ export class StorageService {
       activationHotkey: currentSettings.activationHotkey ?? toggleHotkey ?? defaultSettings.activationHotkey,
       recordingPillPosition: recordingPillPositions.has(currentSettings.recordingPillPosition as RecordingPillPosition)
         ? (currentSettings.recordingPillPosition as RecordingPillPosition)
-        : defaultSettings.recordingPillPosition
+        : defaultSettings.recordingPillPosition,
+      trayCloseNoticeShownAt:
+        typeof currentSettings.trayCloseNoticeShownAt === "string" ? currentSettings.trayCloseNoticeShownAt : undefined,
+      sttPreferredLanguageScope: sttPreferredLanguageScopes.has(currentSettings.sttPreferredLanguageScope as SttPreferredLanguageScope)
+        ? (currentSettings.sttPreferredLanguageScope as SttPreferredLanguageScope)
+        : defaultSettings.sttPreferredLanguageScope
     };
     const modeIds = new Set(modes.map((mode) => mode.id));
     if (oldBuiltInModeIds.has(normalized.activeModeId) || !modeIds.has(normalized.activeModeId)) {
@@ -564,6 +565,11 @@ export class StorageService {
         })),
       activeModelIds
     };
+  }
+
+  private normalizeReleaseNotes(releaseNotes: ReleaseNote[] | undefined): ReleaseNote[] {
+    const source = releaseNotes?.length ? releaseNotes : defaultReleaseNotes;
+    return source.filter((note) => !removedReleaseNoteIds.has(note.id)).map((note) => ({ ...note }));
   }
 }
 

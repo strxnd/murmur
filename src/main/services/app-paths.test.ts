@@ -24,8 +24,10 @@ describe("resolveAppPaths", () => {
     expect(paths.dataDir).toBe(join(root, "xdg-data", "murmur"));
     expect(paths.cacheDir).toBe(join(root, "xdg-cache", "murmur"));
     expect(paths.tempDir).toBe(join(root, "tmp", "murmur"));
+    expect(paths.runtimeDir).toBe(join(root, "xdg-cache", "murmur", "runtimes", "stt"));
     expect(existsSync(paths.configDir)).toBe(true);
     expect(existsSync(paths.modelDir)).toBe(true);
+    expect(existsSync(paths.runtimeDir)).toBe(true);
   });
 
   it("ignores relative XDG env vars", () => {
@@ -50,6 +52,7 @@ describe("resolveAppPaths", () => {
     expect(paths.historyJsonPath).toBe(join(root, "home", ".local", "share", "murmur", "murmur-history.json"));
     expect(paths.audioDir).toBe(join(root, "home", ".local", "share", "murmur", "audio"));
     expect(paths.modelDir).toBe(join(root, "home", ".cache", "murmur", "models", "stt"));
+    expect(paths.runtimeDir).toBe(join(root, "home", ".cache", "murmur", "runtimes", "stt"));
   });
 });
 

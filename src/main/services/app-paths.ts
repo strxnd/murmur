@@ -8,6 +8,7 @@ export interface AppPaths {
   tempDir: string;
   audioDir: string;
   modelDir: string;
+  runtimeDir: string;
   configPath: string;
   historyDbPath: string;
   historyJsonPath: string;
@@ -29,8 +30,9 @@ export function resolveAppPaths(app: PathProvider, env: NodeJS.ProcessEnv = proc
   const tempDir = join(app.getPath("temp"), "murmur");
   const audioDir = join(dataDir, "audio");
   const modelDir = join(cacheDir, "models", "stt");
+  const runtimeDir = join(cacheDir, "runtimes", "stt");
 
-  for (const dir of [configDir, dataDir, cacheDir, tempDir, audioDir, modelDir]) {
+  for (const dir of [configDir, dataDir, cacheDir, tempDir, audioDir, modelDir, runtimeDir]) {
     mkdirSync(dir, { recursive: true });
   }
 
@@ -41,6 +43,7 @@ export function resolveAppPaths(app: PathProvider, env: NodeJS.ProcessEnv = proc
     tempDir,
     audioDir,
     modelDir,
+    runtimeDir,
     configPath: join(configDir, "murmur-config.json"),
     historyDbPath: join(dataDir, "murmur-history.sqlite"),
     historyJsonPath: join(dataDir, "murmur-history.json")

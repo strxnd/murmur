@@ -9,6 +9,11 @@ import type {
   ModeConfig,
   ProviderValidationResult,
   ReplacementRule,
+  SttModelRecommendation,
+  SttPreferredLanguageScope,
+  SttRuntimeId,
+  SttRuntimeInstallState,
+  SttSetupSnapshot,
   TranscriptionProviderConfig,
   VocabularyEntry
 } from "../../../shared/types";
@@ -39,6 +44,13 @@ interface MurmurStore {
   activateModel: (modelId: string) => Promise<void>;
   deleteDownloadedModel: (modelId: string) => Promise<void>;
   toggleFavoriteModel: (modelId: string) => Promise<void>;
+  getSttSetup: () => Promise<void>;
+  downloadSttRuntime: (runtimeId: SttRuntimeId) => Promise<void>;
+  repairSttRuntime: (runtimeId: SttRuntimeId) => Promise<void>;
+  cancelSttRuntimeDownload: (runtimeId: SttRuntimeId) => Promise<void>;
+  runSttBenchmark: (languageScope: SttPreferredLanguageScope) => Promise<SttModelRecommendation>;
+  setupBundledStt: (modelId: string) => Promise<void>;
+  skipSttSetup: () => Promise<void>;
   startDictation: () => Promise<void>;
   stopDictation: () => Promise<void>;
   cancelDictation: () => Promise<void>;
@@ -52,6 +64,7 @@ interface MurmurStore {
 
 let unsubscribeState: (() => void) | null = null;
 let unsubscribeModelProgress: (() => void) | null = null;
+let unsubscribeRuntimeProgress: (() => void) | null = null;
 
 export const useMurmurStore = create<MurmurStore>()((set, get) => {
   const commit = async (operation: () => Promise<AppStateSnapshot>): Promise<void> => {
@@ -68,6 +81,19 @@ export const useMurmurStore = create<MurmurStore>()((set, get) => {
       const modelLibrary = await operation();
       set((current) => ({
         snapshot: current.snapshot ? { ...current.snapshot, modelLibrary } : current.snapshot,
+        status: current.snapshot ? "ready" : current.status,
+        error: null
+      }));
+    } catch (error) {
+      set({ status: get().snapshot ? "ready" : "error", error: errorMessage(error) });
+      throw error;
+    }
+  };
+  const commitSttSetup = async (operation: () => Promise<SttSetupSnapshot>): Promise<void> => {
+    try {
+      const sttSetup = await operation();
+      set((current) => ({
+        snapshot: current.snapshot ? { ...current.snapshot, sttSetup } : current.snapshot,
         status: current.snapshot ? "ready" : current.status,
         error: null
       }));
@@ -94,12 +120,21 @@ export const useMurmurStore = create<MurmurStore>()((set, get) => {
           error: null
         }));
       });
+      unsubscribeRuntimeProgress = murmurClient.onSttRuntimeProgress((runtime) => {
+        set((current) => ({
+          snapshot: current.snapshot ? upsertRuntimeState(current.snapshot, runtime) : current.snapshot,
+          status: current.snapshot ? "ready" : current.status,
+          error: null
+        }));
+      });
     },
     dispose: () => {
       unsubscribeState?.();
       unsubscribeModelProgress?.();
+      unsubscribeRuntimeProgress?.();
       unsubscribeState = null;
       unsubscribeModelProgress = null;
+      unsubscribeRuntimeProgress = null;
     },
     refresh: () => commit(() => murmurClient.getState()),
     setSnapshot: (snapshot) => set({ snapshot, status: "ready", error: null }),
@@ -118,6 +153,34 @@ export const useMurmurStore = create<MurmurStore>()((set, get) => {
     activateModel: (modelId) => commitLibrary(() => murmurClient.activateModel(modelId)),
     deleteDownloadedModel: (modelId) => commitLibrary(() => murmurClient.deleteDownloadedModel(modelId)),
     toggleFavoriteModel: (modelId) => commitLibrary(() => murmurClient.toggleFavoriteModel(modelId)),
+    getSttSetup: () => commitSttSetup(() => murmurClient.getSttSetup()),
+    downloadSttRuntime: (runtimeId) => commitSttSetup(() => murmurClient.downloadSttRuntime(runtimeId)),
+    repairSttRuntime: (runtimeId) => commitSttSetup(() => murmurClient.repairSttRuntime(runtimeId)),
+    cancelSttRuntimeDownload: (runtimeId) => commitSttSetup(() => murmurClient.cancelSttRuntimeDownload(runtimeId)),
+    runSttBenchmark: async (languageScope) => {
+      try {
+        const recommendation = await murmurClient.runSttBenchmark(languageScope);
+        set((current) => ({
+          snapshot: current.snapshot
+            ? {
+                ...current.snapshot,
+                sttSetup: {
+                  ...current.snapshot.sttSetup,
+                  recommendation
+                }
+              }
+            : current.snapshot,
+          status: current.snapshot ? "ready" : current.status,
+          error: null
+        }));
+        return recommendation;
+      } catch (error) {
+        set({ status: get().snapshot ? "ready" : "error", error: errorMessage(error) });
+        throw error;
+      }
+    },
+    setupBundledStt: (modelId) => commit(() => murmurClient.setupBundledStt(modelId)),
+    skipSttSetup: () => commit(() => murmurClient.skipSttSetup()),
     startDictation: () => commit(() => murmurClient.startDictation()),
     stopDictation: () => commit(() => murmurClient.stopDictation()),
     cancelDictation: () => commit(() => murmurClient.cancelDictation()),
@@ -142,6 +205,19 @@ function upsertDownload(snapshot: AppStateSnapshot, download: ModelDownloadState
     modelLibrary: {
       ...snapshot.modelLibrary,
       downloads: [download, ...downloads]
+    }
+  };
+}
+
+function upsertRuntimeState(snapshot: AppStateSnapshot, runtime: SttRuntimeInstallState): AppStateSnapshot {
+  return {
+    ...snapshot,
+    sttSetup: {
+      ...snapshot.sttSetup,
+      runtimes: {
+        ...snapshot.sttSetup.runtimes,
+        [runtime.id]: runtime
+      }
     }
   };
 }

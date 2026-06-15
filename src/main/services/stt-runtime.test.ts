@@ -1,8 +1,9 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SttRuntimeService } from "./stt-runtime";
+import { sttRuntimeCatalog } from "../../shared/stt-runtime-catalog";
 
 let tempDirs: string[] = [];
 
@@ -28,6 +29,8 @@ describe("SttRuntimeService", () => {
     expect(availability.status).toBe("available");
     expect(availability.source).toBe("env");
     expect(availability.binaryPath).toBe(envBinary);
+    expect(availability.message).toBe("whisper.cpp runtime is available.");
+    expect(availability.message).not.toContain(envBinary);
   });
 
   it("resolves packaged resources before vendor", () => {
@@ -50,6 +53,28 @@ describe("SttRuntimeService", () => {
     expect(availability.binaryPath).toBe(resourcesBinary);
   });
 
+  it("resolves cache installs before dev vendor", () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const cacheRoot = join(runtimeDir, "linux-x64", "whisper.cpp", "v1.8.6");
+    const cacheBinary = touch(join(cacheRoot, "whisper-server"));
+    writeRuntimeReceipt(cacheRoot, "whisper.cpp", "linux-x64", "v1.8.6");
+    touch(join(root, "vendor", "runtimes", "linux-x64", "whisper.cpp", "whisper-server"));
+
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      runtimeDir,
+      env: {}
+    });
+
+    const availability = service.getAvailability("whisper.cpp");
+    expect(availability.status).toBe("available");
+    expect(availability.source).toBe("cache");
+    expect(availability.binaryPath).toBe(cacheBinary);
+  });
+
   it("handles .exe candidates on Windows", () => {
     const root = tempRoot();
     const binary = touch(join(root, "vendor", "runtimes", "win32-x64", "whisper.cpp", "whisper-server.exe"));
@@ -66,6 +91,21 @@ describe("SttRuntimeService", () => {
     expect(availability.binaryPath).toBe(binary);
   });
 
+  it("keeps missing runtime messages actionable", () => {
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: tempRoot(),
+      env: {}
+    });
+
+    const availability = service.getAvailability("whisper.cpp");
+
+    expect(availability.status).toBe("missing");
+    expect(availability.message).toContain("MURMUR_WHISPER_CPP_SERVER");
+    expect(availability.message).toContain("vendor/runtimes/linux-x64/whisper.cpp");
+  });
+
   it("returns unsupported for unknown platform and arch", () => {
     const service = new SttRuntimeService({
       platform: "freebsd",
@@ -76,6 +116,76 @@ describe("SttRuntimeService", () => {
 
     expect(service.getAvailability("whisper.cpp").status).toBe("unsupported");
     expect(() => service.requireRuntime("whisper.cpp")).toThrow(/not bundled/);
+  });
+
+  it("marks corrupt cache receipts as repairable", () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const cacheRoot = join(runtimeDir, "linux-x64", "whisper.cpp", "v1.8.6");
+    touch(join(cacheRoot, "whisper-server"));
+    writeFileSync(join(cacheRoot, "runtime.json"), "{not json");
+
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      runtimeDir,
+      env: {}
+    });
+
+    const state = service.getInstallState("whisper.cpp");
+    expect(state.status).toBe("repairable");
+    expect(state.canRepair).toBe(true);
+  });
+
+  it("cleans partial downloads and staging dirs on startup", () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const parent = join(runtimeDir, "linux-x64", "whisper.cpp");
+    const part = join(parent, "runtime.tar.gz.part");
+    const staging = join(parent, "v1.8.6.staging-1");
+    touch(part);
+    mkdirSync(staging, { recursive: true });
+
+    new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      runtimeDir,
+      env: {}
+    });
+
+    expect(existsSync(part)).toBe(false);
+    expect(existsSync(staging)).toBe(false);
+  });
+
+  it("marks SHA mismatches as errors and deletes staged archives", async () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const catalog = structuredClone(sttRuntimeCatalog);
+    catalog["whisper.cpp"].platforms["linux-x64"] = {
+      assetName: "runtime.tar.gz",
+      url: "https://example.test/runtime.tar.gz",
+      sizeBytes: 5,
+      sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    };
+
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      runtimeDir,
+      env: {},
+      catalog,
+      fetch: async () => new Response("bytes", { status: 200, headers: { "content-length": "5" } }),
+      extractArchive: async () => undefined
+    });
+
+    const state = await service.downloadRuntime("whisper.cpp");
+
+    expect(state.status).toBe("error");
+    expect(state.error).toContain("SHA-256 mismatch");
+    expect(service.getInstallState("whisper.cpp").status).toBe("error");
   });
 
   it("builds dynamic library environment variables", () => {
@@ -108,4 +218,18 @@ function touch(path: string): string {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, "");
   return path;
+}
+
+function writeRuntimeReceipt(root: string, id: string, platformKey: string, version: string): void {
+  writeFileSync(
+    join(root, "runtime.json"),
+    JSON.stringify({
+      id,
+      platformKey,
+      version,
+      archiveName: "runtime.tar.gz",
+      archiveSha256: "0".repeat(64),
+      installedAt: new Date().toISOString()
+    })
+  );
 }
