@@ -14,6 +14,7 @@
     "runtimes:package": "node scripts/package-runtimes.mjs --platform current",
     "runtimes:doctor": "node scripts/check-runtimes.mjs",
     "runtimes:manifest-check": "node scripts/check-runtime-manifest.mjs",
+    "linux-helper:build": "node scripts/build-linux-fast-paste.mjs",
     "pack": "npm run build && npm run runtimes:manifest-check && electron-builder --dir",
     "dist": "npm run build && npm run runtimes:manifest-check && electron-builder"
   },
@@ -23,7 +24,15 @@
       "out/**",
       "package.json"
     ],
-    "extraResources": []
+    "extraResources": [
+      {
+        "from": "resources/bin",
+        "to": "bin",
+        "filter": [
+          "linux-fast-paste"
+        ]
+      }
+    ]
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

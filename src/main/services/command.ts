@@ -1,14 +1,22 @@
 import { execFile } from "node:child_process";
 
-export function execFileText(command: string, args: string[], timeoutMs = 2500): Promise<string> {
+export interface ExecFileTextOptions {
+  env?: NodeJS.ProcessEnv;
+  input?: string;
+}
+
+export function execFileText(command: string, args: string[], timeoutMs = 2500, options: ExecFileTextOptions = {}): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = execFile(command, args, { timeout: timeoutMs }, (error, stdout, stderr) => {
+    const child = execFile(command, args, { env: options.env, timeout: timeoutMs }, (error, stdout, stderr) => {
       if (error) {
         reject(new Error(stderr || error.message));
         return;
       }
       resolve(stdout.trim());
     });
+    if (options.input !== undefined) {
+      child.stdin?.write(options.input);
+    }
     child.stdin?.end();
   });
 }

@@ -442,6 +442,8 @@ export class StorageService {
       recordingPillPosition: recordingPillPositions.has(currentSettings.recordingPillPosition as RecordingPillPosition)
         ? (currentSettings.recordingPillPosition as RecordingPillPosition)
         : defaultSettings.recordingPillPosition,
+      selectedTextCapture: "clipboard_restore",
+      pasteMethod: "clipboard_restore",
       trayCloseNoticeShownAt:
         typeof currentSettings.trayCloseNoticeShownAt === "string" ? currentSettings.trayCloseNoticeShownAt : undefined,
       sttPreferredLanguageScope: sttPreferredLanguageScopes.has(currentSettings.sttPreferredLanguageScope as SttPreferredLanguageScope)

@@ -65,6 +65,8 @@ vite.config.ts.timestamp-*
 murmur-state.json
 audio/
 vendor/runtimes/
+.plans/
+resources/bin/linux-fast-paste
 
 # Local editor state
 .vscode/*

@@ -1,42 +1,46 @@
-import type { AppSettings } from "../../shared/types";
-import { commandExists, execFileText, sleep } from "./command";
-import { clipboard } from "../electron-api";
+import { sleep } from "./command";
+import { LinuxClipboardService } from "./linux-clipboard";
+import { TextAutomationService } from "./text-automation";
+
+export interface ClipboardPasteWriter {
+  writeTextForPaste(text: string): Promise<void>;
+}
 
 export class PasteService {
-  private hasYdotool = false;
-  private diagnostics: string[] = [];
+  constructor(
+    private readonly textAutomation: TextAutomationService,
+    private readonly clipboardSettleDelayMs = 120,
+    private readonly linuxClipboard: ClipboardPasteWriter = new LinuxClipboardService()
+  ) {}
 
   async initialize(): Promise<void> {
-    this.hasYdotool = await commandExists("ydotool");
-    this.diagnostics = [
-      this.hasYdotool ? "ydotool available for paste automation." : "ydotool unavailable; clipboard only."
-    ];
+    await Promise.resolve();
   }
 
   getDiagnostics(): string[] {
-    return this.diagnostics;
+    return this.textAutomation.getDiagnostics();
   }
 
   isAutomationAvailable(): boolean {
-    return this.hasYdotool;
+    return this.textAutomation.getCapability().automationAvailable;
   }
 
-  async insertText(text: string, settings: AppSettings): Promise<{ pasted: boolean; message: string }> {
-    const original = clipboard.readText();
-    clipboard.writeText(text);
+  isPermissionRequired(): boolean {
+    return this.textAutomation.getCapability().permissionRequired;
+  }
 
-    if (settings.pasteMethod === "clipboard_only" || !this.hasYdotool) {
-      return { pasted: false, message: "Output copied to clipboard." };
-    }
+  async insertText(text: string): Promise<{ pasted: boolean; message: string }> {
+    return this.textAutomation.runExclusive(async () => {
+      await this.linuxClipboard.writeTextForPaste(text);
 
-    try {
-      await execFileText("ydotool", ["key", "29:1", "47:1", "47:0", "29:0"], 1200);
-      await sleep(700);
-      clipboard.writeText(original);
-      return { pasted: true, message: "Output pasted and clipboard restored." };
-    } catch (error) {
-      clipboard.writeText(text);
-      return { pasted: false, message: `Paste automation failed; output left on clipboard. ${String(error)}` };
-    }
+      await sleep(this.clipboardSettleDelayMs);
+
+      const result = await this.textAutomation.pasteClipboard();
+      if (!result.success) {
+        return { pasted: false, message: result.message };
+      }
+
+      return { pasted: true, message: "Paste shortcut sent; output left on clipboard." };
+    });
   }
 }

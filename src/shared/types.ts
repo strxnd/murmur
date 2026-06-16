@@ -360,9 +360,14 @@ export interface CapabilityReport {
     diagnostics: string[];
   };
   paste: {
-    backend: "ydotool_clipboard" | "clipboard_only";
+    backend: "linux_native_helper" | "wtype" | "xdotool" | "ydotool" | "xdg_remote_desktop_keyboard" | "clipboard_only";
     automationAvailable: boolean;
+    permissionRequired: boolean;
     diagnostics: string[];
+    availableBackends?: Array<"linux_native_helper" | "wtype" | "xdotool" | "ydotool" | "xdg_remote_desktop_keyboard" | "clipboard_only">;
+    attemptedBackends?: Array<"linux_native_helper" | "wtype" | "xdotool" | "ydotool" | "xdg_remote_desktop_keyboard" | "clipboard_only">;
+    missingTools?: string[];
+    setupHints?: string[];
   };
   storage: {
     backend: "sqlite" | "json";

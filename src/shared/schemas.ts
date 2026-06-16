@@ -355,9 +355,18 @@ export const capabilityReportSchema = z
       }),
     paste: z
       .object({
-        backend: z.enum(["ydotool_clipboard", "clipboard_only"]),
+        backend: z.enum(["linux_native_helper", "wtype", "xdotool", "ydotool", "xdg_remote_desktop_keyboard", "clipboard_only"]),
         automationAvailable: z.boolean(),
-        diagnostics: z.array(z.string())
+        permissionRequired: z.boolean(),
+        diagnostics: z.array(z.string()),
+        availableBackends: z
+          .array(z.enum(["linux_native_helper", "wtype", "xdotool", "ydotool", "xdg_remote_desktop_keyboard", "clipboard_only"]))
+          .optional(),
+        attemptedBackends: z
+          .array(z.enum(["linux_native_helper", "wtype", "xdotool", "ydotool", "xdg_remote_desktop_keyboard", "clipboard_only"]))
+          .optional(),
+        missingTools: z.array(z.string()).optional(),
+        setupHints: z.array(z.string()).optional()
       }),
     storage: z
       .object({

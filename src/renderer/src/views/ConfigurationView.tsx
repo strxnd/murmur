@@ -37,16 +37,6 @@ const themeItems: Array<SelectItem<ConfigurationFormValues["settings"]["theme"]>
   { value: "dark", label: "Dark" }
 ];
 
-const pasteMethodItems: Array<SelectItem<ConfigurationFormValues["settings"]["pasteMethod"]>> = [
-  { value: "clipboard_restore", label: "Clipboard restore" },
-  { value: "clipboard_only", label: "Clipboard only" }
-];
-
-const selectedTextCaptureItems: Array<SelectItem<ConfigurationFormValues["settings"]["selectedTextCapture"]>> = [
-  { value: "clipboard_restore", label: "Clipboard restore" },
-  { value: "disabled", label: "Disabled" }
-];
-
 const activationModeItems: Array<SelectItem<ConfigurationFormValues["settings"]["activationMode"]>> = [
   { value: "toggle", label: "Toggle" },
   { value: "push_to_talk", label: "Push-to-talk" }
@@ -149,12 +139,6 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
           <FormSwitch control={form.control} name="settings.launchAtLogin" label="Launch at login" />
           <FormSwitch control={form.control} name="settings.localOnly" label="Local-only mode" />
           <FormSwitch control={form.control} name="settings.retainAudio" label="Retain audio" />
-          <Field label="Paste method">
-            <FormSelect control={form.control} name="settings.pasteMethod" items={pasteMethodItems} />
-          </Field>
-          <Field label="Selected text capture">
-            <FormSelect control={form.control} name="settings.selectedTextCapture" items={selectedTextCaptureItems} />
-          </Field>
           <Field label="Preferred audio input">
             <FormSelect control={form.control} name="settings.preferredAudioInputId" items={audioInputItems} />
           </Field>

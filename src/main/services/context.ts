@@ -1,22 +1,30 @@
-import type { AppSettings, ContextSnapshot } from "../../shared/types";
-import { commandExists, execFileText, sleep } from "./command";
+import { randomUUID } from "node:crypto";
+import type { ContextSnapshot } from "../../shared/types";
+import { sleep } from "./command";
 import { clipboard } from "../electron-api";
+import { captureClipboardSnapshot, restoreClipboardSnapshot } from "./clipboard-snapshot";
 import { DesktopMetadataService } from "./context-metadata";
+import { LinuxClipboardService } from "./linux-clipboard";
+import { TextAutomationService } from "./text-automation";
+
+export interface PrimarySelectionReader {
+  readPrimaryText(): Promise<string | undefined>;
+}
 
 export class ContextService {
   private lastClipboardText = "";
   private lastClipboardAt = 0;
-  private hasYdotool = false;
   private metadata = new DesktopMetadataService();
-  private diagnostics: string[] = [];
+
+  constructor(
+    private readonly textAutomation: TextAutomationService,
+    private readonly selectionPollTimeoutMs = 500,
+    private readonly selectionPollIntervalMs = 25,
+    private readonly linuxClipboard: PrimarySelectionReader = new LinuxClipboardService()
+  ) {}
 
   async initialize(): Promise<void> {
-    const [hasYdotool] = await Promise.all([commandExists("ydotool"), this.metadata.initialize()]);
-    this.hasYdotool = hasYdotool;
-    this.diagnostics = [
-      ...this.metadata.getDiagnostics(),
-      this.hasYdotool ? "ydotool available for selected text fallback." : "ydotool unavailable."
-    ];
+    await this.metadata.initialize();
     this.startClipboardTracking();
   }
 
@@ -25,7 +33,7 @@ export class ContextService {
   }
 
   getDiagnostics(): string[] {
-    return this.diagnostics;
+    return [...this.metadata.getDiagnostics(), ...this.textAutomation.getDiagnostics()];
   }
 
   getCapabilityFlags(): {
@@ -37,17 +45,17 @@ export class ContextService {
     return {
       appMetadata: this.metadata.hasAppMetadataProvider(),
       focusedText: false,
-      selectedText: this.hasYdotool,
+      selectedText: this.textAutomation.getCapability().automationAvailable,
       browserDomain: false
     };
   }
 
-  async capture(settings: AppSettings): Promise<ContextSnapshot> {
+  async capture(): Promise<ContextSnapshot> {
     const diagnostics: string[] = [];
     const activeWindow = await this.metadata.capture(diagnostics);
     let selectedText: string | undefined;
 
-    if (settings.selectedTextCapture === "clipboard_restore" && this.hasYdotool) {
+    if (this.textAutomation.getCapability().automationAvailable) {
       selectedText = await this.captureSelectionViaClipboard(diagnostics);
     }
 
@@ -93,21 +101,43 @@ export class ContextService {
   }
 
   private async captureSelectionViaClipboard(diagnostics: string[]): Promise<string | undefined> {
-    const original = clipboard.readText();
-    try {
-      await execFileText("ydotool", ["key", "29:1", "46:1", "46:0", "29:0"], 1200);
-      await sleep(180);
-      const copied = clipboard.readText();
-      if (copied && copied !== original) {
-        clipboard.writeText(original);
-        return copied;
+    return this.textAutomation.runExclusive(async () => {
+      const original = captureClipboardSnapshot();
+      const sentinel = `murmur-selection-${randomUUID()}`;
+      const originalPrimary = await this.linuxClipboard.readPrimaryText().catch(() => undefined);
+      try {
+        clipboard.writeText(sentinel);
+        const result = await this.textAutomation.copySelection();
+        if (!result.success) {
+          diagnostics.push(result.message);
+          return undefined;
+        }
+
+        const copied = await this.pollClipboardChange(sentinel);
+        if (copied && copied !== sentinel) {
+          return copied;
+        }
+        const primary = await this.linuxClipboard.readPrimaryText().catch(() => undefined);
+        if (primary && primary !== sentinel && primary !== originalPrimary) {
+          return primary;
+        }
+        return undefined;
+      } catch (error) {
+        diagnostics.push(`Selected text capture failed: ${String(error)}`);
+        return undefined;
+      } finally {
+        restoreClipboardSnapshot(original);
       }
-      clipboard.writeText(original);
-      return undefined;
-    } catch (error) {
-      diagnostics.push(`Selected text fallback failed: ${String(error)}`);
-      clipboard.writeText(original);
-      return undefined;
+    });
+  }
+
+  private async pollClipboardChange(sentinel: string): Promise<string | undefined> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < this.selectionPollTimeoutMs) {
+      const copied = clipboard.readText();
+      if (copied && copied !== sentinel) return copied;
+      await sleep(this.selectionPollIntervalMs);
     }
+    return undefined;
   }
 }

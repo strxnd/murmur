@@ -40,6 +40,7 @@ import { TranscriptionService } from "./services/stt";
 import { SttRuntimeService } from "./services/stt-runtime";
 import { resolveAppPaths, type AppPaths } from "./services/app-paths";
 import { NativeDesktopGlobalShortcutService } from "./services/native-global-shortcuts";
+import { TextAutomationService } from "./services/text-automation";
 import { shortcutDescriptionForActivationMode, XdgGlobalShortcutService } from "./services/xdg-global-shortcuts";
 import {
   app,
@@ -68,8 +69,9 @@ export class AppController {
   private isQuitting = false;
   private closeToTrayNotification: ElectronNotification | null = null;
   private storage: StorageService;
-  private context = new ContextService();
-  private paste = new PasteService();
+  private textAutomation = new TextAutomationService();
+  private context = new ContextService(this.textAutomation);
+  private paste = new PasteService(this.textAutomation);
   private runtimeService: SttRuntimeService;
   private portalHotkeys = new XdgGlobalShortcutService();
   private nativeHotkeys = new NativeDesktopGlobalShortcutService();
@@ -120,6 +122,7 @@ export class AppController {
     globalShortcut.unregisterAll();
     this.portalHotkeys.dispose();
     this.nativeHotkeys.dispose();
+    this.textAutomation.dispose();
     this.context.dispose();
     this.stt.dispose();
     this.closeToTrayNotification?.removeAllListeners();
@@ -130,6 +133,7 @@ export class AppController {
   }
 
   async initialize(): Promise<void> {
+    await this.textAutomation.initialize();
     await this.context.initialize();
     await this.paste.initialize();
     this.registerIpc();
@@ -471,7 +475,7 @@ export class AppController {
       clipboard.writeText(text);
       return { ok: true };
     });
-    ipcMain.handle("history:repaste", (_event, text: string) => this.paste.insertText(text, this.storage.getState().settings));
+    ipcMain.handle("history:repaste", (_event, text: string) => this.paste.insertText(text));
     ipcMain.handle("history:delete", (_event, id: string) => {
       this.storage.deleteHistory(id);
       this.broadcastState();
@@ -713,7 +717,7 @@ export class AppController {
       return this.getSnapshot();
     }
 
-    const context = await this.context.capture(persisted.settings);
+    const context = await this.context.capture();
     const mode = resolveModeByContext(context, persisted.modes, persisted.autoModeRules, persisted.settings.activeModeId);
     const sttProvider = this.selectTranscriptionProvider(persisted);
     const llmProvider = mode.aiEnabled ? this.selectLlmProvider(persisted) : undefined;
@@ -775,7 +779,7 @@ export class AppController {
       return this.failSession("No enabled transcription provider is configured.");
     }
 
-    const context = this.sessionContext ?? (await this.context.capture(persisted.settings));
+    const context = this.sessionContext ?? (await this.context.capture());
     const audio = new Uint8Array(payload.audio);
     const audioPath = persisted.settings.retainAudio ? this.writeAudioFile(this.session.id, audio, payload.mimeType) : null;
     const vocabularyPrompt = buildVocabularyPrompt(persisted.vocabulary);
@@ -831,7 +835,11 @@ export class AppController {
       const processedWordCount = countWords(processedText);
       this.session = { ...this.session, status: "pasting" };
       this.broadcastState();
-      await this.paste.insertText(processedText, persisted.settings);
+      this.hidePill();
+      const pasteResult = await this.paste.insertText(processedText);
+      if (!pasteResult.pasted) {
+        this.notifyPasteFallback(pasteResult.message);
+      }
 
       const item: DictationHistoryItem = {
         id: createId("dictation"),
@@ -862,7 +870,12 @@ export class AppController {
       };
       this.storage.addHistory(item);
 
-      this.session = { ...this.session, status: "complete", transcriptPreview: processedText };
+      this.session = {
+        ...this.session,
+        status: "complete",
+        transcriptPreview: processedText,
+        error: pasteResult.pasted ? undefined : pasteResult.message
+      };
       this.recordingStoppedAt = null;
       this.pushToTalkPressed = false;
       this.pushToTalkSessionId = null;
@@ -992,6 +1005,19 @@ export class AppController {
     setTimeout(() => this.pillWindow?.hide(), 1800).unref();
   }
 
+  private hidePill(): void {
+    this.pillWindow?.hide();
+  }
+
+  private notifyPasteFallback(message: string): void {
+    if (!Notification.isSupported()) return;
+    new Notification({
+      title: "Murmur output copied",
+      body: message || "Automatic paste was unavailable; the output is on the clipboard.",
+      silent: true
+    }).show();
+  }
+
   private configurePillWindow(): void {
     if (!this.pillWindow) return;
     this.pillWindow.setFocusable(false);
@@ -1034,6 +1060,7 @@ export class AppController {
 
   private getCapabilities(): CapabilityReport {
     const contextFlags = this.context.getCapabilityFlags();
+    const pasteCapability = this.textAutomation.getCapability();
     return {
       sttRuntimes: this.runtimeService.getAvailabilities(),
       stt: {
@@ -1055,9 +1082,14 @@ export class AppController {
         diagnostics: this.context.getDiagnostics()
       },
       paste: {
-        backend: this.paste.isAutomationAvailable() ? "ydotool_clipboard" : "clipboard_only",
-        automationAvailable: this.paste.isAutomationAvailable(),
-        diagnostics: this.paste.getDiagnostics()
+        backend: pasteCapability.backend,
+        automationAvailable: pasteCapability.automationAvailable,
+        permissionRequired: pasteCapability.permissionRequired,
+        diagnostics: this.paste.getDiagnostics(),
+        availableBackends: pasteCapability.availableBackends,
+        attemptedBackends: pasteCapability.attemptedBackends,
+        missingTools: pasteCapability.missingTools,
+        setupHints: pasteCapability.setupHints
       },
       storage: {
         backend: this.storage.backend,

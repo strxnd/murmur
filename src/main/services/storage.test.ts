@@ -79,6 +79,28 @@ describe("StorageService", () => {
     expect(settings.sttSetupCompletedAt).toBeUndefined();
   });
 
+  it("normalizes removed automation settings to automatic behavior", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        settings: {
+          activeModeId: "default",
+          theme: "dark",
+          pasteMethod: "clipboard_only",
+          selectedTextCapture: "disabled"
+        }
+      })
+    );
+
+    const storage = jsonStorage(paths);
+    const settings = storage.getState().settings;
+
+    expect(settings.pasteMethod).toBe("clipboard_restore");
+    expect(settings.selectedTextCapture).toBe("clipboard_restore");
+  });
+
   it("normalizes configs without a tray close notice timestamp", () => {
     const paths = testPaths();
     mkdirSync(paths.configDir, { recursive: true });

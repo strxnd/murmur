@@ -104,6 +104,7 @@ function state({
       paste: {
         backend: "clipboard_only",
         automationAvailable: false,
+        permissionRequired: false,
         diagnostics: []
       },
       storage: {
