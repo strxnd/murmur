@@ -49,6 +49,7 @@ const filters: Array<{ id: ModelFilter; label: string }> = [
 export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.Element {
   const getModelLibrary = useMurmurStore((store) => store.getModelLibrary);
   const downloadModel = useMurmurStore((store) => store.downloadModel);
+  const cancelModelDownload = useMurmurStore((store) => store.cancelModelDownload);
   const activateModel = useMurmurStore((store) => store.activateModel);
   const deleteDownloadedModel = useMurmurStore((store) => store.deleteDownloadedModel);
   const toggleFavoriteModel = useMurmurStore((store) => store.toggleFavoriteModel);
@@ -174,6 +175,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
                           active={active}
                           onToggleFavorite={() => void toggleFavoriteModel(item.id)}
                           onDownload={() => void downloadModel(item.id)}
+                          onCancelDownload={() => void cancelModelDownload(item.id)}
                           onDelete={() => void deleteDownloadedModel(item.id)}
                           onActivate={() => void activateModel(item.id)}
                           onInstallRuntime={() => runtime && void downloadSttRuntime(runtime.id)}
@@ -202,6 +204,7 @@ function ModelPopover({
   active,
   onToggleFavorite,
   onDownload,
+  onCancelDownload,
   onDelete,
   onActivate,
   onInstallRuntime,
@@ -215,6 +218,7 @@ function ModelPopover({
   active: boolean;
   onToggleFavorite: () => void;
   onDownload: () => void;
+  onCancelDownload: () => void;
   onDelete: () => void;
   onActivate: () => void;
   onInstallRuntime: () => void;
@@ -231,6 +235,7 @@ function ModelPopover({
         ? progressLabel(download)
         : statusLabel(status);
   const canDownload = item.downloadStrategy !== "none" && status !== "downloading" && status !== "downloaded";
+  const canCancelDownload = item.downloadStrategy !== "none" && status === "downloading";
   const canDelete = item.downloadStrategy !== "none" && status === "downloaded";
   const runtimeReady = !runtime || runtime.status === "ready";
   const runtimeBusy = runtime?.status === "downloading" || runtime?.status === "installing";
@@ -302,9 +307,15 @@ function ModelPopover({
         )}
         {item.downloadStrategy !== "none" && (
           <>
-            <Button onClick={onDownload} disabled={!canDownload}>
-              <Download size={18} /> {status === "error" ? "Retry" : "Download"}
-            </Button>
+            {canCancelDownload ? (
+              <Button variant="secondary" onClick={onCancelDownload}>
+                <X size={18} /> Cancel
+              </Button>
+            ) : (
+              <Button onClick={onDownload} disabled={!canDownload}>
+                <Download size={18} /> {status === "error" ? "Retry" : "Download"}
+              </Button>
+            )}
             <Dialog.Root>
               <Dialog.Trigger disabled={!canDelete} render={<Button />}>
                 <Trash2 size={18} /> Delete

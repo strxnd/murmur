@@ -407,6 +407,11 @@ export class AppController {
       this.broadcastState();
       return snapshot;
     });
+    ipcMain.handle("models:cancel-download", async (_event, modelId: string) => {
+      const snapshot = await this.modelLibrary.cancelModelDownload(modelId);
+      this.broadcastState();
+      return snapshot;
+    });
     ipcMain.handle("models:activate", async (_event, modelId: string) => {
       const snapshot = await this.modelLibrary.activateModel(modelId);
       this.broadcastState();

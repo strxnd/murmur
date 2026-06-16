@@ -13,8 +13,13 @@ const ollamaNotRunning = "Ollama is not running at http://127.0.0.1:11434.";
 
 type ProgressEmitter = (state: ModelDownloadState) => void;
 
+interface ModelDownloadOperation {
+  controller: AbortController;
+  promise: Promise<ModelLibrarySnapshot>;
+}
+
 export class ModelLibraryService {
-  private activeDownloads = new Set<string>();
+  private activeDownloads = new Map<string, ModelDownloadOperation>();
 
   constructor(
     private paths: AppPaths,
@@ -34,19 +39,37 @@ export class ModelLibraryService {
   async downloadModel(modelId: string): Promise<ModelLibrarySnapshot> {
     const item = this.findCatalogItem(modelId);
     if (!item || item.downloadStrategy === "none") return this.snapshot();
-    if (this.activeDownloads.has(modelId)) return this.snapshot();
+    const existingOperation = this.activeDownloads.get(modelId);
+    if (existingOperation) return existingOperation.promise;
 
-    this.activeDownloads.add(modelId);
-    try {
-      if (item.downloadStrategy === "direct_file") {
-        await this.downloadDirectFile(item);
-      } else if (item.downloadStrategy === "archive") {
-        await this.downloadArchive(item);
-      } else {
-        await this.pullOllamaModel(item);
-      }
-    } finally {
+    const controller = new AbortController();
+    const promise = this.performModelDownload(item, controller.signal).finally(() => {
       this.activeDownloads.delete(modelId);
+    });
+    this.activeDownloads.set(modelId, { controller, promise });
+    return promise;
+  }
+
+  async cancelModelDownload(modelId: string): Promise<ModelLibrarySnapshot> {
+    const operation = this.activeDownloads.get(modelId);
+    if (!operation) return this.snapshot();
+
+    operation.controller.abort();
+    try {
+      await operation.promise;
+    } catch {
+      // The download path records cancellation state before resolving back to the caller.
+    }
+    return this.snapshot();
+  }
+
+  private async performModelDownload(item: ModelCatalogItem, signal: AbortSignal): Promise<ModelLibrarySnapshot> {
+    if (item.downloadStrategy === "direct_file") {
+      await this.downloadDirectFile(item, signal);
+    } else if (item.downloadStrategy === "archive") {
+      await this.downloadArchive(item, signal);
+    } else {
+      await this.pullOllamaModel(item, signal);
     }
 
     if (this.isModelReady(item) && !this.hasUsableActiveModel(item.kind)) {
@@ -128,7 +151,7 @@ export class ModelLibraryService {
     };
   }
 
-  private async downloadDirectFile(item: ModelCatalogItem): Promise<void> {
+  private async downloadDirectFile(item: ModelCatalogItem, signal: AbortSignal): Promise<void> {
     if (!item.downloadUrl || !item.filename) return;
 
     const targetPath = join(this.paths.modelDir, item.filename);
@@ -146,7 +169,7 @@ export class ModelLibraryService {
     });
 
     try {
-      const response = await fetchWithTimeout(item.downloadUrl, {}, 15000);
+      const response = await fetchWithTimeout(item.downloadUrl, {}, 15000, signal);
       if (!response.ok) {
         throw new Error(`Download failed with HTTP ${response.status}: ${await response.text()}`);
       }
@@ -159,6 +182,7 @@ export class ModelLibraryService {
       const reader = response.body.getReader();
       try {
         while (true) {
+          if (signal.aborted) throw abortError();
           const { done, value } = await reader.read();
           if (done) break;
           if (!value) continue;
@@ -177,6 +201,7 @@ export class ModelLibraryService {
         await closeWriter(writer);
       }
 
+      if (signal.aborted) throw abortError();
       renameSync(partPath, targetPath);
       this.persistAndEmit({
         modelId: item.id,
@@ -189,19 +214,23 @@ export class ModelLibraryService {
       });
     } catch (error) {
       if (existsSync(partPath)) rmSync(partPath, { force: true });
-      this.persistAndEmit({
-        modelId: item.id,
-        status: "error",
-        progressBytes: this.getDownloadState(item.id)?.progressBytes ?? 0,
-        totalBytes: item.sizeBytes,
-        localPath: targetPath,
-        error: message(error),
-        favorite: Boolean(this.getDownloadState(item.id)?.favorite)
-      });
+      if (signal.aborted) {
+        this.persistAndEmit(this.cancelledDownloadState(item, item.sizeBytes));
+      } else {
+        this.persistAndEmit({
+          modelId: item.id,
+          status: "error",
+          progressBytes: this.getDownloadState(item.id)?.progressBytes ?? 0,
+          totalBytes: item.sizeBytes,
+          localPath: targetPath,
+          error: message(error),
+          favorite: Boolean(this.getDownloadState(item.id)?.favorite)
+        });
+      }
     }
   }
 
-  private async downloadArchive(item: ModelCatalogItem): Promise<void> {
+  private async downloadArchive(item: ModelCatalogItem, signal: AbortSignal): Promise<void> {
     if (!item.downloadUrl || !item.filename || !item.extractDir) return;
 
     const modelRoot = this.paths.modelDir;
@@ -211,6 +240,7 @@ export class ModelLibraryService {
     mkdirSync(modelRoot, { recursive: true });
     if (existsSync(partPath)) rmSync(partPath, { force: true });
     if (existsSync(archivePath)) rmSync(archivePath, { force: true });
+    let extractionStarted = false;
 
     this.persistAndEmit({
       modelId: item.id,
@@ -222,10 +252,13 @@ export class ModelLibraryService {
     });
 
     try {
-      const progressBytes = await this.downloadToFile(item, partPath, targetPath);
+      const progressBytes = await this.downloadToFile(item, partPath, targetPath, signal);
+      if (signal.aborted) throw abortError();
       renameSync(partPath, archivePath);
       if (existsSync(targetPath)) rmSync(targetPath, { recursive: true, force: true });
-      await extractTarBz2(archivePath, modelRoot);
+      extractionStarted = true;
+      await extractTarBz2(archivePath, modelRoot, signal);
+      if (signal.aborted) throw abortError();
       rmSync(archivePath, { force: true });
 
       if (!existsSync(targetPath)) {
@@ -244,22 +277,27 @@ export class ModelLibraryService {
     } catch (error) {
       if (existsSync(partPath)) rmSync(partPath, { force: true });
       if (existsSync(archivePath)) rmSync(archivePath, { force: true });
-      this.persistAndEmit({
-        modelId: item.id,
-        status: "error",
-        progressBytes: this.getDownloadState(item.id)?.progressBytes ?? 0,
-        totalBytes: item.sizeBytes,
-        localPath: targetPath,
-        error: message(error),
-        favorite: Boolean(this.getDownloadState(item.id)?.favorite)
-      });
+      if (extractionStarted && existsSync(targetPath)) rmSync(targetPath, { recursive: true, force: true });
+      if (signal.aborted) {
+        this.persistAndEmit(this.cancelledDownloadState(item, item.sizeBytes));
+      } else {
+        this.persistAndEmit({
+          modelId: item.id,
+          status: "error",
+          progressBytes: this.getDownloadState(item.id)?.progressBytes ?? 0,
+          totalBytes: item.sizeBytes,
+          localPath: targetPath,
+          error: message(error),
+          favorite: Boolean(this.getDownloadState(item.id)?.favorite)
+        });
+      }
     }
   }
 
-  private async downloadToFile(item: ModelCatalogItem, partPath: string, targetPath: string): Promise<number> {
+  private async downloadToFile(item: ModelCatalogItem, partPath: string, targetPath: string, signal: AbortSignal): Promise<number> {
     if (!item.downloadUrl) return 0;
 
-    const response = await fetchWithTimeout(item.downloadUrl, {}, 15000);
+    const response = await fetchWithTimeout(item.downloadUrl, {}, 15000, signal);
     if (!response.ok) {
       throw new Error(`Download failed with HTTP ${response.status}: ${await response.text()}`);
     }
@@ -272,6 +310,7 @@ export class ModelLibraryService {
     const reader = response.body.getReader();
     try {
       while (true) {
+        if (signal.aborted) throw abortError();
         const { done, value } = await reader.read();
         if (done) break;
         if (!value) continue;
@@ -293,7 +332,7 @@ export class ModelLibraryService {
     return progressBytes;
   }
 
-  private async pullOllamaModel(item: ModelCatalogItem): Promise<void> {
+  private async pullOllamaModel(item: ModelCatalogItem, signal: AbortSignal): Promise<void> {
     const model = item.ollamaModel;
     if (!model) return;
 
@@ -305,7 +344,7 @@ export class ModelLibraryService {
     });
 
     try {
-      const tagsReachable = await this.fetchOllamaTags();
+      const tagsReachable = await this.fetchOllamaTags(signal);
       if (!tagsReachable) throw new Error(ollamaNotRunning);
 
       const response = await fetchWithTimeout(
@@ -315,12 +354,13 @@ export class ModelLibraryService {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model, stream: true })
         },
-        15000
+        15000,
+        signal
       );
       if (!response.ok) throw new Error(`Ollama pull failed with HTTP ${response.status}: ${await response.text()}`);
       if (!response.body) throw new Error("Ollama pull response did not include a stream.");
 
-      await this.readOllamaPullStream(response, item);
+      await this.readOllamaPullStream(response, item, signal);
       const downloaded = await this.isOllamaModelDownloaded(model);
       if (!downloaded) {
         throw new Error(`Ollama pull finished, but ${model} was not listed by /api/tags.`);
@@ -334,6 +374,10 @@ export class ModelLibraryService {
         favorite: Boolean(this.getDownloadState(item.id)?.favorite)
       });
     } catch (error) {
+      if (signal.aborted) {
+        this.persistAndEmit(this.cancelledDownloadState(item));
+        return;
+      }
       const errorMessage = message(error).includes("fetch failed") ? ollamaNotRunning : message(error);
       this.persistAndEmit({
         modelId: item.id,
@@ -346,12 +390,13 @@ export class ModelLibraryService {
     }
   }
 
-  private async readOllamaPullStream(response: Response, item: ModelCatalogItem): Promise<void> {
+  private async readOllamaPullStream(response: Response, item: ModelCatalogItem, signal: AbortSignal): Promise<void> {
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
 
     while (true) {
+      if (signal.aborted) throw abortError();
       const { done, value } = await reader.read();
       if (done) break;
 
@@ -461,9 +506,9 @@ export class ModelLibraryService {
     return modelNameSetHas(names, model);
   }
 
-  private async fetchOllamaTags(): Promise<{ models?: Array<{ name?: string; model?: string }> } | null> {
+  private async fetchOllamaTags(signal?: AbortSignal): Promise<{ models?: Array<{ name?: string; model?: string }> } | null> {
     try {
-      const response = await fetchWithTimeout(`${ollamaBaseUrl}/api/tags`, {}, 2500);
+      const response = await fetchWithTimeout(`${ollamaBaseUrl}/api/tags`, {}, 2500, signal);
       if (!response.ok) return null;
       return (await response.json()) as { models?: Array<{ name?: string; model?: string }> };
     } catch {
@@ -518,6 +563,16 @@ export class ModelLibraryService {
       favorite: Boolean(state.favorite)
     });
   }
+
+  private cancelledDownloadState(item: ModelCatalogItem, totalBytes = item.sizeBytes): ModelDownloadState {
+    return {
+      modelId: item.id,
+      status: "not_downloaded",
+      progressBytes: 0,
+      totalBytes,
+      favorite: Boolean(this.getDownloadState(item.id)?.favorite)
+    };
+  }
 }
 
 function sttRuntimeIdForModel(item: ModelCatalogItem): SttRuntimeId | null {
@@ -528,12 +583,16 @@ function sttRuntimeIdForModel(item: ModelCatalogItem): SttRuntimeId | null {
   return null;
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, signal?: AbortSignal): Promise<Response> {
   const controller = new AbortController();
+  const abort = (): void => controller.abort();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  signal?.addEventListener("abort", abort, { once: true });
   try {
+    if (signal?.aborted) throw abortError();
     return await fetch(url, { ...init, signal: controller.signal });
   } finally {
+    // Keep the abort bridge alive after headers so cancelling also aborts response body reads.
     clearTimeout(timeout);
   }
 }
@@ -560,19 +619,42 @@ function closeWriter(writer: NodeJS.WritableStream): Promise<void> {
   });
 }
 
-function extractTarBz2(archivePath: string, targetDir: string): Promise<void> {
+function extractTarBz2(archivePath: string, targetDir: string, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn("tar", ["-xjf", archivePath, "-C", targetDir], { stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
+    let settled = false;
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", abort);
+      if (error) reject(error);
+      else resolve();
+    };
+    const abort = (): void => {
+      child.kill();
+      finish(abortError());
+    };
     child.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
     });
-    child.on("error", reject);
+    child.on("error", (error) => finish(error));
     child.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`tar extraction failed with exit code ${code}: ${stderr.trim()}`));
+      if (code === 0) finish();
+      else finish(new Error(`tar extraction failed with exit code ${code}: ${stderr.trim()}`));
     });
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    signal?.addEventListener("abort", abort, { once: true });
   });
+}
+
+function abortError(): Error {
+  const error = new Error("The operation was aborted.");
+  error.name = "AbortError";
+  return error;
 }
 
 function message(error: unknown): string {

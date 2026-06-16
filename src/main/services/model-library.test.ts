@@ -73,6 +73,52 @@ describe("ModelLibraryService", () => {
     }
   });
 
+  it("cancels direct file downloads and removes partial files", async () => {
+    const paths = testPaths();
+    const storage = new StorageService(paths);
+    const server = await slowModelServer(["partial-", "model-", "bytes"], 250);
+    const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en");
+    if (!item) throw new Error("Missing whisper-tiny-en catalog item.");
+    const originalUrl = item.downloadUrl;
+    item.downloadUrl = server.url;
+    let progressResolved = false;
+    let resolveProgress: () => void = () => undefined;
+    const progress = new Promise<void>((resolve) => {
+      resolveProgress = resolve;
+    });
+    const service = new ModelLibraryService(
+      paths,
+      storage,
+      (download) => {
+        if (!progressResolved && download.modelId === "whisper-tiny-en" && download.status === "downloading" && download.progressBytes > 0) {
+          progressResolved = true;
+          resolveProgress();
+        }
+      },
+      fakeRuntimeService("available")
+    );
+
+    try {
+      const downloadPromise = service.downloadModel("whisper-tiny-en");
+      await progress;
+      const cancelSnapshot = await service.cancelModelDownload("whisper-tiny-en");
+      const finalSnapshot = await downloadPromise;
+      const download = finalSnapshot.downloads.find((candidate) => candidate.modelId === "whisper-tiny-en");
+      const cancelledDownload = cancelSnapshot.downloads.find((candidate) => candidate.modelId === "whisper-tiny-en");
+      const expectedPath = join(paths.modelDir, "ggml-tiny.en.bin");
+
+      expect(cancelledDownload?.status).toBe("not_downloaded");
+      expect(download?.status).toBe("not_downloaded");
+      expect(download?.progressBytes).toBe(0);
+      expect(download?.error).toBeUndefined();
+      expect(existsSync(expectedPath)).toBe(false);
+      expect(existsSync(`${expectedPath}.part`)).toBe(false);
+    } finally {
+      item.downloadUrl = originalUrl;
+      await closeServer(server.server);
+    }
+  });
+
   it("marks existing cached files as downloaded", async () => {
     const paths = testPaths();
     touch(join(paths.modelDir, "ggml-tiny.en.bin"));
@@ -170,6 +216,38 @@ function modelServer(body: string): Promise<{ server: Server; url: string }> {
         "content-length": Buffer.byteLength(body)
       });
       response.end(body);
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Could not start test server.");
+      resolve({ server, url: `http://127.0.0.1:${address.port}/model.bin` });
+    });
+  });
+}
+
+function slowModelServer(chunks: string[], delayMs: number): Promise<{ server: Server; url: string }> {
+  return new Promise((resolve) => {
+    const server = createServer((request, response) => {
+      let timer: NodeJS.Timeout | null = null;
+      let index = 0;
+      const body = chunks.join("");
+      const writeNext = (): void => {
+        if (index >= chunks.length) {
+          response.end();
+          return;
+        }
+        response.write(chunks[index]);
+        index += 1;
+        timer = setTimeout(writeNext, delayMs);
+      };
+      request.on("close", () => {
+        if (timer) clearTimeout(timer);
+      });
+      response.writeHead(200, {
+        "content-type": "application/octet-stream",
+        "content-length": Buffer.byteLength(body)
+      });
+      writeNext();
     });
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
