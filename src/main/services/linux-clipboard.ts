@@ -30,7 +30,9 @@ export class LinuxClipboardService {
 
     this.writeElectronPrimarySelection(text);
     await Promise.all([
+      this.writeWlClipboard(text).catch(() => undefined),
       this.writeWlPrimarySelection(text).catch(() => undefined),
+      this.writeXClipboard(text).catch(() => undefined),
       this.writeXPrimarySelection(text).catch(() => undefined)
     ]);
   }
@@ -74,6 +76,22 @@ export class LinuxClipboardService {
   private async writeWlPrimarySelection(text: string): Promise<void> {
     if (!this.env.WAYLAND_DISPLAY || !(await this.hasTool("wl-copy"))) return;
     await this.execFileText("wl-copy", ["--primary"], clipboardToolTimeoutMs, { env: this.env, input: text });
+  }
+
+  private async writeWlClipboard(text: string): Promise<void> {
+    if (!this.env.WAYLAND_DISPLAY || !(await this.hasTool("wl-copy"))) return;
+    await this.execFileText("wl-copy", [], clipboardToolTimeoutMs, { env: this.env, input: text });
+  }
+
+  private async writeXClipboard(text: string): Promise<void> {
+    if (!this.env.DISPLAY) return;
+    if (await this.hasTool("xclip")) {
+      await this.execFileText("xclip", ["-selection", "clipboard"], clipboardToolTimeoutMs, { env: this.env, input: text });
+      return;
+    }
+    if (await this.hasTool("xsel")) {
+      await this.execFileText("xsel", ["--clipboard", "--input"], clipboardToolTimeoutMs, { env: this.env, input: text });
+    }
   }
 
   private async writeXPrimarySelection(text: string): Promise<void> {

@@ -27,6 +27,7 @@ FLAGS=()
 # are not reliable for normal native Wayland toplevel windows.
 if [ "\${XDG_SESSION_TYPE:-}" = "wayland" ] || [ -n "\${WAYLAND_DISPLAY:-}" ]; then
   FLAGS+=(--ozone-platform=x11)
+  export MURMUR_XWAYLAND_RELAUNCHED=1
 fi
 
 FLAGS_FILE="\${XDG_CONFIG_HOME:-$HOME/.config}/${binaryName}-flags.conf"

@@ -1,18 +1,29 @@
 import { spawn } from "node:child_process";
 
-forceXWaylandForLinuxWayland();
+if (!forceXWaylandForLinuxWayland()) {
+  require("./app-main.cjs");
+}
 
-require("./app-main.cjs");
-
-function forceXWaylandForLinuxWayland(): void {
-  if (process.platform !== "linux" || !isWaylandSession() || hasOzonePlatformX11(process.argv)) return;
+function forceXWaylandForLinuxWayland(): boolean {
+  if (process.platform !== "linux" || !isWaylandSession() || hasOzonePlatformX11(process.argv) || process.env.MURMUR_XWAYLAND_RELAUNCHED === "1") {
+    return false;
+  }
 
   // Chromium chooses its display backend before Electron app code can create windows.
-  spawn(process.execPath, [...process.argv.slice(1), "--ozone-platform=x11"], {
-    detached: true,
+  const child = spawn(process.execPath, ["--ozone-platform=x11", ...process.argv.slice(1)], {
+    env: { ...process.env, MURMUR_XWAYLAND_RELAUNCHED: "1" },
     stdio: "inherit"
-  }).unref();
-  process.exit(0);
+  });
+  const exitWithChild = (code: number | null): never => {
+    process.exit(code ?? 0);
+  };
+  const stopChild = (): void => {
+    if (!child.killed) child.kill();
+  };
+  child.on("exit", exitWithChild);
+  process.once("SIGINT", stopChild);
+  process.once("SIGTERM", stopChild);
+  return true;
 }
 
 function isWaylandSession(): boolean {
