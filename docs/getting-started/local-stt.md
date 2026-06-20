@@ -1,0 +1,64 @@
+# Local STT Setup
+
+Murmur manages native runtime binaries for local voice models:
+
+- `whisper.cpp` for local Whisper GGML models.
+- `sherpa-onnx` for NVIDIA Parakeet ONNX models.
+
+The local setup flow downloads or repairs the required runtime, downloads the selected model, activates the model, and records setup completion in settings.
+
+## Supported Runtime Platforms
+
+Bundled runtime archives are cataloged for:
+
+- `linux-x64`
+- `linux-arm64`
+- `darwin-x64`
+- `darwin-arm64`
+- `win32-x64`
+
+Windows ARM64 and GPU-specific runtime variants are not currently bundled.
+
+## User Cache Layout
+
+Models are stored under the app cache:
+
+```text
+${XDG_CACHE_HOME:-$HOME/.cache}/murmur/models/stt/
+```
+
+Managed runtime installs are stored under:
+
+```text
+${XDG_CACHE_HOME:-$HOME/.cache}/murmur/runtimes/stt/<platform-key>/<runtime-id>/<version>/
+```
+
+Development runtime artifacts may also exist under `vendor/runtimes/<platform-key>/`, but production builds do not require that directory.
+
+## Runtime Behavior
+
+When a Whisper model is activated, Murmur uses a provider like:
+
+```text
+type: whisper_cpp
+baseUrl: murmur://runtime/whisper.cpp
+model: <ggml filename>
+```
+
+At transcription time, Murmur starts `whisper-server` on an ephemeral localhost port and posts the recorded WAV to `/inference`.
+
+When an NVIDIA Parakeet model is activated, Murmur uses a provider like:
+
+```text
+type: sherpa_onnx
+baseUrl: murmur://runtime/sherpa-onnx
+model: <extracted model directory>
+```
+
+At transcription time, Murmur runs `sherpa-onnx-offline` directly against the recorded WAV.
+
+The renderer records mono 16-bit PCM WAV, so FFmpeg is not required for normal bundled local dictation.
+
+## Advanced Overrides
+
+Runtime binary overrides are documented in [environment variables](../reference/environment-variables.md). Maintainer details for runtime lookup and cache behavior are in [model library and runtimes](../architecture/model-library-and-runtimes.md).

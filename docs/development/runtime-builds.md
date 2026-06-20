@@ -1,8 +1,8 @@
 # Runtime Builds
 
-## Sources
+Local STT runtime build inputs are defined in [`scripts/runtime-manifest.json`](../../scripts/runtime-manifest.json). Downloadable Murmur runtime archive metadata is pinned in [`src/shared/stt-runtime-catalog.ts`](../../src/shared/stt-runtime-catalog.ts).
 
-Build inputs are defined in `scripts/runtime-manifest.json`. Downloadable Murmur runtime archive metadata is pinned in `src/shared/stt-runtime-catalog.ts`.
+## Sources
 
 - `whisper.cpp`: `v1.8.6`
   - Repository: `https://github.com/ggml-org/whisper.cpp.git`
@@ -10,7 +10,7 @@ Build inputs are defined in `scripts/runtime-manifest.json`. Downloadable Murmur
 - `sherpa-onnx`: `v1.13.2`
   - Release base URL: `https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.2`
 
-Sherpa ONNX assets:
+Sherpa ONNX source assets:
 
 - `linux-x64`: `sherpa-onnx-v1.13.2-linux-x64-shared-no-tts.tar.bz2`
 - `linux-arm64`: `sherpa-onnx-v1.13.2-linux-aarch64-shared-cpu.tar.bz2`
@@ -20,19 +20,19 @@ Sherpa ONNX assets:
 
 ## Whisper Patch
 
-The temporary Whisper patch fixes `whisper-server` multipart WAV uploads when FFmpeg conversion is disabled. Upstream `v1.8.6` passes uploaded multipart bytes directly into `read_audio_data`; Murmur's patch writes the uploaded bytes to a temporary WAV file with binary `write()` and then calls `read_audio_data()` with that path.
+The temporary Whisper patch fixes `whisper-server` multipart WAV uploads when FFmpeg conversion is disabled. Upstream `v1.8.6` passes uploaded multipart bytes directly into `read_audio_data`; Murmur's patch writes uploaded bytes to a temporary WAV file with binary `write()` and then calls `read_audio_data()` with that path.
 
 Remove the patch after the pinned upstream version includes the multipart WAV fix.
 
 ## Build Commands
 
-Prepare current platform runtimes:
+Prepare current-platform runtimes:
 
 ```sh
 mise run runtimes:prepare
 ```
 
-Check current platform runtime readiness:
+Check current-platform runtime readiness:
 
 ```sh
 mise run runtimes:doctor
@@ -43,11 +43,9 @@ Package after runtimes are present:
 ```sh
 mise run runtimes:package
 mise run runtimes:manifest-check
-mise run pack
-mise run dist
 ```
 
-CI builds runtime artifacts per supported hosted runner, packages one archive per runtime/platform, uploads the archives as workflow artifacts, and attaches them to GitHub Releases on release tags.
+`runtimes:package` writes archives to `dist/runtimes/` and prints size and SHA-256 values. Those values must match `src/shared/stt-runtime-catalog.ts` for `runtimes:manifest-check` to pass.
 
 ## Manual Smoke Tests
 

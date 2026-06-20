@@ -1,0 +1,50 @@
+# Providers
+
+Provider config types live in [`src/shared/types.ts`](../../src/shared/types.ts). Defaults live in [`src/shared/defaults.ts`](../../src/shared/defaults.ts).
+
+## STT Providers
+
+Supported transcription provider types:
+
+- `whisper_cpp`
+- `sherpa_onnx`
+- `local_openai_compatible_stt`
+- `cloud_openai`
+- `cloud_groq`
+- `cloud_openai_compatible_stt`
+
+Bundled `whisper.cpp` uses `murmur://runtime/whisper.cpp`; external `whisper.cpp` uses a configured HTTP base URL. Bundled Sherpa ONNX uses `murmur://runtime/sherpa-onnx` and runs the local binary directly.
+
+OpenAI-compatible STT providers post completed audio to `/audio/transcriptions` by default. Completed-audio SSE is used only when `streamingMode` remains effective for the provider and model. Groq and `whisper-1` force non-streaming behavior.
+
+Validation checks:
+
+- Base URL presence and URL syntax for HTTP providers.
+- API key presence for cloud providers.
+- Runtime and model availability for bundled runtime providers.
+- `/models` reachability for OpenAI-compatible providers when applicable.
+
+## LLM Providers
+
+Supported language provider types:
+
+- `ollama`
+- `lmstudio`
+- `llama_cpp_openai`
+- `openai`
+- `anthropic`
+- `google`
+- `openrouter`
+- `custom_openai_compatible`
+
+Ollama uses `/api/chat`. OpenAI-compatible providers use `/chat/completions`. Anthropic uses `/v1/messages`. Google uses `/models/<model>:generateContent`.
+
+If LLM processing fails during dictation, Murmur logs a warning and uses the transcript after before-LLM replacements rather than failing the whole dictation.
+
+## Local-Only Behavior
+
+Local-only mode blocks cloud STT and cloud LLM providers at use time. It does not disable provider records; it filters them from selection and raises an error if a cloud provider is invoked.
+
+## Model Activation
+
+The model library can synthesize provider configs from catalog items through [`src/shared/model-activation.ts`](../../src/shared/model-activation.ts). Voice models map to STT providers; language models map to LLM providers. A model is only selectable when its download state and required runtime are ready.

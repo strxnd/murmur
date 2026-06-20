@@ -1,8 +1,10 @@
 # Murmur
 
-Murmur is a desktop app for system-wide AI dictation.
+Murmur is an Electron desktop app for system-wide AI dictation. It records speech, transcribes it with a local or cloud STT provider, optionally rewrites it with an LLM, and pastes the result back into the active desktop app.
 
-## Setup
+The app is currently Linux-first. Text automation, active-window context, and the packaged launcher are designed around Linux desktop sessions, with Wayland sessions relaunched under XWayland for more reliable overlay and focus behavior.
+
+## Quick Start
 
 Use mise for the repo toolchain and task entrypoints:
 
@@ -14,7 +16,15 @@ mise run dev
 
 The mise tasks wrap the existing npm scripts in `package.json`; npm remains the package manager for this repo.
 
-## Commands
+## Documentation
+
+- [Documentation index](docs/README.md)
+- [User getting started](docs/getting-started/README.md)
+- [Architecture overview](docs/architecture/README.md)
+- [Development guide](docs/development/README.md)
+- [Reference](docs/reference/README.md)
+
+## Common Commands
 
 | Command | Description |
 | --- | --- |
