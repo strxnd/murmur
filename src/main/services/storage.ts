@@ -22,7 +22,7 @@ import type {
   ModelDownloadState,
   ModelLibrarySnapshot,
   ModeConfig,
-  ModePresetId,
+  ModeIconKey,
   ReleaseNote,
   ReplacementRule,
   RecordingPillPosition,
@@ -48,6 +48,11 @@ interface PersistedState extends PersistedConfigState {
   history: DictationHistoryItem[];
 }
 
+type LegacyModeConfig = Omit<Partial<ModeConfig>, "kind"> & {
+  kind?: DictationModeKind | "default";
+  presetId?: string;
+};
+
 interface LegacySettings extends Partial<AppSettings> {
   toggleHotkey?: string;
   pushToTalkHotkey?: string;
@@ -56,16 +61,26 @@ interface LegacySettings extends Partial<AppSettings> {
 
 const removedSoundVolumeSettingKey = ["auto", "Increase", "Mic", "Volume"].join("");
 const require = createRequire(import.meta.url);
-const oldBuiltInModeIds = new Set(["voice_to_text", "message", "email", "meeting", "super", "custom"]);
-const modePresetIds = new Set<ModePresetId>(["voice_to_text", "message", "mail", "note", "custom"]);
+const removedLegacyModeIds = new Set(["meeting", "super", "custom"]);
+const legacyModeIdMap = new Map([["email", "mail"]]);
+const modeIconKeys = new Set<ModeIconKey>(["mic", "message-square", "mail", "notebook-pen", "sliders-horizontal"]);
+const legacyPresetIconKeys = new Map<string, ModeIconKey>([
+  ["voice_to_text", "mic"],
+  ["message", "message-square"],
+  ["mail", "mail"],
+  ["note", "notebook-pen"],
+  ["custom", "sliders-horizontal"]
+]);
+const builtInModeDefaults = defaultModes.filter((mode) => mode.kind === "built_in");
+const builtInModeIds = new Set(builtInModeDefaults.map((mode) => mode.id));
 const removedReleaseNoteIds = new Set(["initial-prototype"]);
 const activationModes = new Set<ActivationMode>(["toggle", "push_to_talk"]);
 const recordingPillPositions = new Set<RecordingPillPosition>(["bottom_left", "bottom_center", "bottom_right"]);
 const sttPreferredLanguageScopes = new Set<SttPreferredLanguageScope>(["multilingual", "english"]);
 const customModeDefaults: ModeConfig = {
-  id: "custom",
+  id: "mode",
   kind: "custom",
-  presetId: "custom",
+  iconKey: "sliders-horizontal",
   name: "New mode",
   aiEnabled: true,
   instructionPrompt: "",
@@ -442,7 +457,7 @@ export class StorageService {
       recordingPillPosition: recordingPillPositions.has(currentSettings.recordingPillPosition as RecordingPillPosition)
         ? (currentSettings.recordingPillPosition as RecordingPillPosition)
         : defaultSettings.recordingPillPosition,
-      selectedTextCapture: "clipboard_restore",
+      selectedTextCapture: currentSettings.selectedTextCapture === "disabled" ? "disabled" : "clipboard_restore",
       pasteMethod: "clipboard_restore",
       trayCloseNoticeShownAt:
         typeof currentSettings.trayCloseNoticeShownAt === "string" ? currentSettings.trayCloseNoticeShownAt : undefined,
@@ -451,7 +466,8 @@ export class StorageService {
         : defaultSettings.sttPreferredLanguageScope
     };
     const modeIds = new Set(modes.map((mode) => mode.id));
-    if (oldBuiltInModeIds.has(normalized.activeModeId) || !modeIds.has(normalized.activeModeId)) {
+    normalized.activeModeId = legacyModeIdMap.get(normalized.activeModeId) ?? normalized.activeModeId;
+    if (!modeIds.has(normalized.activeModeId)) {
       normalized.activeModeId = "default";
     }
     normalized.typingBaselineWpm = Number.isFinite(normalized.typingBaselineWpm)
@@ -460,32 +476,42 @@ export class StorageService {
     return normalized;
   }
 
-  private normalizeModes(modes: Array<Partial<ModeConfig>> | undefined): ModeConfig[] {
+  private normalizeModes(modes: LegacyModeConfig[] | undefined): ModeConfig[] {
     if (!modes?.length) return clone(defaultModes);
 
-    const defaultModeSource = modes.find((mode) => mode.id === "default" || mode.kind === "default");
+    const normalizedModes = builtInModeDefaults.map((mode) => this.normalizeMode(mode, "built_in", mode));
+
     const customModes: ModeConfig[] = [];
     const seenCustomIds = new Set<string>();
 
     for (const mode of modes) {
-      if (!isUsableModeId(mode.id) || mode.id === "default" || oldBuiltInModeIds.has(mode.id) || seenCustomIds.has(mode.id)) {
+      if (!isUsableModeId(mode.id)) {
+        continue;
+      }
+      const normalizedId = legacyModeIdMap.get(mode.id) ?? mode.id;
+      if (
+        mode.id === "default" ||
+        mode.kind === "default" ||
+        builtInModeIds.has(normalizedId) ||
+        removedLegacyModeIds.has(mode.id) ||
+        seenCustomIds.has(mode.id)
+      ) {
         continue;
       }
       seenCustomIds.add(mode.id);
-      customModes.push(this.normalizeMode(mode, "custom"));
+      customModes.push(this.normalizeMode(mode, "custom", customModeDefaults));
     }
 
-    return [this.normalizeMode(defaultModeSource ?? defaultModes[0], "default"), ...customModes];
+    return [...normalizedModes, ...customModes];
   }
 
-  private normalizeMode(mode: Partial<ModeConfig> | undefined, kind: DictationModeKind): ModeConfig {
-    const base = kind === "default" ? defaultModes[0] : customModeDefaults;
+  private normalizeMode(mode: LegacyModeConfig | undefined, kind: DictationModeKind, base: ModeConfig): ModeConfig {
     const context = mode?.context ?? base.context;
 
     return {
-      id: kind === "default" ? "default" : isUsableModeId(mode?.id) ? mode.id : base.id,
+      id: kind === "built_in" ? base.id : isUsableModeId(mode?.id) ? mode.id : base.id,
       kind,
-      presetId: isModePresetId(mode?.presetId) ? mode.presetId : base.presetId,
+      iconKey: this.normalizeModeIconKey(mode, base.iconKey),
       name: isNonEmptyString(mode?.name) ? mode.name : base.name,
       aiEnabled: typeof mode?.aiEnabled === "boolean" ? mode.aiEnabled : base.aiEnabled,
       instructionPrompt: typeof mode?.instructionPrompt === "string" ? mode.instructionPrompt : base.instructionPrompt,
@@ -501,7 +527,14 @@ export class StorageService {
 
   private normalizeAutoModeRules(rules: AutoModeRule[], modes: ModeConfig[]): AutoModeRule[] {
     const modeIds = new Set(modes.map((mode) => mode.id));
-    return rules.filter((rule) => !oldBuiltInModeIds.has(rule.modeId) && modeIds.has(rule.modeId));
+    return rules
+      .map((rule) => ({ ...rule, modeId: legacyModeIdMap.get(rule.modeId) ?? rule.modeId }))
+      .filter((rule) => !removedLegacyModeIds.has(rule.modeId) && modeIds.has(rule.modeId));
+  }
+
+  private normalizeModeIconKey(mode: LegacyModeConfig | undefined, fallback: ModeIconKey): ModeIconKey {
+    if (isModeIconKey(mode?.iconKey)) return mode.iconKey;
+    return legacyPresetIconKeys.get(mode?.presetId ?? "") ?? fallback;
   }
 
   private normalizeTranscriptionProviders(
@@ -606,8 +639,8 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function isModePresetId(value: unknown): value is ModePresetId {
-  return typeof value === "string" && modePresetIds.has(value as ModePresetId);
+function isModeIconKey(value: unknown): value is ModeIconKey {
+  return typeof value === "string" && modeIconKeys.has(value as ModeIconKey);
 }
 
 const sttProviderTypes = new Set<TranscriptionProviderConfig["type"]>([

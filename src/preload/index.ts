@@ -8,6 +8,7 @@ import type {
   ModelLibrarySnapshot,
   ModeConfig,
   ProviderValidationResult,
+  RecordingLevelPayload,
   ReplacementRule,
   SttModelRecommendation,
   SttPreferredLanguageScope,
@@ -59,6 +60,9 @@ const api = {
   cancelDictation: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("dictation:cancel"),
   completeRecording: (payload: { sessionId: string; audio: ArrayBuffer; mimeType: string }): Promise<AppStateSnapshot> =>
     ipcRenderer.invoke("dictation:complete-recording", payload),
+  publishRecordingLevel: (payload: RecordingLevelPayload): void => {
+    ipcRenderer.send("recording:level", payload);
+  },
   copyHistoryOutput: (text: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("history:copy", text),
   repasteHistoryOutput: (text: string): Promise<{ pasted: boolean; message: string }> =>
     ipcRenderer.invoke("history:repaste", text),
@@ -92,6 +96,13 @@ const api = {
     ipcRenderer.on("recording:cancel", listener);
     return () => {
       ipcRenderer.removeListener("recording:cancel", listener);
+    };
+  },
+  onRecordingLevel: (callback: (payload: RecordingLevelPayload) => void) => {
+    const listener = (_event: IpcRendererEvent, payload: RecordingLevelPayload): void => callback(payload);
+    ipcRenderer.on("recording:level", listener);
+    return () => {
+      ipcRenderer.removeListener("recording:level", listener);
     };
   },
   onTranscriptDelta: (callback: (delta: string) => void) => {

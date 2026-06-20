@@ -17,9 +17,8 @@ import {
 import { useEffect, useState, type JSX } from "react";
 import { Controller, useForm, type UseFormReturn } from "react-hook-form";
 import { z } from "zod";
-import { modePresetList, modePresets } from "../../../shared/mode-presets";
 import { modeConfigSchema } from "../../../shared/schemas";
-import type { AppStateSnapshot, ModeConfig, ModePresetId } from "../../../shared/types";
+import type { AppStateSnapshot, ModeConfig, ModeIconKey } from "../../../shared/types";
 import { View } from "../components/View";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -41,11 +40,6 @@ const modesFormSchema = z.object({
 });
 
 type ModesFormValues = z.infer<typeof modesFormSchema>;
-
-const presetItems: Array<SelectItem<ModePresetId>> = modePresetList.map((preset) => ({
-  value: preset.id,
-  label: preset.label
-}));
 
 const languageItems: Array<SelectItem<string>> = [
   { value: "auto", label: "Auto detect" },
@@ -153,19 +147,18 @@ const languageItems: Array<SelectItem<string>> = [
 
 const languageItemValues = new Set(languageItems.map((item) => item.value));
 
-const presetIcons: Record<ModePresetId, LucideIcon> = {
-  voice_to_text: Mic,
-  message: MessageSquare,
+const modeIcons: Record<ModeIconKey, LucideIcon> = {
+  mic: Mic,
+  "message-square": MessageSquare,
   mail: Mail,
-  note: NotebookPen,
-  custom: SlidersHorizontal
+  "notebook-pen": NotebookPen,
+  "sliders-horizontal": SlidersHorizontal
 };
 
 export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
   const setModes = useMurmurStore((store) => store.setModes);
   const activateMode = useMurmurStore((store) => store.activateMode);
   const [openModeId, setOpenModeId] = useState<string | null>(null);
-  const [presetPickerOpen, setPresetPickerOpen] = useState(false);
   const form = useForm<ModesFormValues>({
     resolver: zodResolver(modesFormSchema),
     defaultValues: { modes: state.modes }
@@ -186,35 +179,19 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
     form.reset({ modes: normalizedModes });
   });
 
-  const createMode = (presetId: ModePresetId): void => {
-    const next = createModeFromPreset(presetId);
+  const createMode = (): void => {
+    const next = createBlankMode();
     form.setValue("modes", [...form.getValues("modes"), next], { shouldDirty: true, shouldValidate: true });
-    setPresetPickerOpen(false);
     setOpenModeId(next.id);
-  };
-
-  const openCreatePopup = (): void => {
-    setOpenModeId(null);
-    setPresetPickerOpen(true);
   };
 
   const closeModePopup = (): void => {
     setOpenModeId(null);
-    setPresetPickerOpen(false);
-  };
-
-  const applyPreset = (index: number, presetId: ModePresetId): void => {
-    form.setValue(`modes.${index}.presetId`, presetId, { shouldDirty: true, shouldValidate: true });
-    if (presetId === "custom") return;
-
-    const preset = modePresets[presetId];
-    form.setValue(`modes.${index}.instructionPrompt`, preset.instructionPrompt, { shouldDirty: true, shouldValidate: true });
-    form.setValue(`modes.${index}.context`, { ...preset.context }, { shouldDirty: true, shouldValidate: true });
   };
 
   const deleteMode = (modeId: string): void => {
     const mode = form.getValues("modes").find((candidate) => candidate.id === modeId);
-    if (!mode || mode.kind === "default") return;
+    if (!mode || mode.kind !== "custom") return;
 
     form.setValue(
       "modes",
@@ -239,7 +216,7 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
         title="Modes"
         actions={
           <Toolbar>
-            <Button onClick={openCreatePopup}>
+            <Button onClick={createMode}>
               <Plus size={18} /> Create mode
             </Button>
             <Button variant="primary" onClick={() => void save()} disabled={form.formState.isSubmitting || !form.formState.isDirty}>
@@ -259,13 +236,13 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
                   openModeId === mode.id && "bg-muted"
                 )}
                 onClick={() => {
-                  setPresetPickerOpen(false);
                   setOpenModeId(mode.id);
                 }}
               >
-                <PresetGlyph presetId={mode.presetId} active={openModeId === mode.id} />
+                <ModeGlyph iconKey={mode.iconKey} active={openModeId === mode.id} />
                 <span className="flex min-w-0 items-center gap-2">
                   <span className="truncate text-sm font-medium text-foreground">{mode.name}</span>
+                  {mode.kind === "built_in" && <Badge className="shrink-0 text-subtle">Built-in</Badge>}
                   {mode.id === state.settings.activeModeId && <Badge className="shrink-0">Active</Badge>}
                 </span>
                 <span className="flex min-w-0 shrink-0 flex-wrap items-center justify-end gap-2">
@@ -283,7 +260,7 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
       </View>
 
       <Dialog.Root
-        open={presetPickerOpen || Boolean(openMode)}
+        open={Boolean(openMode)}
         onOpenChange={(open) => {
           if (!open) closeModePopup();
         }}
@@ -294,21 +271,16 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
             className="mode-dialog-popup fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-3rem)] overflow-y-auto rounded-md border border-border bg-surface-raised p-4 text-sm text-foreground shadow-2xl shadow-black/40 outline-none"
             style={{ width: "min(36rem, calc(100vw - 2rem))" }}
           >
-            {presetPickerOpen ? (
-              <PresetPicker onSelect={createMode} onClose={closeModePopup} />
-            ) : (
-              openMode && (
-                <ModeEditor
-                  form={form}
-                  index={openModeIndex}
-                  mode={openMode}
-                  activeModeId={state.settings.activeModeId}
-                  onApplyPreset={applyPreset}
-                  onClose={closeModePopup}
-                  onDelete={() => deleteMode(openMode.id)}
-                  onMakeActive={() => makeActive(openMode.id)}
-                />
-              )
+            {openMode && (
+              <ModeEditor
+                form={form}
+                index={openModeIndex}
+                mode={openMode}
+                activeModeId={state.settings.activeModeId}
+                onClose={closeModePopup}
+                onDelete={() => deleteMode(openMode.id)}
+                onMakeActive={() => makeActive(openMode.id)}
+              />
             )}
           </Dialog.Popup>
         </Dialog.Portal>
@@ -317,51 +289,11 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
   );
 }
 
-function PresetPicker({ onSelect, onClose }: { onSelect: (presetId: ModePresetId) => void; onClose: () => void }): JSX.Element {
-  return (
-    <div className="flex flex-col gap-4">
-      <header className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <Dialog.Title className="m-0 truncate text-base font-semibold text-foreground">Create mode</Dialog.Title>
-          <Dialog.Description className="m-0 mt-1 text-xs text-muted-foreground">Choose a preset to start from.</Dialog.Description>
-        </div>
-        <IconButton title="Close" onClick={onClose}>
-          <X size={18} />
-        </IconButton>
-      </header>
-      <div className="grid grid-cols-1 gap-2">
-        {modePresetList.map((preset) => {
-          const Icon = presetIcons[preset.id];
-          return (
-            <button
-              key={preset.id}
-              type="button"
-              className="mode-preset-option grid min-h-12 grid-cols-[2.25rem_minmax(0,1fr)] items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-left outline-none hover:bg-muted focus-visible:bg-muted"
-              onClick={() => onSelect(preset.id)}
-            >
-              <span className="mode-preset-option-icon grid h-9 w-9 place-items-center rounded-md border border-border bg-surface-raised">
-                <Icon size={17} />
-              </span>
-              <span className="min-w-0">
-                <span className="block truncate text-sm font-medium text-foreground">{preset.label}</span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  {preset.aiEnabled ? "AI cleanup with preset context" : "Raw speech-to-text"}
-                </span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function ModeEditor({
   form,
   index,
   mode,
   activeModeId,
-  onApplyPreset,
   onClose,
   onDelete,
   onMakeActive
@@ -370,29 +302,28 @@ function ModeEditor({
   index: number;
   mode: ModeConfig;
   activeModeId: string;
-  onApplyPreset: (index: number, presetId: ModePresetId) => void;
   onClose: () => void;
   onDelete: () => void;
   onMakeActive: () => void;
 }): JSX.Element {
-  const isCustomPreset = mode.presetId === "custom";
   const editorParent = useAutoAnimateRef<HTMLDivElement>();
+  const isBuiltInMode = mode.kind === "built_in";
 
   return (
     <div ref={editorParent} className="flex flex-col gap-4">
       <header className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <PresetGlyph presetId={mode.presetId} active />
+          <ModeGlyph iconKey={mode.iconKey} active />
           <div className="min-w-0">
             <h2 className="m-0 truncate text-base font-semibold text-foreground">{mode.name || "Mode"}</h2>
-            <p className="m-0 truncate text-xs text-muted-foreground">{modePresets[mode.presetId]?.label ?? modePresets.custom.label}</p>
+            <p className="m-0 truncate text-xs text-muted-foreground">{modeKindLabel(mode.kind)}</p>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Button size="sm" onClick={onMakeActive} disabled={activeModeId === mode.id}>
             <Check size={16} /> Make active
           </Button>
-          <IconButton title="Delete mode" tone="danger" onClick={onDelete} disabled={mode.kind === "default"}>
+          <IconButton title="Delete mode" tone="danger" onClick={onDelete} disabled={mode.kind !== "custom"}>
             <Trash2 size={18} />
           </IconButton>
           <IconButton title="Close" onClick={onClose}>
@@ -403,20 +334,7 @@ function ModeEditor({
 
       <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
         <Field label="Name" error={form.formState.errors.modes?.[index]?.name?.message}>
-          <Input {...form.register(`modes.${index}.name`)} />
-        </Field>
-        <Field label="Preset">
-          <Controller
-            control={form.control}
-            name={`modes.${index}.presetId`}
-            render={({ field }) => (
-              <Select
-                items={presetItems}
-                value={(field.value ?? "custom") as ModePresetId}
-                onValueChange={(value) => onApplyPreset(index, value)}
-              />
-            )}
-          />
+          <Input {...form.register(`modes.${index}.name`)} readOnly={isBuiltInMode} className={cn(isBuiltInMode && "opacity-60")} />
         </Field>
         <Field label="Language">
           <Controller
@@ -424,7 +342,7 @@ function ModeEditor({
             name={`modes.${index}.language`}
             render={({ field }) => {
               const value = normalizeLanguageValue(field.value);
-              return <Select items={getLanguageItems(value)} value={value} onValueChange={field.onChange} />;
+              return <Select items={getLanguageItems(value)} value={value} onValueChange={field.onChange} disabled={isBuiltInMode} />;
             }}
           />
         </Field>
@@ -438,43 +356,58 @@ function ModeEditor({
             label="AI enabled"
             checked={Boolean(field.value)}
             onCheckedChange={field.onChange}
+            disabled={isBuiltInMode}
             className="rounded-md border border-border bg-muted/20 p-3"
           />
         )}
       />
 
-      {isCustomPreset && (
-        <div className="grid grid-cols-3 gap-3 rounded-md border border-border bg-muted/20 p-3 max-[760px]:grid-cols-1">
-          <Controller
-            control={form.control}
-            name={`modes.${index}.context.app`}
-            render={({ field }) => <Checkbox label="Application" checked={Boolean(field.value)} onCheckedChange={field.onChange} />}
-          />
-          <Controller
-            control={form.control}
-            name={`modes.${index}.context.selectedText`}
-            render={({ field }) => <Checkbox label="Selected text" checked={Boolean(field.value)} onCheckedChange={field.onChange} />}
-          />
-          <Controller
-            control={form.control}
-            name={`modes.${index}.context.clipboardText`}
-            render={({ field }) => <Checkbox label="Copied text" checked={Boolean(field.value)} onCheckedChange={field.onChange} />}
-          />
-        </div>
-      )}
+      <div className="grid grid-cols-3 gap-3 rounded-md border border-border bg-muted/20 p-3 max-[760px]:grid-cols-1">
+        <Controller
+          control={form.control}
+          name={`modes.${index}.context.app`}
+          render={({ field }) => (
+            <Checkbox label="Application" checked={Boolean(field.value)} onCheckedChange={field.onChange} disabled={isBuiltInMode} />
+          )}
+        />
+        <Controller
+          control={form.control}
+          name={`modes.${index}.context.selectedText`}
+          render={({ field }) => (
+            <Checkbox label="Selected text" checked={Boolean(field.value)} onCheckedChange={field.onChange} disabled={isBuiltInMode} />
+          )}
+        />
+        <Controller
+          control={form.control}
+          name={`modes.${index}.context.clipboardText`}
+          render={({ field }) => (
+            <Checkbox label="Copied text" checked={Boolean(field.value)} onCheckedChange={field.onChange} disabled={isBuiltInMode} />
+          )}
+        />
+      </div>
 
-      {isCustomPreset && (
-        <Field label="Custom instructions">
-          <Textarea className="min-h-36" {...form.register(`modes.${index}.instructionPrompt`)} />
-        </Field>
-      )}
+      <Field label="Instructions">
+        <Textarea
+          className={cn("min-h-36", isBuiltInMode && "opacity-60")}
+          {...form.register(`modes.${index}.instructionPrompt`)}
+          readOnly={isBuiltInMode}
+        />
+      </Field>
 
-      <ExamplesEditor form={form} selectedIndex={index} />
+      <ExamplesEditor form={form} selectedIndex={index} readOnly={isBuiltInMode} />
     </div>
   );
 }
 
-function ExamplesEditor({ form, selectedIndex }: { form: UseFormReturn<ModesFormValues>; selectedIndex: number }): JSX.Element {
+function ExamplesEditor({
+  form,
+  selectedIndex,
+  readOnly = false
+}: {
+  form: UseFormReturn<ModesFormValues>;
+  selectedIndex: number;
+  readOnly?: boolean;
+}): JSX.Element {
   const examples = form.watch(`modes.${selectedIndex}.examples`) ?? [];
   const examplesParent = useAutoAnimateRef<HTMLElement>();
 
@@ -484,6 +417,7 @@ function ExamplesEditor({ form, selectedIndex }: { form: UseFormReturn<ModesForm
         <h3 className="m-0 text-sm font-semibold text-foreground">Examples</h3>
         <Button
           size="sm"
+          disabled={readOnly}
           onClick={() =>
             form.setValue(`modes.${selectedIndex}.examples`, [...examples, { input: "", output: "" }], {
               shouldDirty: true,
@@ -497,10 +431,21 @@ function ExamplesEditor({ form, selectedIndex }: { form: UseFormReturn<ModesForm
       {examples.length === 0 && <p className="m-0 text-sm text-muted-foreground">No examples.</p>}
       {examples.map((_example, exampleIndex) => (
         <div key={exampleIndex} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.5rem] gap-2 max-[760px]:grid-cols-1">
-          <Input placeholder="Input" {...form.register(`modes.${selectedIndex}.examples.${exampleIndex}.input`)} />
-          <Input placeholder="Output" {...form.register(`modes.${selectedIndex}.examples.${exampleIndex}.output`)} />
+          <Input
+            placeholder="Input"
+            {...form.register(`modes.${selectedIndex}.examples.${exampleIndex}.input`)}
+            readOnly={readOnly}
+            className={cn(readOnly && "opacity-60")}
+          />
+          <Input
+            placeholder="Output"
+            {...form.register(`modes.${selectedIndex}.examples.${exampleIndex}.output`)}
+            readOnly={readOnly}
+            className={cn(readOnly && "opacity-60")}
+          />
           <IconButton
             title="Remove example"
+            disabled={readOnly}
             onClick={() =>
               form.setValue(
                 `modes.${selectedIndex}.examples`,
@@ -517,13 +462,13 @@ function ExamplesEditor({ form, selectedIndex }: { form: UseFormReturn<ModesForm
   );
 }
 
-function PresetGlyph({ presetId, active = false }: { presetId: ModePresetId; active?: boolean }): JSX.Element {
-  const Icon = presetIcons[presetId] ?? SlidersHorizontal;
+function ModeGlyph({ iconKey, active = false }: { iconKey: ModeIconKey; active?: boolean }): JSX.Element {
+  const Icon = modeIcons[iconKey] ?? SlidersHorizontal;
 
   return (
     <span
       className={cn(
-        "mode-preset-glyph grid h-9 w-9 shrink-0 place-items-center rounded-md border border-border bg-surface-raised text-foreground",
+        "mode-glyph grid h-9 w-9 shrink-0 place-items-center rounded-md border border-border bg-surface-raised text-foreground",
         active && "scale-105 border-foreground/40"
       )}
     >
@@ -532,19 +477,17 @@ function PresetGlyph({ presetId, active = false }: { presetId: ModePresetId; act
   );
 }
 
-function createModeFromPreset(presetId: ModePresetId): ModeConfig {
-  const preset = modePresets[presetId];
-
+function createBlankMode(): ModeConfig {
   return {
     id: makeClientId("mode"),
     kind: "custom",
-    presetId,
-    name: preset.label,
-    aiEnabled: preset.aiEnabled,
-    instructionPrompt: preset.instructionPrompt,
+    iconKey: "sliders-horizontal",
+    name: "New mode",
+    aiEnabled: true,
+    instructionPrompt: "",
     examples: [],
     language: "auto",
-    context: { ...preset.context }
+    context: { app: true, selectedText: true, clipboardText: true }
   };
 }
 
@@ -558,8 +501,13 @@ function getLanguageItems(value: string): Array<SelectItem<string>> {
   return [{ value, label: `Custom (${value})` }, ...languageItems];
 }
 
+function modeKindLabel(kind: ModeConfig["kind"]): string {
+  if (kind === "built_in") return "Built-in mode";
+  return "Custom mode";
+}
+
 function ensureDefaultFirst(modes: ModeConfig[]): ModeConfig[] {
-  const defaultMode = modes.find((mode) => mode.kind === "default" || mode.id === "default");
-  const customModes = modes.filter((mode) => mode.id !== "default").map((mode) => ({ ...mode, kind: "custom" as const }));
-  return defaultMode ? [{ ...defaultMode, id: "default", kind: "default" }, ...customModes] : customModes;
+  const defaultMode = modes.find((mode) => mode.id === "default");
+  const otherModes = modes.filter((mode) => mode.id !== "default");
+  return defaultMode ? [{ ...defaultMode, id: "default", kind: "built_in" }, ...otherModes] : otherModes;
 }

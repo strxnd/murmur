@@ -6,7 +6,11 @@ interface WavRecorder {
   cancel: () => Promise<void>;
 }
 
-export function useRecordingBridge(): void {
+const levelNoiseFloor = 0.012;
+const levelSpeechCeiling = 0.12;
+const levelPublishIntervalMs = 50;
+
+export function useRecordingBridge(enabled: boolean): void {
   const recorderRef = useRef<WavRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef<string | null>(null);
@@ -14,6 +18,8 @@ export function useRecordingBridge(): void {
   const completingRef = useRef(false);
 
   useEffect(() => {
+    if (!enabled) return undefined;
+
     const stopTracks = (): void => {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
@@ -56,7 +62,7 @@ export function useRecordingBridge(): void {
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
       streamRef.current = stream;
-      recorderRef.current = await startWavRecorder(stream);
+      recorderRef.current = await startWavRecorder(stream, sessionId);
     });
 
     const stop = murmurClient.onRecordingStop(() => {
@@ -75,17 +81,19 @@ export function useRecordingBridge(): void {
       void recorderRef.current?.cancel();
       stopTracks();
     };
-  }, []);
+  }, [enabled]);
 }
 
-async function startWavRecorder(stream: MediaStream): Promise<WavRecorder> {
+async function startWavRecorder(stream: MediaStream, sessionId: string): Promise<WavRecorder> {
   const context = new AudioContext();
   const source = context.createMediaStreamSource(stream);
-  const processor = context.createScriptProcessor(4096, source.channelCount || 1, 1);
+  const processor = context.createScriptProcessor(2048, source.channelCount || 1, 1);
   const monitor = context.createGain();
   monitor.gain.value = 0;
 
   const chunks: Float32Array[] = [];
+  let smoothedLevel = 0;
+  let lastLevelPublishedAt = 0;
   processor.onaudioprocess = (event) => {
     const input = event.inputBuffer;
     const output = new Float32Array(input.length);
@@ -96,6 +104,16 @@ async function startWavRecorder(stream: MediaStream): Promise<WavRecorder> {
       }
     }
     chunks.push(output);
+
+    const targetLevel = normalizeRecordingLevel(computeRms(output));
+    const smoothing = targetLevel > smoothedLevel ? 0.35 : 0.18;
+    smoothedLevel += (targetLevel - smoothedLevel) * smoothing;
+
+    const now = performance.now();
+    if (now - lastLevelPublishedAt >= levelPublishIntervalMs) {
+      lastLevelPublishedAt = now;
+      murmurClient.publishRecordingLevel({ sessionId, level: smoothedLevel });
+    }
   };
 
   source.connect(processor);
@@ -119,6 +137,19 @@ async function startWavRecorder(stream: MediaStream): Promise<WavRecorder> {
     },
     cancel: cleanup
   };
+}
+
+function computeRms(samples: Float32Array): number {
+  if (samples.length === 0) return 0;
+  let sum = 0;
+  for (const sample of samples) {
+    sum += sample * sample;
+  }
+  return Math.sqrt(sum / samples.length);
+}
+
+function normalizeRecordingLevel(rms: number): number {
+  return Math.max(0, Math.min(1, (rms - levelNoiseFloor) / (levelSpeechCeiling - levelNoiseFloor)));
 }
 
 function mergeFloat32(chunks: Float32Array[]): Float32Array {

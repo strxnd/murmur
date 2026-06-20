@@ -1,5 +1,5 @@
-export type DictationModeKind = "default" | "custom";
-export type ModePresetId = "voice_to_text" | "message" | "mail" | "note" | "custom";
+export type DictationModeKind = "built_in" | "custom";
+export type ModeIconKey = "mic" | "message-square" | "mail" | "notebook-pen" | "sliders-horizontal";
 
 export type SttStreamingMode = "none" | "completed_audio_sse" | "live_realtime";
 export type ActivationMode = "toggle" | "push_to_talk";
@@ -123,7 +123,7 @@ export interface ContextSnapshot {
 export interface ModeConfig {
   id: string;
   kind: DictationModeKind;
-  presetId: ModePresetId;
+  iconKey: ModeIconKey;
   name: string;
   aiEnabled: boolean;
   instructionPrompt: string;
@@ -308,6 +308,11 @@ export interface DictationSession {
   cloudStt: boolean;
   cloudLlm: boolean;
   streamingMode: SttStreamingMode;
+}
+
+export interface RecordingLevelPayload {
+  sessionId: string;
+  level: number;
 }
 
 export interface TranscriptionResult {

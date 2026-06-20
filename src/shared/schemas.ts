@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-export const dictationModeKindSchema = z.enum(["default", "custom"]);
-export const modePresetIdSchema = z.enum(["voice_to_text", "message", "mail", "note", "custom"]);
+export const dictationModeKindSchema = z.enum(["built_in", "custom"]);
+export const modeIconKeySchema = z.enum(["mic", "message-square", "mail", "notebook-pen", "sliders-horizontal"]);
 export const sttStreamingModeSchema = z.enum(["none", "completed_audio_sse", "live_realtime"]);
 export const recordingPillPositionSchema = z.enum(["bottom_left", "bottom_center", "bottom_right"]);
 export const transcriptionProviderTypeSchema = z.enum([
@@ -62,7 +62,7 @@ export const modeConfigSchema = z
   .object({
     id: z.string().min(1),
     kind: dictationModeKindSchema,
-    presetId: modePresetIdSchema.catch("custom"),
+    iconKey: modeIconKeySchema.catch("sliders-horizontal"),
     name: z.string().min(1, "Name is required."),
     aiEnabled: z.boolean(),
     instructionPrompt: z.string(),
@@ -413,6 +413,14 @@ export const completeRecordingPayloadSchema = z.object({
   sessionId: z.string().min(1),
   audio: z.instanceof(ArrayBuffer),
   mimeType: z.string().min(1)
+});
+
+export const recordingLevelPayloadSchema = z.object({
+  sessionId: z.string().min(1),
+  level: z
+    .number()
+    .finite()
+    .transform((level) => Math.max(0, Math.min(1, level)))
 });
 
 export const copyResultSchema = z.object({ ok: z.boolean() }).passthrough();

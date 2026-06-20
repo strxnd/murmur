@@ -1,36 +1,53 @@
-import { RefreshCw, Square } from "lucide-react";
-import type { JSX } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type JSX } from "react";
 import type { AppStateSnapshot } from "../../../shared/types";
-import { IconButton } from "../components/ui/IconButton";
-import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
-import { useMurmurStore } from "../state/murmur-store";
 import { cn } from "../lib/cn";
+import { murmurClient } from "../lib/murmur-client";
+
+const barWeights = [0.36, 0.56, 0.78, 1, 0.78, 0.56, 0.36];
 
 export function RecordingPill({ state }: { state: AppStateSnapshot }): JSX.Element {
-  const stopDictation = useMurmurStore((store) => store.stopDictation);
-  const isBusy = ["transcribing", "processing", "pasting"].includes(state.session.status);
-  const pillParent = useAutoAnimateRef<HTMLDivElement>();
+  const { id: sessionId, status } = state.session;
+  const isRecording = status === "recording";
+  const isProcessing = status === "transcribing" || status === "processing";
+  const [level, setLevel] = useState(0);
+
+  useEffect(() => {
+    if (!isRecording) {
+      setLevel(0);
+      return undefined;
+    }
+
+    setLevel(0);
+    return murmurClient.onRecordingLevel((payload) => {
+      if (payload.sessionId !== sessionId) return;
+      setLevel(payload.level);
+    });
+  }, [isRecording, sessionId]);
+
+  const barScales = useMemo(
+    () => barWeights.map((weight) => Math.min(1, 0.22 + level * weight * 0.78)),
+    [level]
+  );
+  const ariaLabel = isRecording ? "Murmur recording" : isProcessing ? "Murmur processing" : "Murmur idle";
 
   return (
-    <div ref={pillParent} className="grid h-screen w-screen grid-cols-[1.125rem_minmax(0,1fr)_2.25rem] items-center gap-2.5 rounded-full border border-border bg-surface/95 px-3.5 py-3 shadow-2xl shadow-black/40">
-      <div className={cn("h-3.5 w-3.5 rounded-full border border-border bg-muted-foreground", state.session.status === "recording" && "animate-pulse bg-foreground")} />
-      <div className="min-w-0">
-        <div className="truncate text-sm font-medium capitalize text-foreground">{state.session.status}</div>
-        <div className="truncate text-xs text-muted-foreground">
-          {state.modes.find((mode) => mode.id === state.session.modeId)?.name ?? "Mode"}
-          {state.session.cloudStt || state.session.cloudLlm ? " · cloud" : " · local"}
-          {state.session.streamingMode !== "none" ? " · streaming" : " · final"}
+    <div className="recording-pill-shell">
+      <div className="recording-pill" role="status" aria-label={ariaLabel}>
+        <div className={cn("recording-wave", isProcessing && "recording-wave--processing", !isRecording && !isProcessing && "recording-wave--muted")}>
+          {barScales.map((scale, index) => (
+            <span
+              key={`recording-bar-${index}`}
+              className="recording-wave__bar"
+              style={
+                {
+                  "--bar-delay": `${index * 70}ms`,
+                  "--bar-scale": scale.toFixed(3)
+                } as CSSProperties
+              }
+            />
+          ))}
         </div>
       </div>
-      {state.session.status === "recording" ? (
-        <IconButton title="Stop" onClick={() => void stopDictation()}>
-          <Square size={18} />
-        </IconButton>
-      ) : (
-        <IconButton title="Working" disabled={isBusy}>
-          <RefreshCw size={18} />
-        </IconButton>
-      )}
     </div>
   );
 }

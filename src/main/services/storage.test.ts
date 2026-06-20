@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { defaultSettings } from "../../shared/defaults";
+import { defaultModes, defaultSettings } from "../../shared/defaults";
 import type { DictationHistoryItem } from "../../shared/types";
 import { resolveAppPaths, type AppPaths } from "./app-paths";
 import { StorageService } from "./storage";
@@ -79,7 +79,134 @@ describe("StorageService", () => {
     expect(settings.sttSetupCompletedAt).toBeUndefined();
   });
 
-  it("normalizes removed automation settings to automatic behavior", () => {
+  it("seeds former presets as built-in modes during migration", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        settings: {
+          activeModeId: "message",
+          theme: "dark"
+        },
+        modes: [
+          {
+            id: "default",
+            kind: "default",
+            presetId: "custom",
+            name: "Default",
+            aiEnabled: true,
+            instructionPrompt: "Default instruction",
+            examples: [],
+            language: "auto",
+            context: { app: true, selectedText: true, clipboardText: true }
+          }
+        ]
+      })
+    );
+
+    const storage = jsonStorage(paths);
+    const state = storage.getState();
+
+    expect(state.modes.map((mode) => mode.id)).toEqual(defaultModes.map((mode) => mode.id));
+    expect(state.modes.find((mode) => mode.id === "message")).toMatchObject({
+      kind: "built_in",
+      iconKey: "message-square",
+      name: "Message"
+    });
+    expect(state.settings.activeModeId).toBe("message");
+  });
+
+  it("resets built-in modes to their built-in defaults", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        modes: [
+          {
+            id: "default",
+            kind: "default",
+            iconKey: "sliders-horizontal",
+            name: "Default",
+            aiEnabled: true,
+            instructionPrompt: "Default instruction",
+            examples: [],
+            language: "auto",
+            context: { app: true, selectedText: true, clipboardText: true }
+          },
+          {
+            id: "message",
+            kind: "built_in",
+            iconKey: "mail",
+            name: "Edited message",
+            aiEnabled: false,
+            instructionPrompt: "Edited instruction",
+            examples: [{ input: "one", output: "two" }],
+            language: "en",
+            context: { app: false, selectedText: false, clipboardText: true }
+          }
+        ]
+      })
+    );
+
+    const storage = jsonStorage(paths);
+    const defaultMode = storage.getState().modes.find((mode) => mode.id === "default");
+    const messageMode = storage.getState().modes.find((mode) => mode.id === "message");
+    const defaultDefaultMode = defaultModes.find((mode) => mode.id === "default");
+    const defaultMessageMode = defaultModes.find((mode) => mode.id === "message");
+
+    expect(defaultMode).toEqual(defaultDefaultMode);
+    expect(messageMode).toEqual(defaultMessageMode);
+  });
+
+  it("converts custom modes from preset ids to icon keys", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        modes: [
+          {
+            id: "default",
+            kind: "default",
+            presetId: "custom",
+            name: "Default",
+            aiEnabled: true,
+            instructionPrompt: "Default instruction",
+            examples: [],
+            language: "auto",
+            context: { app: true, selectedText: true, clipboardText: true }
+          },
+          {
+            id: "mode-chat",
+            kind: "custom",
+            presetId: "message",
+            name: "Team chat",
+            aiEnabled: true,
+            instructionPrompt: "Keep this casual.",
+            examples: [],
+            language: "auto",
+            context: { app: true, selectedText: true, clipboardText: false }
+          }
+        ]
+      })
+    );
+
+    const storage = jsonStorage(paths);
+    const customMode = storage.getState().modes.find((mode) => mode.id === "mode-chat");
+
+    expect(customMode).toMatchObject({
+      kind: "custom",
+      iconKey: "message-square",
+      name: "Team chat",
+      instructionPrompt: "Keep this casual.",
+      context: { app: true, selectedText: true, clipboardText: false }
+    });
+    expect(customMode).not.toHaveProperty("presetId");
+  });
+
+  it("preserves disabled selected-text capture while normalizing paste automation", () => {
     const paths = testPaths();
     mkdirSync(paths.configDir, { recursive: true });
     writeFileSync(
@@ -98,7 +225,7 @@ describe("StorageService", () => {
     const settings = storage.getState().settings;
 
     expect(settings.pasteMethod).toBe("clipboard_restore");
-    expect(settings.selectedTextCapture).toBe("clipboard_restore");
+    expect(settings.selectedTextCapture).toBe("disabled");
   });
 
   it("normalizes configs without a tray close notice timestamp", () => {

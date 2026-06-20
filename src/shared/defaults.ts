@@ -39,8 +39,8 @@ export const defaultSession: DictationSession = {
 export const defaultModes: ModeConfig[] = [
   {
     id: "default",
-    kind: "default",
-    presetId: "custom",
+    kind: "built_in",
+    iconKey: "sliders-horizontal",
     name: "Default",
     aiEnabled: true,
     instructionPrompt:
@@ -48,6 +48,54 @@ export const defaultModes: ModeConfig[] = [
     examples: [],
     language: "auto",
     context: { app: true, selectedText: true, clipboardText: true }
+  },
+  {
+    id: "voice_to_text",
+    kind: "built_in",
+    iconKey: "mic",
+    name: "Voice to text",
+    aiEnabled: false,
+    instructionPrompt:
+      "Return the transcript as directly as possible. Preserve the user's words and only correct clear transcription mistakes, punctuation, and casing.",
+    examples: [],
+    language: "auto",
+    context: { app: false, selectedText: false, clipboardText: false }
+  },
+  {
+    id: "message",
+    kind: "built_in",
+    iconKey: "message-square",
+    name: "Message",
+    aiEnabled: true,
+    instructionPrompt:
+      "Write a concise chat or direct message that fits the current conversation. Keep it natural, clear, and ready to send.",
+    examples: [],
+    language: "auto",
+    context: { app: true, selectedText: true, clipboardText: false }
+  },
+  {
+    id: "mail",
+    kind: "built_in",
+    iconKey: "mail",
+    name: "Mail",
+    aiEnabled: true,
+    instructionPrompt:
+      "Draft or revise email text with a clear subject-aware structure, professional tone, and appropriate greeting and sign-off when useful.",
+    examples: [],
+    language: "auto",
+    context: { app: true, selectedText: true, clipboardText: true }
+  },
+  {
+    id: "note",
+    kind: "built_in",
+    iconKey: "notebook-pen",
+    name: "Note",
+    aiEnabled: true,
+    instructionPrompt:
+      "Turn the transcript into structured notes. Use concise headings, bullets, and action items when they make the content easier to scan.",
+    examples: [],
+    language: "auto",
+    context: { app: true, selectedText: false, clipboardText: false }
   }
 ];
 

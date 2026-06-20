@@ -11,6 +11,10 @@ export interface PrimarySelectionReader {
   readPrimaryText(): Promise<string | undefined>;
 }
 
+export interface ContextCaptureOptions {
+  selectedText?: boolean;
+}
+
 export class ContextService {
   private lastClipboardText = "";
   private lastClipboardAt = 0;
@@ -50,12 +54,12 @@ export class ContextService {
     };
   }
 
-  async capture(): Promise<ContextSnapshot> {
+  async capture(options: ContextCaptureOptions = {}): Promise<ContextSnapshot> {
     const diagnostics: string[] = [];
     const activeWindow = await this.metadata.capture(diagnostics);
     let selectedText: string | undefined;
 
-    if (this.textAutomation.getCapability().automationAvailable) {
+    if ((options.selectedText ?? true) && this.textAutomation.getCapability().automationAvailable) {
       selectedText = await this.captureSelectionViaClipboard(diagnostics);
     }
 

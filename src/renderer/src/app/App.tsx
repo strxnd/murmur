@@ -32,7 +32,20 @@ function LiveApp({ isPill }: { isPill: boolean }): JSX.Element {
     return applyTheme(snapshot.settings.theme);
   }, [snapshot?.settings.theme]);
 
-  useRecordingBridge();
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    if (isPill) {
+      root.dataset.window = "pill";
+    } else if (root.dataset.window === "pill") {
+      delete root.dataset.window;
+    }
+
+    return () => {
+      if (root.dataset.window === "pill") delete root.dataset.window;
+    };
+  }, [isPill]);
+
+  useRecordingBridge(!isPill);
 
   if (status === "error") {
     return <div className="grid min-h-screen place-items-center p-6 text-sm text-danger">{error ?? "Unable to load Murmur."}</div>;

@@ -118,6 +118,18 @@ describe("ContextService", () => {
     expect(clipboardHarness.get().text).toBe("previous");
   });
 
+  it("skips selected text capture when disabled by the caller", async () => {
+    const backend = new FakeBackend();
+    const context = new ContextService(new TextAutomationService(backend), 5, 1, fakePrimarySelection());
+    clipboardHarness.set({ text: "previous" });
+
+    const snapshot = await context.capture({ selectedText: false });
+
+    expect(snapshot.selectedText).toBeUndefined();
+    expect(backend.copyCalls).toBe(0);
+    expect(clipboardHarness.get().text).toBe("previous");
+  });
+
   it("uses PRIMARY selection when clipboard copy does not change text", async () => {
     let primary = "old primary";
     const backend = new FakeBackend();

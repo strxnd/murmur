@@ -17,12 +17,14 @@ import type {
   ModelCatalogItem,
   ModelLibrarySnapshot,
   ModeConfig,
+  RecordingLevelPayload,
   ReplacementRule,
   SttPreferredLanguageScope,
   SttRuntimeId,
   TranscriptionProviderConfig,
   VocabularyEntry
 } from "../shared/types";
+import { recordingLevelPayloadSchema } from "../shared/schemas";
 import { defaultSession } from "../shared/defaults";
 import { llmProviderFromModel, transcriptionProviderFromModel } from "../shared/model-activation";
 import { buildProcessingPrompt, buildVocabularyPrompt } from "../shared/prompts";
@@ -56,8 +58,8 @@ import {
   Tray
 } from "./electron-api";
 
-const pillWindowWidth = 360;
-const pillWindowHeight = 86;
+const pillWindowWidth = 140;
+const pillWindowHeight = 64;
 const pillWindowMargin = 24;
 const trayIconDataUrl =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAbklEQVR4nO3WQQ7AIAgEQJ7B/1/JrV4bg4kKXbTZTbzqoEYUYZgbo6qPN2CLm5k7PkeMKoftxLv6PpBdIIAAOKCfbAcQAhFwJGD1KU4FyEYzSgfIYjsOAyITpHTH2XMvac3w3xABpYDyy0fAb9MAo3Ifzf1J6oQAAAAASUVORK5CYII=";
@@ -83,6 +85,7 @@ export class AppController {
   private sttBenchmark: SttBenchmarkService;
   private session: DictationSession = defaultSession;
   private sessionContext: ContextSnapshot | null = null;
+  private pendingContextCapture: { sessionId: string; promise: Promise<ContextSnapshot> } | null = null;
   private recordingStoppedAt: string | null = null;
   private pushToTalkPressed = false;
   private pushToTalkSessionId: string | null = null;
@@ -471,6 +474,7 @@ export class AppController {
     ipcMain.handle("dictation:complete-recording", (_event, payload: { sessionId: string; audio: ArrayBuffer; mimeType: string }) =>
       this.completeRecording(payload)
     );
+    ipcMain.on("recording:level", (_event, payload: unknown) => this.forwardRecordingLevel(payload));
     ipcMain.handle("history:copy", (_event, text: string) => {
       clipboard.writeText(text);
       return { ok: true };
@@ -717,17 +721,17 @@ export class AppController {
       return this.getSnapshot();
     }
 
-    const context = await this.context.capture();
-    const mode = resolveModeByContext(context, persisted.modes, persisted.autoModeRules, persisted.settings.activeModeId);
     const sttProvider = this.selectTranscriptionProvider(persisted);
-    const llmProvider = mode.aiEnabled ? this.selectLlmProvider(persisted) : undefined;
+    const initialMode = persisted.modes.find((candidate) => candidate.id === persisted.settings.activeModeId) ?? persisted.modes[0];
+    const llmProvider = initialMode.aiEnabled ? this.selectLlmProvider(persisted) : undefined;
+    const sessionId = createId("session");
 
-    this.sessionContext = context;
+    this.sessionContext = null;
     this.recordingStoppedAt = null;
     this.session = {
-      id: createId("session"),
+      id: sessionId,
       status: "recording",
-      modeId: mode.id,
+      modeId: initialMode.id,
       startedAt: new Date().toISOString(),
       cloudStt: Boolean(sttProvider?.isCloud),
       cloudLlm: Boolean(llmProvider?.isCloud),
@@ -737,6 +741,7 @@ export class AppController {
     this.showPill();
     this.mainWindow?.webContents.send("recording:start", { sessionId: this.session.id });
     this.broadcastState();
+    this.beginRecordingContextCapture(sessionId, persisted);
     return this.getSnapshot();
   }
 
@@ -761,6 +766,7 @@ export class AppController {
       modeId: this.storage.getState().settings.activeModeId
     };
     this.sessionContext = null;
+    this.pendingContextCapture = null;
     this.recordingStoppedAt = null;
     this.pushToTalkPressed = false;
     this.pushToTalkSessionId = null;
@@ -769,17 +775,76 @@ export class AppController {
     return this.getSnapshot();
   }
 
+  private beginRecordingContextCapture(sessionId: string, persisted: ReturnType<StorageService["getState"]>): void {
+    const promise = this.captureRecordingContext(persisted)
+      .then((context) => {
+        this.applyRecordingContext(sessionId, context, persisted);
+        return context;
+      })
+      .catch((error) => {
+        const context = unavailableContext(`Context capture failed: ${errorMessage(error)}.`);
+        this.applyRecordingContext(sessionId, context, persisted);
+        return context;
+      });
+
+    this.pendingContextCapture = { sessionId, promise };
+    void promise.finally(() => {
+      if (this.pendingContextCapture?.sessionId === sessionId) {
+        this.pendingContextCapture = null;
+      }
+    });
+  }
+
+  private async getRecordingContext(sessionId: string, persisted: ReturnType<StorageService["getState"]>): Promise<ContextSnapshot> {
+    if (this.session.id === sessionId && this.sessionContext) return this.sessionContext;
+
+    const pending = this.pendingContextCapture;
+    if (pending?.sessionId === sessionId) return pending.promise;
+
+    const context = await this.captureRecordingContext(persisted).catch((error) =>
+      unavailableContext(`Context capture failed: ${errorMessage(error)}.`)
+    );
+    this.applyRecordingContext(sessionId, context, persisted);
+    return context;
+  }
+
+  private async captureRecordingContext(persisted: ReturnType<StorageService["getState"]>): Promise<ContextSnapshot> {
+    return this.context.capture({
+      selectedText: persisted.settings.selectedTextCapture !== "disabled"
+    });
+  }
+
+  private applyRecordingContext(
+    sessionId: string,
+    context: ContextSnapshot,
+    persisted: ReturnType<StorageService["getState"]>
+  ): void {
+    if (this.session.id !== sessionId) return;
+
+    const mode = resolveModeByContext(context, persisted.modes, persisted.autoModeRules, persisted.settings.activeModeId);
+    const llmProvider = mode.aiEnabled ? this.selectLlmProvider(persisted) : undefined;
+    const cloudLlm = Boolean(llmProvider?.isCloud);
+    const changed = this.session.modeId !== mode.id || this.session.cloudLlm !== cloudLlm;
+
+    this.sessionContext = context;
+    this.session = { ...this.session, modeId: mode.id, cloudLlm };
+    if (changed) this.broadcastState();
+  }
+
   private async completeRecording(payload: { sessionId: string; audio: ArrayBuffer; mimeType: string }): Promise<AppStateSnapshot> {
     if (payload.sessionId !== this.session.id) return this.getSnapshot();
 
-    const persisted = this.storage.getState();
+    let persisted = this.storage.getState();
+    const context = await this.getRecordingContext(payload.sessionId, persisted);
+    if (payload.sessionId !== this.session.id) return this.getSnapshot();
+
+    persisted = this.storage.getState();
     const mode = persisted.modes.find((candidate) => candidate.id === this.session.modeId) ?? persisted.modes[0];
     const sttProvider = this.selectTranscriptionProvider(persisted);
     if (!sttProvider) {
       return this.failSession("No enabled transcription provider is configured.");
     }
 
-    const context = this.sessionContext ?? (await this.context.capture());
     const audio = new Uint8Array(payload.audio);
     const audioPath = persisted.settings.retainAudio ? this.writeAudioFile(this.session.id, audio, payload.mimeType) : null;
     const vocabularyPrompt = buildVocabularyPrompt(persisted.vocabulary);
@@ -891,6 +956,14 @@ export class AppController {
     } catch (error) {
       return this.failSession(String(error instanceof Error ? error.message : error));
     }
+  }
+
+  private forwardRecordingLevel(payload: unknown): void {
+    const result = recordingLevelPayloadSchema.safeParse(payload);
+    if (!result.success) return;
+    const levelPayload = result.data as RecordingLevelPayload;
+    if (this.session.status !== "recording" || levelPayload.sessionId !== this.session.id) return;
+    this.pillWindow?.webContents.send("recording:level", levelPayload);
   }
 
   private async reprocessHistory(id: string): Promise<AppStateSnapshot> {
@@ -1111,6 +1184,14 @@ function computeDurationMs(startedAt: string | undefined, stoppedAt: string): nu
   const stop = new Date(stoppedAt).getTime();
   if (!Number.isFinite(start) || !Number.isFinite(stop)) return undefined;
   return Math.max(0, stop - start);
+}
+
+function unavailableContext(message: string): ContextSnapshot {
+  return {
+    capturedAt: new Date().toISOString(),
+    sourceQuality: "unavailable",
+    diagnostics: [message]
+  };
 }
 
 function countWords(text: string): number {

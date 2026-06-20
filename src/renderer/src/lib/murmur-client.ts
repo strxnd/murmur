@@ -7,6 +7,7 @@ import type {
   ModelLibrarySnapshot,
   ModeConfig,
   ProviderValidationResult,
+  RecordingLevelPayload,
   ReplacementRule,
   SttModelRecommendation,
   SttPreferredLanguageScope,
@@ -24,6 +25,7 @@ import {
   modelLibrarySnapshotSchema,
   pasteResultSchema,
   providerValidationResultSchema,
+  recordingLevelPayloadSchema,
   sttModelRecommendationSchema,
   sttRuntimeInstallStateSchema,
   sttSetupSnapshotSchema
@@ -69,6 +71,9 @@ export const murmurClient = {
   cancelDictation: (): Promise<AppStateSnapshot> => window.murmur.cancelDictation().then(parseState),
   completeRecording: (payload: { sessionId: string; audio: ArrayBuffer; mimeType: string }): Promise<AppStateSnapshot> =>
     window.murmur.completeRecording(completeRecordingPayloadSchema.parse(payload)).then(parseState),
+  publishRecordingLevel: (payload: RecordingLevelPayload): void => {
+    window.murmur.publishRecordingLevel(recordingLevelPayloadSchema.parse(payload) as RecordingLevelPayload);
+  },
   copyHistoryOutput: (text: string): Promise<{ ok: boolean }> => window.murmur.copyHistoryOutput(text).then((value) => copyResultSchema.parse(value)),
   repasteHistoryOutput: (text: string): Promise<{ pasted: boolean; message: string }> =>
     window.murmur.repasteHistoryOutput(text).then((value) => pasteResultSchema.parse(value)),
@@ -81,6 +86,8 @@ export const murmurClient = {
   onRecordingStart: (callback: (payload: { sessionId: string }) => void): (() => void) => window.murmur.onRecordingStart(callback),
   onRecordingStop: (callback: (payload: { sessionId: string }) => void): (() => void) => window.murmur.onRecordingStop(callback),
   onRecordingCancel: (callback: (payload: { sessionId: string }) => void): (() => void) => window.murmur.onRecordingCancel(callback),
+  onRecordingLevel: (callback: (payload: RecordingLevelPayload) => void): (() => void) =>
+    window.murmur.onRecordingLevel((payload) => callback(recordingLevelPayloadSchema.parse(payload) as RecordingLevelPayload)),
   onTranscriptDelta: (callback: (delta: string) => void): (() => void) => window.murmur.onTranscriptDelta(callback),
   onModelDownloadProgress: (callback: (state: ModelDownloadState) => void): (() => void) =>
     window.murmur.onModelDownloadProgress((state) => callback(modelDownloadStateSchema.parse(state) as ModelDownloadState)),
