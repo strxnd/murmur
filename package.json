@@ -20,6 +20,7 @@
   },
   "build": {
     "appId": "dev.murmur.app",
+    "afterPack": "scripts/after-pack.cjs",
     "files": [
       "out/**",
       "package.json"

@@ -8,7 +8,10 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        input: resolve(__dirname, "src/main/index.ts"),
+        input: {
+          index: resolve(__dirname, "src/main/index.ts"),
+          "app-main": resolve(__dirname, "src/main/app-main.ts")
+        },
         output: {
           format: "cjs",
           entryFileNames: "[name].cjs"
