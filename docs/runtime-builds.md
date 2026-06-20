@@ -29,22 +29,22 @@ Remove the patch after the pinned upstream version includes the multipart WAV fi
 Prepare current platform runtimes:
 
 ```sh
-npm run runtimes:prepare
+mise run runtimes:prepare
 ```
 
 Check current platform runtime readiness:
 
 ```sh
-npm run runtimes:doctor
+mise run runtimes:doctor
 ```
 
 Package after runtimes are present:
 
 ```sh
-npm run runtimes:package
-npm run runtimes:manifest-check
-npm run pack
-npm run dist
+mise run runtimes:package
+mise run runtimes:manifest-check
+mise run pack
+mise run dist
 ```
 
 CI builds runtime artifacts per supported hosted runner, packages one archive per runtime/platform, uploads the archives as workflow artifacts, and attaches them to GitHub Releases on release tags.
@@ -99,10 +99,10 @@ Use single-channel 16-bit PCM WAV input for bundled runtime smoke tests.
 
 Missing executable:
 
-- Run `npm run runtimes:prepare`.
-- Confirm `npm run runtimes:doctor` reports both runtimes available.
+- Run `mise run runtimes:prepare`.
+- Confirm `mise run runtimes:doctor` reports both runtimes available.
 - Check that the executable is under `vendor/runtimes/<platform-key>/<runtime>/`.
-- For production downloads, confirm `npm run runtimes:manifest-check` passes and the release archive exists.
+- For production downloads, confirm `mise run runtimes:manifest-check` passes and the release archive exists.
 
 Unsupported platform:
 

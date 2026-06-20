@@ -37,13 +37,13 @@ Production builds download versioned runtime archives from GitHub Releases on de
 Generate the current platform runtimes with:
 
 ```sh
-npm run runtimes:prepare
+mise run runtimes:prepare
 ```
 
 Check the current platform runtime tree with:
 
 ```sh
-npm run runtimes:doctor
+mise run runtimes:doctor
 ```
 
 The prepare script downloads Sherpa ONNX, verifies SHA-256, extracts the archive, builds pinned `whisper.cpp`, applies Murmur's temporary server patch, and installs both runtimes under `vendor/runtimes/<platform-key>/`.
@@ -53,7 +53,7 @@ Runtime binaries are generated/downloaded during release prep. They are not comm
 Create release archives and print their SHA-256/size values with:
 
 ```sh
-npm run runtimes:package
+mise run runtimes:package
 ```
 
 ## Environment Overrides

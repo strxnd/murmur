@@ -4,6 +4,9 @@
   "description": "System-wide AI dictation for Linux Wayland.",
   "main": "out/main/index.cjs",
   "private": true,
+  "engines": {
+    "node": "25.9.0"
+  },
   "scripts": {
     "dev": "env -u ELECTRON_RUN_AS_NODE electron-vite dev",
     "build": "tsc --noEmit && electron-vite build",

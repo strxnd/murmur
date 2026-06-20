@@ -14,13 +14,15 @@ Murmur is an Electron desktop app with a React renderer.
 
 ## Build, Test, and Development Commands
 
-- `npm install`: install dependencies from `package-lock.json`.
-- `npm run dev`: start Electron with the Vite renderer dev server. The script clears `ELECTRON_RUN_AS_NODE`.
-- `npm run build`: run TypeScript checking and produce production Electron/Vite output in `out/`.
-- `npm run preview`: preview the built Electron app.
-- `npm run lint`: currently aliases `tsc --noEmit` for type checking.
+- `mise install`: install the pinned Node toolchain from `.mise.toml`.
+- `mise run install`: install dependencies from `package-lock.json`.
+- `mise run dev`: start Electron with the Vite renderer dev server. The wrapped npm script clears `ELECTRON_RUN_AS_NODE`.
+- `mise run build`: run TypeScript checking and produce production Electron/Vite output in `out/`.
+- `mise run preview`: preview the built Electron app.
+- `mise run lint`: currently aliases `tsc --noEmit` for type checking.
+- `mise run test`: run the Vitest test suite.
 
-There is no dedicated test command yet; use `npm run build` as the minimum verification before handing off changes.
+Mise tasks wrap the existing npm scripts in `package.json`; keep those scripts as the source of truth. Use `mise run build` as the minimum verification before handing off changes.
 
 ## Coding Style & Naming Conventions
 
