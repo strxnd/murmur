@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -188,6 +189,61 @@ describe("SttRuntimeService", () => {
     expect(service.getInstallState("whisper.cpp").status).toBe("error");
   });
 
+  it("passes cancellation to runtime archive extraction", async () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const bytes = "bytes";
+    const catalog = structuredClone(sttRuntimeCatalog);
+    catalog["whisper.cpp"].platforms["linux-x64"] = {
+      assetName: "runtime.tar.gz",
+      url: "https://example.test/runtime.tar.gz",
+      sizeBytes: bytes.length,
+      sha256: sha256(bytes)
+    };
+
+    let extractSignal: AbortSignal | undefined;
+    let extractionStarted!: () => void;
+    const extractionStartedPromise = new Promise<void>((resolve) => {
+      extractionStarted = resolve;
+    });
+
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      runtimeDir,
+      env: {},
+      catalog,
+      fetch: async () => new Response(bytes, { status: 200, headers: { "content-length": String(bytes.length) } }),
+      extractArchive: async (_archivePath, _targetDir, signal) => {
+        extractSignal = signal;
+        extractionStarted();
+        return new Promise<void>((_resolve, reject) => {
+          const failWithAbort = (): void => reject(createAbortError());
+          if (signal?.aborted) {
+            failWithAbort();
+            return;
+          }
+          signal?.addEventListener("abort", failWithAbort, { once: true });
+        });
+      }
+    });
+
+    const installPromise = service.downloadRuntime("whisper.cpp");
+    await extractionStartedPromise;
+
+    expect(extractSignal).toBeDefined();
+    expect(extractSignal?.aborted).toBe(false);
+
+    const cancelState = await service.cancelRuntimeDownload("whisper.cpp");
+    const installState = await installPromise;
+
+    expect(extractSignal?.aborted).toBe(true);
+    expect(cancelState.status).toBe("not_installed");
+    expect(installState.status).toBe("not_installed");
+    expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "v1.8.6"))).toBe(false);
+  });
+
   it("builds dynamic library environment variables", () => {
     const root = tempRoot();
     const runtimeRoot = join(root, "vendor", "runtimes", "linux-x64", "sherpa-onnx");
@@ -232,4 +288,14 @@ function writeRuntimeReceipt(root: string, id: string, platformKey: string, vers
       installedAt: new Date().toISOString()
     })
   );
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function createAbortError(): Error {
+  const error = new Error("The operation was aborted.");
+  error.name = "AbortError";
+  return error;
 }

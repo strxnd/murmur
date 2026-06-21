@@ -74,7 +74,7 @@ export interface SttRuntimeServiceOptions {
   runtimeDir?: string;
   exists?: (path: string) => boolean;
   fetch?: typeof fetch;
-  extractArchive?: (archivePath: string, targetDir: string) => Promise<void>;
+  extractArchive?: (archivePath: string, targetDir: string, signal?: AbortSignal) => Promise<void>;
   catalog?: RuntimeCatalog;
   emitProgress?: ProgressEmitter;
   onBeforeRuntimeMutation?: RuntimeMutationHook;
@@ -91,7 +91,7 @@ export class SttRuntimeService {
   private runtimeDir?: string;
   private exists: (path: string) => boolean;
   private fetchImpl: typeof fetch;
-  private extractArchiveImpl: (archivePath: string, targetDir: string) => Promise<void>;
+  private extractArchiveImpl: (archivePath: string, targetDir: string, signal?: AbortSignal) => Promise<void>;
   private catalog: RuntimeCatalog;
   private emitProgress?: ProgressEmitter;
   private onBeforeRuntimeMutation?: RuntimeMutationHook;
@@ -363,8 +363,10 @@ export class SttRuntimeService {
         })
       );
 
+      if (controller.signal.aborted) throw abortError();
       mkdirSync(extractDir, { recursive: true });
-      await this.extractArchiveImpl(archivePath, extractDir);
+      await this.extractArchiveImpl(archivePath, extractDir, controller.signal);
+      if (controller.signal.aborted) throw abortError();
       const extractedRoot = singleChildDirectory(extractDir) ?? extractDir;
       const binary = findExecutable(extractedRoot, definition);
       if (!binary) {
@@ -697,19 +699,37 @@ function closeWriter(writer: NodeJS.WritableStream): Promise<void> {
   });
 }
 
-function extractTarGz(archivePath: string, targetDir: string): Promise<void> {
+function extractTarGz(archivePath: string, targetDir: string, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     mkdirSync(targetDir, { recursive: true });
-    const child = spawn("tar", ["-xzf", archivePath, "-C", targetDir], { stdio: ["ignore", "ignore", "pipe"] });
+    if (signal?.aborted) {
+      reject(abortError());
+      return;
+    }
+
+    const child = spawn("tar", ["-xzf", archivePath, "-C", targetDir], { stdio: ["ignore", "ignore", "pipe"], signal });
     let stderr = "";
+    let settled = false;
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", abort);
+      if (error) reject(error);
+      else resolve();
+    };
+    const abort = (): void => {
+      child.kill();
+      finish(abortError());
+    };
     child.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
     });
-    child.on("error", reject);
+    child.on("error", (error) => finish(isAbortError(error) ? abortError() : error));
     child.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`tar extraction failed with exit code ${code}: ${stderr.trim()}`));
+      if (code === 0) finish();
+      else finish(new Error(`tar extraction failed with exit code ${code}: ${stderr.trim()}`));
     });
+    signal?.addEventListener("abort", abort, { once: true });
   });
 }
 

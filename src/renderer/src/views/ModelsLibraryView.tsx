@@ -55,6 +55,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
   const toggleFavoriteModel = useMurmurStore((store) => store.toggleFavoriteModel);
   const downloadSttRuntime = useMurmurStore((store) => store.downloadSttRuntime);
   const repairSttRuntime = useMurmurStore((store) => store.repairSttRuntime);
+  const cancelSttRuntimeDownload = useMurmurStore((store) => store.cancelSttRuntimeDownload);
   const runSttBenchmark = useMurmurStore((store) => store.runSttBenchmark);
   const [query, setQuery] = useState("");
   const [provider, setProvider] = useState<"all" | ModelProvider>("all");
@@ -180,6 +181,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
                           onActivate={() => void activateModel(item.id)}
                           onInstallRuntime={() => runtime && void downloadSttRuntime(runtime.id)}
                           onRepairRuntime={() => runtime && void repairSttRuntime(runtime.id)}
+                          onCancelRuntimeDownload={() => runtime && void cancelSttRuntimeDownload(runtime.id)}
                           onBenchmark={() => void runSttBenchmark(state.settings.sttPreferredLanguageScope)}
                           onClose={() => setOpenModelId(null)}
                           runtime={runtime}
@@ -209,6 +211,7 @@ function ModelPopover({
   onActivate,
   onInstallRuntime,
   onRepairRuntime,
+  onCancelRuntimeDownload,
   onBenchmark,
   onClose,
   runtime
@@ -223,6 +226,7 @@ function ModelPopover({
   onActivate: () => void;
   onInstallRuntime: () => void;
   onRepairRuntime: () => void;
+  onCancelRuntimeDownload: () => void;
   onBenchmark: () => void;
   onClose: () => void;
   runtime?: SttRuntimeInstallState;
@@ -239,6 +243,7 @@ function ModelPopover({
   const canDelete = item.downloadStrategy !== "none" && status === "downloaded";
   const runtimeReady = !runtime || runtime.status === "ready";
   const runtimeBusy = runtime?.status === "downloading" || runtime?.status === "installing";
+  const canCancelRuntimeDownload = runtime?.status === "downloading";
   const canActivate = canActivateModel(item) && (item.downloadStrategy === "none" || status === "downloaded");
   const popoverParent = useAutoAnimateRef<HTMLDivElement>();
 
@@ -298,6 +303,11 @@ function ModelPopover({
         {runtime?.canRepair && (
           <Button onClick={onRepairRuntime} disabled={runtimeBusy}>
             <Wrench size={18} /> Repair runtime
+          </Button>
+        )}
+        {canCancelRuntimeDownload && (
+          <Button variant="secondary" onClick={onCancelRuntimeDownload}>
+            <X size={18} /> Cancel runtime
           </Button>
         )}
         {item.defaultProviderConfig?.sttProviderType === "whisper_cpp" && (
