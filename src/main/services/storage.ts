@@ -86,7 +86,9 @@ const appSettingKeys = [
   "typingBaselineWpm",
   "trayCloseNoticeShownAt",
   "sttSetupSkippedAt",
-  "sttSetupCompletedAt"
+  "sttSetupCompletedAt",
+  "onboardingSkippedAt",
+  "onboardingCompletedAt"
 ] satisfies Array<keyof AppSettings>;
 const customModeDefaults: ModeConfig = {
   id: "mode",

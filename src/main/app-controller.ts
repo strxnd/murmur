@@ -23,7 +23,7 @@ import type {
   TranscriptionProviderConfig,
   VocabularyEntry
 } from "../shared/types";
-import { recordingLevelPayloadSchema } from "../shared/schemas";
+import { recordingErrorPayloadSchema, recordingLevelPayloadSchema } from "../shared/schemas";
 import { defaultSession } from "../shared/defaults";
 import {
   isLlmProviderUsable,
@@ -464,7 +464,13 @@ export class AppController {
     ipcMain.handle("dictation:complete-recording", (_event, payload: { sessionId: string; audio: ArrayBuffer; mimeType: string }) =>
       this.completeRecording(payload)
     );
+    ipcMain.handle("dictation:recording-error", (_event, payload: unknown) => this.handleRecordingError(payload));
     ipcMain.on("recording:level", (_event, payload: unknown) => this.forwardRecordingLevel(payload));
+    ipcMain.handle("onboarding:test-paste", async (_event, text: string) => {
+      const result = await this.paste.insertText(text);
+      this.broadcastState();
+      return result;
+    });
     ipcMain.handle("history:copy", (_event, text: string) => {
       clipboard.writeText(text);
       return { ok: true };
@@ -951,6 +957,13 @@ export class AppController {
     const levelPayload = result.data as RecordingLevelPayload;
     if (this.session.status !== "recording" || levelPayload.sessionId !== this.session.id) return;
     this.pillWindow?.webContents.send("recording:level", levelPayload);
+  }
+
+  private handleRecordingError(payload: unknown): AppStateSnapshot {
+    const result = recordingErrorPayloadSchema.safeParse(payload);
+    if (!result.success) return this.getSnapshot();
+    if (result.data.sessionId !== this.session.id || this.session.status !== "recording") return this.getSnapshot();
+    return this.failSession(result.data.message);
   }
 
   private async reprocessHistory(id: string): Promise<AppStateSnapshot> {

@@ -50,6 +50,7 @@ interface MurmurStore {
   startDictation: () => Promise<void>;
   stopDictation: () => Promise<void>;
   cancelDictation: () => Promise<void>;
+  testPaste: (text: string) => Promise<{ pasted: boolean; message: string }>;
   copyHistoryOutput: (text: string) => Promise<void>;
   repasteHistoryOutput: (text: string) => Promise<string>;
   deleteHistoryItem: (id: string) => Promise<void>;
@@ -158,6 +159,11 @@ export const useMurmurStore = create<MurmurStore>()((set, get) => {
     startDictation: () => commit(() => murmurClient.startDictation()),
     stopDictation: () => commit(() => murmurClient.stopDictation()),
     cancelDictation: () => commit(() => murmurClient.cancelDictation()),
+    testPaste: async (text) => {
+      const result = await murmurClient.testPaste(text);
+      await get().refresh();
+      return result;
+    },
     copyHistoryOutput: async (text) => {
       await murmurClient.copyHistoryOutput(text);
     },

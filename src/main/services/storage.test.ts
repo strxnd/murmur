@@ -79,6 +79,23 @@ describe("StorageService", () => {
     expect(settings.obsoleteSetting).toBeUndefined();
     expect(settings.sttSetupSkippedAt).toBeUndefined();
     expect(settings.sttSetupCompletedAt).toBeUndefined();
+    expect(settings.onboardingSkippedAt).toBeUndefined();
+    expect(settings.onboardingCompletedAt).toBeUndefined();
+  });
+
+  it("preserves onboarding completion timestamps", () => {
+    const paths = testPaths();
+    const storage = jsonStorage(paths);
+
+    storage.updateSettings({
+      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+      onboardingSkippedAt: "2026-01-02T00:00:00.000Z"
+    });
+
+    expect(storage.getState().settings).toMatchObject({
+      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+      onboardingSkippedAt: "2026-01-02T00:00:00.000Z"
+    });
   });
 
   it("seeds former presets as built-in modes during migration", () => {

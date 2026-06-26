@@ -58,6 +58,7 @@ The public renderer API is exposed as `window.murmur` by [`src/preload/index.ts`
 | `stopDictation()` | `dictation:stop` | `AppStateSnapshot` |
 | `cancelDictation()` | `dictation:cancel` | `AppStateSnapshot` |
 | `completeRecording(payload)` | `dictation:complete-recording` | `AppStateSnapshot` |
+| `reportRecordingError(payload)` | `dictation:recording-error` | `AppStateSnapshot` |
 | `publishRecordingLevel(payload)` | `recording:level` send | `void` |
 | `onRecordingStart(callback)` | `recording:start` | unsubscribe function |
 | `onRecordingStop(callback)` | `recording:stop` | unsubscribe function |
@@ -83,6 +84,21 @@ The public renderer API is exposed as `window.murmur` by [`src/preload/index.ts`
   level: number;
 }
 ```
+
+`reportRecordingError` payload:
+
+```ts
+{
+  sessionId: string;
+  message: string;
+}
+```
+
+## Onboarding
+
+| Method | IPC channel | Returns |
+| --- | --- | --- |
+| `testPaste(text)` | `onboarding:test-paste` | `{ pasted: boolean; message: string }` |
 
 ## History
 
