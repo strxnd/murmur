@@ -2,12 +2,13 @@ import type { ContextSnapshot, ModeConfig, VocabularyEntry } from "./types";
 
 export function buildVocabularyPrompt(vocabulary: VocabularyEntry[]): string {
   const terms = vocabulary
-    .filter((entry) => entry.enabled)
+    .filter((entry) => entry.term.trim().length > 0)
     .slice(0, 80)
     .map((entry) => {
+      const term = entry.term.trim();
       const pronunciation = entry.pronunciation ? ` (${entry.pronunciation})` : "";
       const category = entry.category ? ` [${entry.category}]` : "";
-      return `- ${entry.term}${pronunciation}${category}`;
+      return `- ${term}${pronunciation}${category}`;
     });
 
   return terms.length > 0

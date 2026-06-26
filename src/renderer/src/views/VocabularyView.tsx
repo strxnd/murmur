@@ -1,119 +1,124 @@
-import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Save, Trash2 } from "lucide-react";
-import { useEffect, type JSX } from "react";
-import { Controller, useForm } from "react-hook-form";
-import { z } from "zod";
-import type { AppStateSnapshot } from "../../../shared/types";
-import { vocabularyEntrySchema } from "../../../shared/schemas";
+import { Plus, X } from "lucide-react";
+import { useEffect, useState, type FormEvent, type JSX } from "react";
+import type { AppStateSnapshot, VocabularyEntry } from "../../../shared/types";
 import { View } from "../components/View";
-import { Button } from "../components/ui/Button";
-import { Checkbox } from "../components/ui/Checkbox";
-import { Field } from "../components/ui/Field";
 import { IconButton } from "../components/ui/IconButton";
 import { Input } from "../components/ui/Input";
 import { Panel } from "../components/ui/Panel";
-import { Textarea } from "../components/ui/Textarea";
-import { Toolbar } from "../components/ui/Toolbar";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { makeClientId } from "../lib/ids";
 import { useMurmurStore } from "../state/murmur-store";
 
-const vocabularyFormSchema = z.object({
-  vocabulary: z.array(vocabularyEntrySchema)
-});
-
-type VocabularyFormValues = z.infer<typeof vocabularyFormSchema>;
-
 export function VocabularyView({ state }: { state: AppStateSnapshot }): JSX.Element {
   const setVocabulary = useMurmurStore((store) => store.setVocabulary);
-  const form = useForm<VocabularyFormValues>({
-    resolver: zodResolver(vocabularyFormSchema),
-    defaultValues: {
-      vocabulary: state.vocabulary
-    }
-  });
-  const vocabulary = form.watch("vocabulary");
+  const [word, setWord] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const vocabularyParent = useAutoAnimateRef<HTMLDivElement>();
+  const vocabulary = state.vocabulary.filter((entry) => entry.term.trim().length > 0);
 
   useEffect(() => {
-    form.reset({ vocabulary: state.vocabulary });
-  }, [form, state.vocabulary]);
+    setError(null);
+  }, [state.vocabulary]);
 
-  const save = form.handleSubmit(async (values) => {
-    await setVocabulary(values.vocabulary);
-    form.reset(values);
-  });
+  const persistVocabulary = async (entries: VocabularyEntry[]): Promise<boolean> => {
+    setIsSaving(true);
+    setError(null);
 
-  const addTerm = (): void => {
-    form.setValue(
-      "vocabulary",
-      [{ id: makeClientId("term"), term: "", pronunciation: "", category: "", notes: "", enabled: true }, ...form.getValues("vocabulary")],
-      { shouldDirty: true, shouldValidate: true }
-    );
+    try {
+      await setVocabulary(normalizeVocabulary(entries));
+      return true;
+    } catch (persistError) {
+      setError(persistError instanceof Error ? persistError.message : String(persistError));
+      return false;
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const addWord = async (): Promise<void> => {
+    const term = word.trim();
+    if (!term) return;
+
+    const alreadyExists = state.vocabulary.some((entry) => entry.term.trim().toLocaleLowerCase() === term.toLocaleLowerCase());
+    if (alreadyExists) {
+      setWord("");
+      return;
+    }
+
+    const didPersist = await persistVocabulary([
+      ...state.vocabulary,
+      {
+        id: makeClientId("term"),
+        term,
+        pronunciation: "",
+        category: "",
+        notes: "",
+        enabled: true
+      }
+    ]);
+    if (didPersist) setWord("");
+  };
+
+  const removeWord = async (entryId: string): Promise<void> => {
+    await persistVocabulary(state.vocabulary.filter((entry) => entry.id !== entryId));
+  };
+
+  const submit = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault();
+    void addWord();
   };
 
   return (
-    <View
-      title="Vocabulary"
-      actions={
-        <Toolbar>
-          <Button onClick={addTerm}>
-            <Plus size={18} /> Add term
-          </Button>
-          <Button variant="primary" onClick={() => void save()} disabled={form.formState.isSubmitting || !form.formState.isDirty}>
-            <Save size={18} /> Save
-          </Button>
-        </Toolbar>
-      }
-    >
+    <View title="Vocabulary">
       <Panel>
-        <p className="m-0 text-sm text-muted-foreground">
-          Add custom words and phrases that should be recognized by speech-to-text.
-        </p>
-      </Panel>
+        <form onSubmit={submit} className="flex max-w-xl items-center gap-2">
+          <Input
+            aria-label="Word"
+            value={word}
+            onChange={(event) => setWord(event.target.value)}
+            placeholder="Add a word"
+            disabled={isSaving}
+          />
+          <IconButton title="Add word" type="submit" disabled={isSaving || !word.trim()}>
+            <Plus size={18} />
+          </IconButton>
+        </form>
 
-      <Panel title="Dictionary">
-        <div ref={vocabularyParent} className="flex flex-col gap-3">
-          {vocabulary.length === 0 && <p className="m-0 text-sm text-muted-foreground">No vocabulary terms yet.</p>}
-          {vocabulary.map((entry, index) => (
-            <div key={entry.id} className="grid grid-cols-[minmax(9rem,1fr)_minmax(9rem,1fr)_minmax(8rem,0.8fr)_5rem_2.5rem] items-start gap-2.5 border-t border-border pt-3 first:border-t-0 first:pt-0 max-[1100px]:grid-cols-1">
-              <Field label="Term" error={form.formState.errors.vocabulary?.[index]?.term?.message}>
-                <Input {...form.register(`vocabulary.${index}.term`)} />
-              </Field>
-              <Field label="Pronunciation">
-                <Input {...form.register(`vocabulary.${index}.pronunciation`)} />
-              </Field>
-              <Field label="Category">
-                <Input {...form.register(`vocabulary.${index}.category`)} />
-              </Field>
-              <div className="pt-6 max-[1100px]:pt-0">
-                <Controller
-                  control={form.control}
-                  name={`vocabulary.${index}.enabled`}
-                  render={({ field }) => <Checkbox label="Enabled" checked={Boolean(field.value)} onCheckedChange={field.onChange} />}
-                />
-              </div>
-              <div className="pt-6 max-[1100px]:pt-0">
-                <IconButton
-                  title="Delete term"
-                  onClick={() =>
-                    form.setValue(
-                      "vocabulary",
-                      form.getValues("vocabulary").filter((candidate) => candidate.id !== entry.id),
-                      { shouldDirty: true, shouldValidate: true }
-                    )
-                  }
-                >
-                  <Trash2 size={18} />
-                </IconButton>
-              </div>
-              <Field label="Notes" className="col-span-full">
-                <Textarea className="min-h-20" {...form.register(`vocabulary.${index}.notes`)} />
-              </Field>
-            </div>
+        <div ref={vocabularyParent} className="mt-4 flex flex-wrap gap-2">
+          {vocabulary.length === 0 && <p className="m-0 text-sm text-muted-foreground">No words yet.</p>}
+          {vocabulary.map((entry) => (
+            <span
+              key={entry.id}
+              className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-surface-raised px-3 py-1.5 text-sm text-foreground"
+            >
+              <span className="min-w-0 overflow-wrap-anywhere">{entry.term}</span>
+              <button
+                type="button"
+                title={`Remove ${entry.term}`}
+                aria-label={`Remove ${entry.term}`}
+                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-0 bg-transparent p-0 text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-foreground/35"
+                onClick={() => void removeWord(entry.id)}
+                disabled={isSaving}
+              >
+                <X size={13} />
+              </button>
+            </span>
           ))}
         </div>
+
+        {error && <p className="mt-3 mb-0 text-xs text-danger">{error}</p>}
       </Panel>
     </View>
   );
+}
+
+function normalizeVocabulary(entries: VocabularyEntry[]): VocabularyEntry[] {
+  return entries
+    .map((entry) => ({
+      ...entry,
+      term: entry.term.trim(),
+      enabled: true
+    }))
+    .filter((entry) => entry.term.length > 0);
 }
