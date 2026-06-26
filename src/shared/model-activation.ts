@@ -16,8 +16,7 @@ const providerLabels: Record<ModelProvider, string> = {
   ollama: "Ollama",
   openai: "OpenAI",
   anthropic: "Anthropic",
-  google: "Google",
-  openrouter: "OpenRouter"
+  google: "Google"
 };
 
 export function providerLabel(provider: ModelProvider): string {
@@ -127,7 +126,6 @@ export function llmProviderId(item: ModelCatalogItem): string {
   if (type === "openai") return "openai-llm";
   if (type === "anthropic") return "anthropic";
   if (type === "google") return "google";
-  if (type === "openrouter") return "openrouter";
   if (type === "llama_cpp_openai") return "llama-cpp-openai";
   return `${item.id}-llm`;
 }

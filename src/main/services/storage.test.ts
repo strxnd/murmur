@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { defaultModes, defaultSettings } from "../../shared/defaults";
+import { defaultLlmProviders, defaultModes, defaultSettings } from "../../shared/defaults";
 import type { DictationHistoryItem } from "../../shared/types";
 import { resolveAppPaths, type AppPaths } from "./app-paths";
 import { StorageService } from "./storage";
@@ -95,6 +95,52 @@ describe("StorageService", () => {
     expect(storage.getState().settings).toMatchObject({
       onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
       onboardingSkippedAt: "2026-01-02T00:00:00.000Z"
+    });
+  });
+
+  it("drops removed LLM providers during migration", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        llmProviders: [
+          ...defaultLlmProviders,
+          {
+            id: "openrouter",
+            type: "openrouter",
+            name: "OpenRouter",
+            baseUrl: "https://openrouter.ai/api/v1",
+            isCloud: true,
+            enabled: true
+          },
+          {
+            id: "groq",
+            type: "custom_openai_compatible",
+            name: "Groq",
+            baseUrl: "https://api.groq.com/openai/v1",
+            isCloud: true,
+            enabled: true
+          },
+          {
+            id: "custom-llm",
+            type: "custom_openai_compatible",
+            name: "Custom LLM",
+            baseUrl: "https://example.test/v1",
+            isCloud: true,
+            enabled: false
+          }
+        ]
+      })
+    );
+
+    const storage = jsonStorage(paths);
+    const providers = storage.getState().llmProviders;
+
+    expect(providers.some((provider) => provider.id === "openrouter" || provider.id === "groq")).toBe(false);
+    expect(providers.find((provider) => provider.id === "custom-llm")).toMatchObject({
+      type: "custom_openai_compatible",
+      baseUrl: "https://example.test/v1"
     });
   });
 

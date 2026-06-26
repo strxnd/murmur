@@ -20,9 +20,4 @@ describe("modelCatalog", () => {
         .map((model) => model.id)
     );
   });
-
-  it("keeps OpenRouter out of the curated model list", () => {
-    expect(modelListCatalog.some((model) => model.provider === "openrouter")).toBe(false);
-    expect(modelCatalog.some((model) => model.provider === "openrouter")).toBe(false);
-  });
 });

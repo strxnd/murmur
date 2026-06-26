@@ -96,8 +96,7 @@ function providerLabel(provider: ModelCatalogItem["provider"]): string {
     ollama: "Ollama",
     openai: "OpenAI",
     anthropic: "Anthropic",
-    google: "Google",
-    openrouter: "OpenRouter"
+    google: "Google"
   };
   return labels[provider];
 }

@@ -25,12 +25,46 @@ export const customLlmProviderTypes = [
   "openai",
   "anthropic",
   "google",
-  "openrouter",
   "custom_openai_compatible"
 ] as const satisfies ReadonlyArray<LlmProviderType>;
 
 const defaultSttIds = new Set(defaultTranscriptionProviders.map((provider) => provider.id));
 const defaultLlmIds = new Set(defaultLlmProviders.map((provider) => provider.id));
+
+export const cloudCredentialProviderIds = ["openai", "anthropic", "google"] as const;
+export type CloudCredentialProviderId = (typeof cloudCredentialProviderIds)[number];
+
+export interface CloudCredentialProviderDefinition {
+  id: CloudCredentialProviderId;
+  name: string;
+  usage: string;
+  sttProviderIds: readonly string[];
+  llmProviderIds: readonly string[];
+}
+
+export const cloudCredentialProviders = [
+  {
+    id: "openai",
+    name: "OpenAI",
+    usage: "Voice and language",
+    sttProviderIds: ["openai-stt"],
+    llmProviderIds: ["openai-llm"]
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    usage: "Language",
+    sttProviderIds: [],
+    llmProviderIds: ["anthropic"]
+  },
+  {
+    id: "google",
+    name: "Google Gemini",
+    usage: "Language",
+    sttProviderIds: [],
+    llmProviderIds: ["google"]
+  }
+] as const satisfies ReadonlyArray<CloudCredentialProviderDefinition>;
 
 export function cloneProvidersFormValues(values: ProvidersFormValues): ProvidersFormValues {
   return JSON.parse(JSON.stringify(values)) as ProvidersFormValues;
@@ -57,6 +91,67 @@ export function isDefaultTranscriptionProvider(provider: Pick<TranscriptionProvi
 
 export function isDefaultLlmProvider(provider: Pick<LlmProviderConfig, "id">): boolean {
   return defaultLlmIds.has(provider.id);
+}
+
+export function isCloudCredentialTranscriptionProvider(provider: Pick<TranscriptionProviderConfig, "id">): boolean {
+  return cloudCredentialProviders.some((definition) => (definition.sttProviderIds as readonly string[]).includes(provider.id));
+}
+
+export function isCloudCredentialLlmProvider(provider: Pick<LlmProviderConfig, "id">): boolean {
+  return cloudCredentialProviders.some((definition) => (definition.llmProviderIds as readonly string[]).includes(provider.id));
+}
+
+export function cloudCredentialApiKey(providerId: CloudCredentialProviderId, values: ProvidersFormValues): string {
+  const definition = cloudCredentialProvider(providerId);
+  return (
+    firstNonEmpty(
+      ...definition.sttProviderIds.map((id) => values.transcriptionProviders.find((provider) => provider.id === id)?.apiKey),
+      ...definition.llmProviderIds.map((id) => values.llmProviders.find((provider) => provider.id === id)?.apiKey)
+    ) ?? ""
+  );
+}
+
+export function applyCloudCredentialApiKey(
+  values: ProvidersFormValues,
+  providerId: CloudCredentialProviderId,
+  apiKey: string
+): ProvidersFormValues {
+  const definition = cloudCredentialProvider(providerId);
+  const enabled = apiKey.trim().length > 0;
+  let transcriptionProviders = values.transcriptionProviders;
+  let llmProviders = values.llmProviders;
+
+  for (const sttProviderId of definition.sttProviderIds) {
+    transcriptionProviders = upsertTranscriptionCredential(transcriptionProviders, sttProviderId, apiKey, enabled);
+  }
+  for (const llmProviderId of definition.llmProviderIds) {
+    llmProviders = upsertLlmCredential(llmProviders, llmProviderId, apiKey, enabled);
+  }
+
+  return {
+    transcriptionProviders,
+    llmProviders
+  };
+}
+
+export function cloudCredentialValidationProviders(
+  providerId: CloudCredentialProviderId,
+  values: ProvidersFormValues
+): {
+  transcriptionProviders: TranscriptionProviderConfig[];
+  llmProviders: LlmProviderConfig[];
+} {
+  const definition = cloudCredentialProvider(providerId);
+  const ensuredValues = applyCloudCredentialApiKey(values, providerId, cloudCredentialApiKey(providerId, values));
+
+  return {
+    transcriptionProviders: definition.sttProviderIds
+      .map((id) => ensuredValues.transcriptionProviders.find((provider) => provider.id === id))
+      .filter(isDefined),
+    llmProviders: definition.llmProviderIds
+      .map((id) => ensuredValues.llmProviders.find((provider) => provider.id === id))
+      .filter(isDefined)
+  };
 }
 
 export function createCustomTranscriptionProvider(
@@ -146,7 +241,6 @@ export function llmProviderTypeLabel(type: LlmProviderType): string {
     openai: "OpenAI",
     anthropic: "Anthropic",
     google: "Google Gemini",
-    openrouter: "OpenRouter",
     custom_openai_compatible: "Custom OpenAI-compatible"
   };
   return labels[type];
@@ -219,9 +313,6 @@ function llmProviderTypePreset(type: (typeof customLlmProviderTypes)[number]): P
   if (type === "google") {
     return { name: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta", isCloud: true, defaultModel: "gemini-2.5-flash" };
   }
-  if (type === "openrouter") {
-    return { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", isCloud: true, defaultModel: undefined };
-  }
   return { name: "Custom OpenAI-compatible LLM", baseUrl: "", isCloud: true, defaultModel: undefined };
 }
 
@@ -254,6 +345,68 @@ function trimmedOptional(value: string | undefined): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function cloudCredentialProvider(providerId: CloudCredentialProviderId): CloudCredentialProviderDefinition {
+  const definition = cloudCredentialProviders.find((provider) => provider.id === providerId);
+  if (!definition) throw new Error(`Unknown cloud credential provider ${providerId}.`);
+  return definition;
+}
+
+function upsertTranscriptionCredential(
+  providers: TranscriptionProviderConfig[],
+  providerId: string,
+  apiKey: string,
+  enabled: boolean
+): TranscriptionProviderConfig[] {
+  const existing = providers.find((provider) => provider.id === providerId);
+  const defaultProvider = defaultTranscriptionProviders.find((provider) => provider.id === providerId);
+  if (!existing && !defaultProvider) throw new Error(`Missing default STT provider ${providerId}.`);
+
+  const nextProvider = {
+    ...(defaultProvider ?? existing!),
+    ...existing,
+    apiKey,
+    enabled
+  };
+
+  if (existing) {
+    return providers.map((provider) => (provider.id === providerId ? nextProvider : provider));
+  }
+
+  return [...providers, nextProvider];
+}
+
+function upsertLlmCredential(
+  providers: LlmProviderConfig[],
+  providerId: string,
+  apiKey: string,
+  enabled: boolean
+): LlmProviderConfig[] {
+  const existing = providers.find((provider) => provider.id === providerId);
+  const defaultProvider = defaultLlmProviders.find((provider) => provider.id === providerId);
+  if (!existing && !defaultProvider) throw new Error(`Missing default LLM provider ${providerId}.`);
+
+  const nextProvider = {
+    ...(defaultProvider ?? existing!),
+    ...existing,
+    apiKey,
+    enabled
+  };
+
+  if (existing) {
+    return providers.map((provider) => (provider.id === providerId ? nextProvider : provider));
+  }
+
+  return [...providers, nextProvider];
+}
+
+function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
+  return values.find((value) => typeof value === "string" && value.trim().length > 0);
+}
+
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined;
 }
 
 function sameValue(left: unknown, right: unknown): boolean {

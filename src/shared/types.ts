@@ -19,7 +19,6 @@ export type LlmProviderType =
   | "openai"
   | "anthropic"
   | "google"
-  | "openrouter"
   | "custom_openai_compatible";
 
 export type ModelKind = "voice" | "language";
@@ -30,8 +29,7 @@ export type ModelProvider =
   | "ollama"
   | "openai"
   | "anthropic"
-  | "google"
-  | "openrouter";
+  | "google";
 
 export type ModelDownloadStrategy = "direct_file" | "archive" | "ollama_pull" | "none";
 export type ModelDownloadStatus = "not_downloaded" | "downloading" | "downloaded" | "error";
