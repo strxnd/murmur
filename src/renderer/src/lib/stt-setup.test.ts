@@ -31,6 +31,45 @@ describe("renderer STT setup helpers", () => {
     expect(recordingUnavailableReason(snapshot)).toBeNull();
     expect(shouldShowSttSetupCallout(snapshot)).toBe(false);
   });
+
+  it("disables recording when an active API voice model lacks credentials", () => {
+    const snapshot = state();
+    snapshot.modelLibrary = {
+      ...snapshot.modelLibrary,
+      activeModelIds: { voice: "openai-gpt-4o-transcribe" }
+    };
+
+    expect(recordingUnavailableReason(snapshot)).toBe("No speech-to-text provider or local voice model is ready.");
+    expect(shouldShowSttSetupCallout(snapshot)).toBe(true);
+  });
+
+  it("allows recording when an active API voice model has usable cloud credentials", () => {
+    const snapshot = state();
+    snapshot.modelLibrary = {
+      ...snapshot.modelLibrary,
+      activeModelIds: { voice: "openai-gpt-4o-transcribe" }
+    };
+    snapshot.transcriptionProviders = snapshot.transcriptionProviders.map((provider) =>
+      provider.id === "openai-stt" ? { ...provider, apiKey: "sk-test" } : provider
+    );
+
+    expect(recordingUnavailableReason(snapshot)).toBeNull();
+    expect(shouldShowSttSetupCallout(snapshot)).toBe(false);
+  });
+
+  it("blocks an active API voice model while local-only mode is enabled", () => {
+    const snapshot = state();
+    snapshot.settings = { ...snapshot.settings, localOnly: true };
+    snapshot.modelLibrary = {
+      ...snapshot.modelLibrary,
+      activeModelIds: { voice: "openai-gpt-4o-transcribe" }
+    };
+    snapshot.transcriptionProviders = snapshot.transcriptionProviders.map((provider) =>
+      provider.id === "openai-stt" ? { ...provider, apiKey: "sk-test" } : provider
+    );
+
+    expect(recordingUnavailableReason(snapshot)).toBe("No speech-to-text provider or local voice model is ready.");
+  });
 });
 
 function state({

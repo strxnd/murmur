@@ -6,6 +6,71 @@ const bundledWhisperCppRuntimeUrl = "murmur://runtime/whisper.cpp";
 const bundledSherpaOnnxRuntimeUrl = "murmur://runtime/sherpa-onnx";
 
 export const modelCatalog: ModelCatalogItem[] = [
+  {
+    id: "openai-gpt-4o-transcribe",
+    name: "GPT-4o Transcribe",
+    kind: "voice",
+    provider: "openai",
+    description: "Remote API-based OpenAI transcription model for speech-to-text.",
+    isCloud: true,
+    isOffline: false,
+    tags: ["stt", "remote", "api", "openai", "transcription", "pay-per-use"],
+    downloadStrategy: "none",
+    defaultProviderConfig: {
+      sttProviderType: "cloud_openai",
+      baseUrl: "https://api.openai.com/v1",
+      endpointPath: "/audio/transcriptions",
+      model: "gpt-4o-transcribe"
+    }
+  },
+  {
+    id: "openai-gpt-5-5",
+    name: "GPT-5.5",
+    kind: "language",
+    provider: "openai",
+    description: "Remote API-based OpenAI language model for dictation cleanup and rewriting.",
+    isCloud: true,
+    isOffline: false,
+    tags: ["llm", "remote", "api", "openai", "pay-per-use"],
+    downloadStrategy: "none",
+    defaultProviderConfig: {
+      llmProviderType: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      model: "gpt-5.5"
+    }
+  },
+  {
+    id: "anthropic-claude-sonnet-4-6",
+    name: "Claude Sonnet 4.6",
+    kind: "language",
+    provider: "anthropic",
+    description: "Remote API-based Anthropic language model for dictation cleanup and rewriting.",
+    isCloud: true,
+    isOffline: false,
+    tags: ["llm", "remote", "api", "anthropic", "claude", "pay-per-use"],
+    downloadStrategy: "none",
+    defaultProviderConfig: {
+      llmProviderType: "anthropic",
+      baseUrl: "https://api.anthropic.com",
+      model: "claude-sonnet-4-6"
+    }
+  },
+  {
+    id: "google-gemini-3-5-flash",
+    name: "Gemini 3.5 Flash",
+    kind: "language",
+    provider: "google",
+    description: "Remote API-based Google Gemini language model for dictation cleanup and rewriting.",
+    isCloud: true,
+    isOffline: false,
+    tags: ["llm", "remote", "api", "google", "gemini", "pay-per-use"],
+    downloadStrategy: "none",
+    defaultProviderConfig: {
+      llmProviderType: "google",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      model: "gemini-3.5-flash"
+    }
+  },
   ...[
     {
       id: "whisper-tiny",
@@ -148,3 +213,26 @@ export const modelCatalog: ModelCatalogItem[] = [
     }
   }))
 ];
+
+export const modelListCatalogIds = [
+  "openai-gpt-4o-transcribe",
+  "openai-gpt-5-5",
+  "anthropic-claude-sonnet-4-6",
+  "google-gemini-3-5-flash",
+  "whisper-tiny",
+  "whisper-base",
+  "whisper-small",
+  "whisper-medium",
+  "whisper-large",
+  "whisper-turbo",
+  "whisper-tiny-en",
+  "whisper-base-en",
+  "whisper-small-en",
+  "nvidia-parakeet-tdt-06b-v3",
+  "nvidia-parakeet-tdt-06b-v2",
+  "nvidia-parakeet-tdt-ctc-110m"
+] as const;
+
+const modelListCatalogIdSet = new Set<string>(modelListCatalogIds);
+
+export const modelListCatalog = modelCatalog.filter((item) => modelListCatalogIdSet.has(item.id));

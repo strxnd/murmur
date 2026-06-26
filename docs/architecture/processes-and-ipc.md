@@ -39,7 +39,7 @@ flowchart TB
     R1["stt-setup:get"]
     R2["stt-runtime:download/repair/cancel-download"]
     R3["stt-runtime:progress event"]
-    R4["stt-setup:benchmark/setup-bundled/skip"]
+    R4["stt-setup:setup-bundled/skip"]
   end
 
   subgraph Dictation["Dictation and recording"]

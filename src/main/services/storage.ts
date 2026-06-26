@@ -26,7 +26,6 @@ import type {
   ReleaseNote,
   ReplacementRule,
   RecordingPillPosition,
-  SttPreferredLanguageScope,
   TranscriptionProviderConfig,
   VocabularyEntry
 } from "../../shared/types";
@@ -76,7 +75,25 @@ const builtInModeIds = new Set(builtInModeDefaults.map((mode) => mode.id));
 const removedReleaseNoteIds = new Set(["initial-prototype"]);
 const activationModes = new Set<ActivationMode>(["toggle", "push_to_talk"]);
 const recordingPillPositions = new Set<RecordingPillPosition>(["bottom_left", "bottom_center", "bottom_right"]);
-const sttPreferredLanguageScopes = new Set<SttPreferredLanguageScope>(["multilingual", "english"]);
+const appSettingKeys = [
+  "theme",
+  "launchAtLogin",
+  "localOnly",
+  "retainAudio",
+  "audioRetentionDays",
+  "textRetentionDays",
+  "selectedTextCapture",
+  "pasteMethod",
+  "activeModeId",
+  "activationMode",
+  "activationHotkey",
+  "recordingPillPosition",
+  "preferredAudioInputId",
+  "typingBaselineWpm",
+  "trayCloseNoticeShownAt",
+  "sttSetupSkippedAt",
+  "sttSetupCompletedAt"
+] satisfies Array<keyof AppSettings>;
 const customModeDefaults: ModeConfig = {
   id: "mode",
   kind: "custom",
@@ -447,12 +464,8 @@ export class StorageService {
   private normalizeSettings(settings: LegacySettings | undefined, modes: ModeConfig[]): AppSettings {
     const legacySettings: LegacySettings & Record<string, unknown> = { ...(settings ?? {}) };
     delete legacySettings[removedSoundVolumeSettingKey];
-    const {
-      toggleHotkey,
-      pushToTalkHotkey: _pushToTalkHotkey,
-      cancelHotkey: _cancelHotkey,
-      ...currentSettings
-    } = legacySettings;
+    const { toggleHotkey } = legacySettings;
+    const currentSettings = pickKnownSettings(legacySettings);
     const normalized: AppSettings = {
       ...defaultSettings,
       ...currentSettings,
@@ -466,10 +479,7 @@ export class StorageService {
       selectedTextCapture: currentSettings.selectedTextCapture === "disabled" ? "disabled" : "clipboard_restore",
       pasteMethod: "clipboard_restore",
       trayCloseNoticeShownAt:
-        typeof currentSettings.trayCloseNoticeShownAt === "string" ? currentSettings.trayCloseNoticeShownAt : undefined,
-      sttPreferredLanguageScope: sttPreferredLanguageScopes.has(currentSettings.sttPreferredLanguageScope as SttPreferredLanguageScope)
-        ? (currentSettings.sttPreferredLanguageScope as SttPreferredLanguageScope)
-        : defaultSettings.sttPreferredLanguageScope
+        typeof currentSettings.trayCloseNoticeShownAt === "string" ? currentSettings.trayCloseNoticeShownAt : undefined
     };
     const modeIds = new Set(modes.map((mode) => mode.id));
     normalized.activeModeId = legacyModeIdMap.get(normalized.activeModeId) ?? normalized.activeModeId;
@@ -637,6 +647,16 @@ function isPathBelow(path: string, parent: string): boolean {
   return relativePath !== "" && !relativePath.startsWith("..") && !isAbsolute(relativePath);
 }
 
+function pickKnownSettings(settings: LegacySettings & Record<string, unknown>): Partial<AppSettings> {
+  const knownSettings: Record<string, unknown> = {};
+  for (const key of appSettingKeys) {
+    if (Object.prototype.hasOwnProperty.call(settings, key)) {
+      knownSettings[key] = settings[key];
+    }
+  }
+  return knownSettings as Partial<AppSettings>;
+}
+
 function isUsableModeId(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -654,7 +674,6 @@ const sttProviderTypes = new Set<TranscriptionProviderConfig["type"]>([
   "sherpa_onnx",
   "local_openai_compatible_stt",
   "cloud_openai",
-  "cloud_groq",
   "cloud_openai_compatible_stt"
 ]);
 const sttStreamingModes = new Set<TranscriptionProviderConfig["streamingMode"]>(["none", "completed_audio_sse", "live_realtime"]);

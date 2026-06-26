@@ -20,14 +20,18 @@ import type {
   PillStateSnapshot,
   RecordingLevelPayload,
   ReplacementRule,
-  SttPreferredLanguageScope,
   SttRuntimeId,
   TranscriptionProviderConfig,
   VocabularyEntry
 } from "../shared/types";
 import { recordingLevelPayloadSchema } from "../shared/schemas";
 import { defaultSession } from "../shared/defaults";
-import { llmProviderFromModel, transcriptionProviderFromModel } from "../shared/model-activation";
+import {
+  isLlmProviderUsable,
+  isTranscriptionProviderUsable as isBaseTranscriptionProviderUsable,
+  llmProviderFromModel,
+  transcriptionProviderFromModel
+} from "../shared/model-activation";
 import { buildProcessingPrompt, buildVocabularyPrompt } from "../shared/prompts";
 import { applyReplacements } from "../shared/replacements";
 import { resolveModeByContext } from "./services/auto-mode";
@@ -37,7 +41,6 @@ import { LlmService } from "./services/llm";
 import { ModelLibraryService } from "./services/model-library";
 import { PasteService } from "./services/paste";
 import { StorageService } from "./services/storage";
-import { SttBenchmarkService } from "./services/stt-benchmark";
 import { getSttUsability, sttRuntimeIdForModel, SttSetupService } from "./services/stt-setup";
 import { TranscriptionService } from "./services/stt";
 import { SttRuntimeService } from "./services/stt-runtime";
@@ -83,7 +86,6 @@ export class AppController {
   private llm = new LlmService();
   private modelLibrary: ModelLibraryService;
   private sttSetup: SttSetupService;
-  private sttBenchmark: SttBenchmarkService;
   private session: DictationSession = defaultSession;
   private sessionContext: ContextSnapshot | null = null;
   private pendingContextCapture: { sessionId: string; promise: Promise<ContextSnapshot> } | null = null;
@@ -121,7 +123,6 @@ export class AppController {
       this.broadcastState();
     }, this.runtimeService);
     this.sttSetup = new SttSetupService(this.paths, this.storage, this.modelLibrary, this.runtimeService);
-    this.sttBenchmark = new SttBenchmarkService(this.paths, this.modelLibrary, this.runtimeService);
   }
 
   dispose(): void {
@@ -455,13 +456,6 @@ export class AppController {
       await this.runtimeService.cancelRuntimeDownload(runtimeId);
       this.broadcastState();
       return this.sttSetup.getSnapshot();
-    });
-    ipcMain.handle("stt-setup:benchmark", async (_event, languageScope: SttPreferredLanguageScope) => {
-      this.storage.updateSettings({ sttPreferredLanguageScope: languageScope });
-      const recommendation = await this.sttBenchmark.run(languageScope);
-      this.sttSetup.setRecommendation(recommendation);
-      this.broadcastState();
-      return recommendation;
     });
     ipcMain.handle("stt-setup:setup-bundled", async (_event, modelId: string) => {
       this.stt.stopRuntime();
@@ -1038,10 +1032,15 @@ export class AppController {
     return state.transcriptionProviders.find((provider) => this.isTranscriptionProviderUsable(provider, state.settings));
   }
 
-  private selectLlmProvider(state: { llmProviders: LlmProviderConfig[]; modelLibrary: ModelLibrarySnapshot }): LlmProviderConfig | undefined {
+  private selectLlmProvider(state: {
+    settings: AppSettings;
+    llmProviders: LlmProviderConfig[];
+    modelLibrary: ModelLibrarySnapshot;
+  }): LlmProviderConfig | undefined {
     const activeModel = this.selectActiveModel(state.modelLibrary, "language");
     const activeProvider = activeModel ? llmProviderFromModel(activeModel, state.llmProviders) : null;
-    return activeProvider ?? state.llmProviders.find((provider) => provider.enabled);
+    if (activeProvider && isLlmProviderUsable(activeProvider, state.settings)) return activeProvider;
+    return state.llmProviders.find((provider) => isLlmProviderUsable(provider, state.settings));
   }
 
   private selectActiveModel(modelLibrary: ModelLibrarySnapshot, kind: ModelCatalogItem["kind"]): ModelCatalogItem | undefined {
@@ -1057,16 +1056,14 @@ export class AppController {
   }
 
   private isTranscriptionProviderUsable(provider: TranscriptionProviderConfig, settings: AppSettings): boolean {
-    if (!provider.enabled) return false;
-    if (settings.localOnly && provider.isCloud) return false;
-    if (provider.isCloud && !provider.apiKey) return false;
+    if (!isBaseTranscriptionProviderUsable(provider, settings)) return false;
     if (provider.type === "whisper_cpp" && provider.baseUrl === "murmur://runtime/whisper.cpp") {
       return this.bundledProviderUsable(provider, "whisper.cpp");
     }
     if (provider.type === "sherpa_onnx") {
       return this.bundledProviderUsable(provider, "sherpa-onnx");
     }
-    return Boolean(provider.baseUrl);
+    return true;
   }
 
   private bundledProviderUsable(provider: TranscriptionProviderConfig, runtimeId: SttRuntimeId): boolean {

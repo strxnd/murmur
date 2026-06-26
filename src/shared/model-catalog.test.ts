@@ -1,0 +1,28 @@
+import { describe, expect, it } from "vitest";
+import { modelCatalog, modelListCatalog } from "./model-catalog";
+
+describe("modelCatalog", () => {
+  it("lists remote API models alongside local downloadable models", () => {
+    const remoteModels = modelListCatalog.filter((model) => model.isCloud && model.downloadStrategy === "none");
+    const localModels = modelListCatalog.filter((model) => !model.isCloud && model.isOffline && model.downloadStrategy !== "none");
+
+    expect(remoteModels.map((model) => model.id)).toEqual(
+      expect.arrayContaining([
+        "openai-gpt-4o-transcribe",
+        "openai-gpt-5-5",
+        "anthropic-claude-sonnet-4-6",
+        "google-gemini-3-5-flash"
+      ])
+    );
+    expect(localModels.map((model) => model.id)).toEqual(
+      modelCatalog
+        .filter((model) => model.kind === "voice" && !model.isCloud && model.isOffline && model.downloadStrategy !== "none")
+        .map((model) => model.id)
+    );
+  });
+
+  it("keeps OpenRouter out of the curated model list", () => {
+    expect(modelListCatalog.some((model) => model.provider === "openrouter")).toBe(false);
+    expect(modelCatalog.some((model) => model.provider === "openrouter")).toBe(false);
+  });
+});

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { modelCatalog } from "../../shared/model-catalog";
+import { buildProviderSetupDraft } from "../../shared/model-provider-setup";
 import type { SttRuntimeAvailability, SttRuntimeId } from "../../shared/types";
 import { resolveAppPaths, type AppPaths } from "./app-paths";
 import { ModelLibraryService } from "./model-library";
@@ -36,6 +37,82 @@ describe("ModelLibraryService", () => {
     const snapshot = await service.activateModel("whisper-tiny-en");
 
     expect(snapshot.activeModelIds.voice).toBe("whisper-tiny-en");
+  });
+
+  it("does not activate an API voice model without credentials", async () => {
+    const { service } = setup("available");
+
+    const snapshot = await service.activateModel("openai-gpt-4o-transcribe");
+
+    expect(snapshot.activeModelIds.voice).toBeUndefined();
+  });
+
+  it("does not activate an API voice model in local-only mode", async () => {
+    const { service, storage } = setup("available");
+    setSttApiKey(storage, "sk-test");
+    storage.updateSettings({ localOnly: true });
+
+    const snapshot = await service.activateModel("openai-gpt-4o-transcribe");
+
+    expect(snapshot.activeModelIds.voice).toBeUndefined();
+  });
+
+  it("activates an API voice model when cloud credentials are usable", async () => {
+    const { service, storage } = setup("available");
+    setSttApiKey(storage, "sk-test");
+
+    const snapshot = await service.activateModel("openai-gpt-4o-transcribe");
+
+    expect(snapshot.activeModelIds.voice).toBe("openai-gpt-4o-transcribe");
+  });
+
+  it("does not activate an API language model without credentials", async () => {
+    const { service } = setup("available");
+
+    const snapshot = await service.activateModel("openai-gpt-5-5");
+
+    expect(snapshot.activeModelIds.language).toBeUndefined();
+  });
+
+  it("does not activate an API language model in local-only mode", async () => {
+    const { service, storage } = setup("available");
+    setLlmApiKey(storage, "sk-test");
+    storage.updateSettings({ localOnly: true });
+
+    const snapshot = await service.activateModel("openai-gpt-5-5");
+
+    expect(snapshot.activeModelIds.language).toBeUndefined();
+  });
+
+  it("activates an API language model when cloud credentials are usable", async () => {
+    const { service, storage } = setup("available");
+    setLlmApiKey(storage, "sk-test");
+
+    const snapshot = await service.activateModel("openai-gpt-5-5");
+
+    expect(snapshot.activeModelIds.language).toBe("openai-gpt-5-5");
+  });
+
+  it("activates an API model after model-led provider setup state is saved", async () => {
+    const { service, storage } = setup("available");
+    const item = modelCatalog.find((candidate) => candidate.id === "openai-gpt-5-5");
+    if (!item) throw new Error("Missing openai-gpt-5-5 catalog item.");
+
+    const draft = buildProviderSetupDraft({
+      item,
+      apiKey: "sk-test",
+      transcriptionProviders: storage.getState().transcriptionProviders,
+      llmProviders: storage.getState().llmProviders
+    });
+    if (!draft) throw new Error("Expected provider setup draft.");
+    storage.setTranscriptionProviders(draft.transcriptionProviders);
+    storage.setLlmProviders(draft.llmProviders);
+
+    const snapshot = await service.activateModel(item.id);
+
+    expect(snapshot.activeModelIds.language).toBe(item.id);
+    expect(storage.getState().transcriptionProviders.find((provider) => provider.id === "openai-stt")?.apiKey).toBe("sk-test");
+    expect(storage.getState().llmProviders.find((provider) => provider.id === "openai-llm")?.apiKey).toBe("sk-test");
   });
 
   it("delete clears the active model", async () => {
@@ -164,6 +241,20 @@ function downloaded(modelId: string, paths: AppPaths) {
     downloadedAt: new Date().toISOString(),
     favorite: false
   };
+}
+
+function setSttApiKey(storage: StorageService, apiKey: string): void {
+  storage.setTranscriptionProviders(
+    storage.getState().transcriptionProviders.map((provider) =>
+      provider.id === "openai-stt" ? { ...provider, apiKey } : provider
+    )
+  );
+}
+
+function setLlmApiKey(storage: StorageService, apiKey: string): void {
+  storage.setLlmProviders(
+    storage.getState().llmProviders.map((provider) => (provider.id === "openai-llm" ? { ...provider, apiKey } : provider))
+  );
 }
 
 function fakeRuntimeService(status: SttRuntimeAvailability["status"]): SttRuntimeService {

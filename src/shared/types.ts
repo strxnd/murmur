@@ -10,7 +10,6 @@ export type TranscriptionProviderType =
   | "sherpa_onnx"
   | "local_openai_compatible_stt"
   | "cloud_openai"
-  | "cloud_groq"
   | "cloud_openai_compatible_stt";
 
 export type LlmProviderType =
@@ -30,7 +29,6 @@ export type ModelProvider =
   | "nvidia"
   | "ollama"
   | "openai"
-  | "groq"
   | "anthropic"
   | "google"
   | "openrouter";
@@ -39,7 +37,6 @@ export type ModelDownloadStrategy = "direct_file" | "archive" | "ollama_pull" | 
 export type ModelDownloadStatus = "not_downloaded" | "downloading" | "downloaded" | "error";
 export type SttRuntimeId = "whisper.cpp" | "sherpa-onnx";
 export type RuntimeAvailabilityStatus = "available" | "missing" | "unsupported";
-export type SttPreferredLanguageScope = "multilingual" | "english";
 export type SttRuntimeInstallStatus =
   | "ready"
   | "not_installed"
@@ -79,30 +76,11 @@ export interface SttRuntimeInstallState {
   canRepair: boolean;
 }
 
-export interface SttBenchmarkResult {
-  modelId: string;
-  audioDurationMs: number;
-  elapsedMs: number;
-  realtimeFactor: number;
-  totalMemoryBytes: number;
-  cpuThreadCount: number;
-  createdAt: string;
-}
-
-export interface SttModelRecommendation {
-  recommendedModelId: string;
-  fallbackModelId: string;
-  reason: string;
-  benchmark?: SttBenchmarkResult;
-  alternatives: Array<{ modelId: string; reason: string }>;
-}
-
 export interface SttSetupSnapshot {
   skipped: boolean;
   completed: boolean;
   needsSetup: boolean;
   runtimes: Record<SttRuntimeId, SttRuntimeInstallState>;
-  recommendation?: SttModelRecommendation;
 }
 
 export interface ContextSnapshot {
@@ -267,7 +245,6 @@ export interface AppSettings {
   trayCloseNoticeShownAt?: string;
   sttSetupSkippedAt?: string;
   sttSetupCompletedAt?: string;
-  sttPreferredLanguageScope: SttPreferredLanguageScope;
 }
 
 export interface DictationHistoryItem {

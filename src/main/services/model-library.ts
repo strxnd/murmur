@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, rmSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { canActivateModel } from "../../shared/model-activation";
+import { canActivateModel, isModelProviderUsable } from "../../shared/model-activation";
 import { modelCatalog } from "../../shared/model-catalog";
 import type { ModelCatalogItem, ModelDownloadState, ModelKind, ModelLibrarySnapshot, SttRuntimeId } from "../../shared/types";
 import type { AppPaths } from "./app-paths";
@@ -532,6 +532,8 @@ export class ModelLibraryService {
 
   private isModelReady(item: ModelCatalogItem): boolean {
     if (!canActivateModel(item)) return false;
+    const state = this.storage.getState();
+    if (!isModelProviderUsable(item, state)) return false;
     if (!this.isRequiredRuntimeAvailable(item)) return false;
     if (item.downloadStrategy === "none") return true;
     if (item.downloadStrategy === "direct_file" || item.downloadStrategy === "archive") {

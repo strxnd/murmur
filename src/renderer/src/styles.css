@@ -622,8 +622,7 @@ span.inline-flex.items-center.rounded.border.text-foreground {
   border-color: color-mix(in srgb, var(--console-fill) 36%, var(--border));
 }
 
-.mode-glyph,
-.model-glyph {
+.mode-glyph {
   background: linear-gradient(145deg, color-mix(in srgb, var(--surface-raised) 78%, var(--console-contrast) 22%), var(--surface-raised));
   border-color: color-mix(in srgb, var(--border) 72%, var(--console-edge) 28%);
   color: var(--foreground);
@@ -631,10 +630,29 @@ span.inline-flex.items-center.rounded.border.text-foreground {
   box-shadow: var(--console-control-shadow);
 }
 
-.mode-glyph.scale-105,
-.model-glyph.scale-105 {
+.model-glyph {
+  --model-glyph-bg: var(--surface-raised);
+  --model-glyph-border: var(--border);
+  --model-glyph-icon: var(--foreground);
+  background: var(--model-glyph-bg);
+  border-color: var(--model-glyph-border);
+  color: var(--model-glyph-icon);
+  border-radius: 8px;
+  box-shadow: var(--console-control-shadow);
+}
+
+.mode-glyph.scale-105 {
   border-color: color-mix(in srgb, var(--console-fill) 58%, var(--border));
   color: var(--console-fill);
+}
+
+.model-glyph.scale-105 {
+  background: var(--model-glyph-bg);
+  border-color: color-mix(in srgb, var(--model-glyph-border) 76%, var(--foreground));
+  color: var(--model-glyph-icon);
+  box-shadow:
+    var(--console-control-shadow),
+    0 0 0 1px color-mix(in srgb, var(--model-glyph-border) 28%, transparent);
 }
 
 .mode-dialog-backdrop,

@@ -98,7 +98,7 @@ export class LlmService {
           "x-api-key": options.provider.apiKey || ""
         },
         body: JSON.stringify({
-          model: options.provider.defaultModel || "claude-sonnet-4-5",
+          model: options.provider.defaultModel || "claude-sonnet-4-6",
           max_tokens: 2048,
           temperature: 0.2,
           messages: [{ role: "user", content: options.prompt }]

@@ -46,7 +46,6 @@ The public renderer API is exposed as `window.murmur` by [`src/preload/index.ts`
 | `downloadSttRuntime(runtimeId)` | `stt-runtime:download` | `SttSetupSnapshot` |
 | `repairSttRuntime(runtimeId)` | `stt-runtime:repair` | `SttSetupSnapshot` |
 | `cancelSttRuntimeDownload(runtimeId)` | `stt-runtime:cancel-download` | `SttSetupSnapshot` |
-| `runSttBenchmark(languageScope)` | `stt-setup:benchmark` | `SttModelRecommendation` |
 | `setupBundledStt(modelId)` | `stt-setup:setup-bundled` | `AppStateSnapshot` |
 | `skipSttSetup()` | `stt-setup:skip` | `AppStateSnapshot` |
 | `onModelDownloadProgress(callback)` | `models:download-progress` | unsubscribe function |

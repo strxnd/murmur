@@ -44,7 +44,6 @@ classDiagram
 
   class RuntimeSetup {
     runtime install states
-    recommendation
     skipped/completed flags
   }
 

@@ -23,8 +23,7 @@ export const defaultSettings: AppSettings = {
   activationMode: "toggle",
   activationHotkey: "CommandOrControl+Alt+Space",
   recordingPillPosition: "bottom_center",
-  typingBaselineWpm: 40,
-  sttPreferredLanguageScope: "multilingual"
+  typingBaselineWpm: 40
 };
 
 export const defaultSession: DictationSession = {
@@ -160,19 +159,6 @@ export const defaultTranscriptionProviders: TranscriptionProviderConfig[] = [
     defaultLanguage: "auto",
     streamingMode: "completed_audio_sse",
     enabled: false
-  },
-  {
-    id: "groq-stt",
-    type: "cloud_groq",
-    name: "Groq Whisper",
-    baseUrl: "https://api.groq.com/openai/v1",
-    endpointPath: "/audio/transcriptions",
-    isCloud: true,
-    isLocal: false,
-    defaultModel: "whisper-large-v3-turbo",
-    defaultLanguage: "auto",
-    streamingMode: "none",
-    enabled: false
   }
 ];
 
@@ -210,7 +196,7 @@ export const defaultLlmProviders: LlmProviderConfig[] = [
     name: "Anthropic",
     baseUrl: "https://api.anthropic.com",
     isCloud: true,
-    defaultModel: "claude-sonnet-4-5",
+    defaultModel: "claude-sonnet-4-6",
     enabled: false
   },
   {
@@ -220,15 +206,6 @@ export const defaultLlmProviders: LlmProviderConfig[] = [
     baseUrl: "https://generativelanguage.googleapis.com/v1beta",
     isCloud: true,
     defaultModel: "gemini-2.5-flash",
-    enabled: false
-  },
-  {
-    id: "openrouter",
-    type: "openrouter",
-    name: "OpenRouter",
-    baseUrl: "https://openrouter.ai/api/v1",
-    isCloud: true,
-    defaultModel: "openai/gpt-4.1-mini",
     enabled: false
   }
 ];

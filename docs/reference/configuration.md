@@ -37,7 +37,6 @@ Important settings:
 - `activationMode`: `toggle` or `push_to_talk`.
 - `activationHotkey`: Electron accelerator string.
 - `recordingPillPosition`: `bottom_left`, `bottom_center`, or `bottom_right`.
-- `sttPreferredLanguageScope`: `multilingual` or `english`.
 
 ## Modes
 
@@ -62,7 +61,6 @@ STT provider types:
 - `sherpa_onnx`
 - `local_openai_compatible_stt`
 - `cloud_openai`
-- `cloud_groq`
 - `cloud_openai_compatible_stt`
 
 `LlmProviderConfig` includes `type`, optional `baseUrl`, optional `apiKey`, cloud flag, default model, and `enabled`.
@@ -75,7 +73,6 @@ LLM provider types:
 - `openai`
 - `anthropic`
 - `google`
-- `openrouter`
 - `custom_openai_compatible`
 
 ## Rules, Replacements, and Vocabulary

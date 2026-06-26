@@ -1,4 +1,8 @@
 import type { AppStateSnapshot, ModelCatalogItem, SttRuntimeId, TranscriptionProviderConfig } from "../../../shared/types";
+import {
+  isTranscriptionProviderUsable as isBaseTranscriptionProviderUsable,
+  transcriptionProviderFromModel
+} from "../../../shared/model-activation";
 
 export function shouldShowSttSetupCallout(state: AppStateSnapshot): boolean {
   return Boolean(recordingUnavailableReason(state));
@@ -25,14 +29,19 @@ function activeReadyVoiceModel(state: AppStateSnapshot): ModelCatalogItem | null
 
   const runtimeId = runtimeIdForModel(item);
   if (runtimeId && !runtimeReady(state, runtimeId)) return null;
-  if (item.downloadStrategy === "none") return item;
-  return state.modelLibrary.downloads.some((download) => download.modelId === item.id && download.status === "downloaded") ? item : null;
+  if (
+    item.downloadStrategy !== "none" &&
+    !state.modelLibrary.downloads.some((download) => download.modelId === item.id && download.status === "downloaded")
+  ) {
+    return null;
+  }
+
+  const provider = transcriptionProviderFromModel(item, state.transcriptionProviders);
+  return provider && providerUsable(state, provider) ? item : null;
 }
 
 function providerUsable(state: AppStateSnapshot, provider: TranscriptionProviderConfig): boolean {
-  if (!provider.enabled) return false;
-  if (state.settings.localOnly && provider.isCloud) return false;
-  if (provider.isCloud && !provider.apiKey) return false;
+  if (!isBaseTranscriptionProviderUsable(provider, state.settings)) return false;
 
   if (provider.type === "whisper_cpp" && provider.baseUrl === "murmur://runtime/whisper.cpp") {
     return Boolean(provider.defaultModel && runtimeReady(state, "whisper.cpp"));
@@ -41,7 +50,7 @@ function providerUsable(state: AppStateSnapshot, provider: TranscriptionProvider
     return Boolean(provider.defaultModel && runtimeReady(state, "sherpa-onnx"));
   }
 
-  return Boolean(provider.baseUrl);
+  return true;
 }
 
 function runtimeIdForModel(item: ModelCatalogItem): SttRuntimeId | null {

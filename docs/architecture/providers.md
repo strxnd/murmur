@@ -10,12 +10,11 @@ Supported transcription provider types:
 - `sherpa_onnx`
 - `local_openai_compatible_stt`
 - `cloud_openai`
-- `cloud_groq`
 - `cloud_openai_compatible_stt`
 
 Bundled `whisper.cpp` uses `murmur://runtime/whisper.cpp`; external `whisper.cpp` uses a configured HTTP base URL. Bundled Sherpa ONNX uses `murmur://runtime/sherpa-onnx` and runs the local binary directly.
 
-OpenAI-compatible STT providers post completed audio to `/audio/transcriptions` by default. Completed-audio SSE is used only when `streamingMode` remains effective for the provider and model. Groq and `whisper-1` force non-streaming behavior.
+OpenAI-compatible STT providers post completed audio to `/audio/transcriptions` by default. Completed-audio SSE is used only when `streamingMode` remains effective for the provider and model. `whisper-1` forces non-streaming behavior.
 
 Validation checks:
 
@@ -34,7 +33,6 @@ Supported language provider types:
 - `openai`
 - `anthropic`
 - `google`
-- `openrouter`
 - `custom_openai_compatible`
 
 Ollama uses `/api/chat`. OpenAI-compatible providers use `/chat/completions`. Anthropic uses `/v1/messages`. Google uses `/models/<model>:generateContent`.

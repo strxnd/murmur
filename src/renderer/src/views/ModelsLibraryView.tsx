@@ -1,7 +1,22 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { Popover } from "@base-ui/react/popover";
-import { BrainCircuit, Check, ChevronRight, Download, Gauge, Hammer, HardDrive, Heart, Mic, Search, Trash2, Wrench, X } from "lucide-react";
-import { useEffect, useMemo, useState, type JSX } from "react";
+import {
+  AlertTriangle,
+  BrainCircuit,
+  Check,
+  ChevronRight,
+  Download,
+  Hammer,
+  HardDrive,
+  Heart,
+  KeyRound,
+  Mic,
+  Search,
+  Trash2,
+  Wrench,
+  X
+} from "lucide-react";
+import { useEffect, useMemo, useState, type CSSProperties, type JSX } from "react";
 import type {
   AppStateSnapshot,
   ModelCatalogItem,
@@ -9,16 +24,25 @@ import type {
   ModelProvider,
   SttRuntimeInstallState
 } from "../../../shared/types";
-import { canActivateModel, providerLabel } from "../../../shared/model-activation";
+import { canActivateModel, isModelProviderUsable, providerLabel } from "../../../shared/model-activation";
+import { modelListCatalogIds } from "../../../shared/model-catalog";
+import {
+  buildProviderSetupDraft,
+  currentProviderSetupApiKey,
+  resolveProviderSetupTarget,
+  type ProviderSetupTarget
+} from "../../../shared/model-provider-setup";
 import { View } from "../components/View";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { EmptyState } from "../components/ui/EmptyState";
+import { Field } from "../components/ui/Field";
 import { IconButton } from "../components/ui/IconButton";
 import { Input } from "../components/ui/Input";
 import { Panel } from "../components/ui/Panel";
 import { ProgressBar } from "../components/ui/ProgressBar";
 import { Select } from "../components/ui/Select";
+import { Switch } from "../components/ui/Switch";
 import { Toolbar } from "../components/ui/Toolbar";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { cn } from "../lib/cn";
@@ -30,12 +54,9 @@ const providers: Array<{ value: "all" | ModelProvider; label: string }> = [
   { value: "all", label: "All providers" },
   { value: "whisper_cpp", label: "whisper.cpp" },
   { value: "nvidia", label: "NVIDIA" },
-  { value: "ollama", label: "Ollama" },
   { value: "openai", label: "OpenAI" },
-  { value: "groq", label: "Groq" },
   { value: "anthropic", label: "Anthropic" },
-  { value: "google", label: "Google" },
-  { value: "openrouter", label: "OpenRouter" }
+  { value: "google", label: "Google" }
 ];
 
 const filters: Array<{ id: ModelFilter; label: string }> = [
@@ -56,7 +77,6 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
   const downloadSttRuntime = useMurmurStore((store) => store.downloadSttRuntime);
   const repairSttRuntime = useMurmurStore((store) => store.repairSttRuntime);
   const cancelSttRuntimeDownload = useMurmurStore((store) => store.cancelSttRuntimeDownload);
-  const runSttBenchmark = useMurmurStore((store) => store.runSttBenchmark);
   const [query, setQuery] = useState("");
   const [provider, setProvider] = useState<"all" | ModelProvider>("all");
   const [filter, setFilter] = useState<ModelFilter>("all");
@@ -66,6 +86,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
     () => new Map(state.modelLibrary.downloads.map((download) => [download.modelId, download])),
     [state.modelLibrary.downloads]
   );
+  const modelListIds = useMemo(() => new Set<string>(modelListCatalogIds), []);
 
   useEffect(() => {
     void getModelLibrary();
@@ -75,6 +96,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
     const needle = query.trim().toLowerCase();
     return state.modelLibrary.catalog.filter((item) => {
       const download = downloadsById.get(item.id);
+      if (!modelListIds.has(item.id)) return false;
       if (provider !== "all" && item.provider !== provider) return false;
       if (filter === "voice" && item.kind !== "voice") return false;
       if (filter === "language" && item.kind !== "language") return false;
@@ -86,7 +108,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
         .filter(Boolean)
         .some((value) => value!.toLowerCase().includes(needle));
     });
-  }, [downloadsById, filter, provider, query, state.modelLibrary.catalog]);
+  }, [downloadsById, filter, modelListIds, provider, query, state.modelLibrary.catalog]);
 
   useEffect(() => {
     setOpenModelId((current) => (current && models.some((model) => model.id === current) ? current : null));
@@ -155,6 +177,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
                     </span>
                     <span className="flex min-w-0 shrink-0 flex-wrap items-center justify-end gap-2">
                       <Badge>{providerLabel(item.provider)}</Badge>
+                      <SourceBadge item={item} />
                       <StatusBadge item={item} download={download} />
                       {item.sizeBytes && <Badge>{formatBytes(item.sizeBytes)}</Badge>}
                       <RuntimeBadge item={item} runtime={runtime} />
@@ -171,6 +194,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
                         style={{ width: "min(36rem, calc(100vw - 2rem))", maxHeight: "calc(100vh - 7rem)" }}
                       >
                         <ModelPopover
+                          state={state}
                           item={item}
                           download={download}
                           active={active}
@@ -182,7 +206,6 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
                           onInstallRuntime={() => runtime && void downloadSttRuntime(runtime.id)}
                           onRepairRuntime={() => runtime && void repairSttRuntime(runtime.id)}
                           onCancelRuntimeDownload={() => runtime && void cancelSttRuntimeDownload(runtime.id)}
-                          onBenchmark={() => void runSttBenchmark(state.settings.sttPreferredLanguageScope)}
                           onClose={() => setOpenModelId(null)}
                           runtime={runtime}
                         />
@@ -201,6 +224,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
 }
 
 function ModelPopover({
+  state,
   item,
   download,
   active,
@@ -212,10 +236,10 @@ function ModelPopover({
   onInstallRuntime,
   onRepairRuntime,
   onCancelRuntimeDownload,
-  onBenchmark,
   onClose,
   runtime
 }: {
+  state: AppStateSnapshot;
   item: ModelCatalogItem;
   download?: ModelDownloadState;
   active: boolean;
@@ -227,14 +251,13 @@ function ModelPopover({
   onInstallRuntime: () => void;
   onRepairRuntime: () => void;
   onCancelRuntimeDownload: () => void;
-  onBenchmark: () => void;
   onClose: () => void;
   runtime?: SttRuntimeInstallState;
 }): JSX.Element {
   const status = download?.status ?? "not_downloaded";
   const progress =
     item.downloadStrategy === "none"
-      ? "Local runtime"
+      ? providerModelLabel(item)
       : status === "downloading"
         ? progressLabel(download)
         : statusLabel(status);
@@ -244,7 +267,10 @@ function ModelPopover({
   const runtimeReady = !runtime || runtime.status === "ready";
   const runtimeBusy = runtime?.status === "downloading" || runtime?.status === "installing";
   const canCancelRuntimeDownload = runtime?.status === "downloading";
-  const canActivate = canActivateModel(item) && (item.downloadStrategy === "none" || status === "downloaded");
+  const canActivate =
+    canActivateModel(item) && isModelProviderUsable(item, state) && (item.downloadStrategy === "none" || status === "downloaded");
+  const setupTarget = resolveProviderSetupTarget(item);
+  const [providerSetupOpen, setProviderSetupOpen] = useState(false);
   const popoverParent = useAutoAnimateRef<HTMLDivElement>();
 
   return (
@@ -269,6 +295,7 @@ function ModelPopover({
 
       <div className="flex flex-wrap gap-2">
         <Badge>{kindLabel(item.kind)}</Badge>
+        <SourceBadge item={item} />
         <RuntimeBadge item={item} runtime={runtime} />
         <Badge>{progress}</Badge>
         {item.sizeBytes && <Badge>{formatBytes(item.sizeBytes)}</Badge>}
@@ -310,11 +337,6 @@ function ModelPopover({
             <X size={18} /> Cancel runtime
           </Button>
         )}
-        {item.defaultProviderConfig?.sttProviderType === "whisper_cpp" && (
-          <Button onClick={onBenchmark} disabled={runtimeBusy || runtime?.status === "unsupported"}>
-            <Gauge size={18} /> Run benchmark
-          </Button>
-        )}
         {item.downloadStrategy !== "none" && (
           <>
             {canCancelDownload ? (
@@ -353,8 +375,25 @@ function ModelPopover({
             <Check size={18} /> {active ? "Active" : "Activate"}
           </Button>
         )}
-        {item.downloadStrategy === "none" && !canActivate && (
-          <span className="inline-flex min-h-9 items-center gap-2 text-sm text-muted-foreground">Advanced setup required</span>
+        {item.downloadStrategy === "none" && !canActivate && setupTarget && (
+          <Dialog.Root open={providerSetupOpen} onOpenChange={setProviderSetupOpen}>
+            <Dialog.Trigger render={<Button variant="primary" />}>
+              <KeyRound size={18} /> Set up provider
+            </Dialog.Trigger>
+            <ProviderSetupDialog
+              state={state}
+              item={item}
+              target={setupTarget}
+              open={providerSetupOpen}
+              onActivated={() => {
+                setProviderSetupOpen(false);
+                onClose();
+              }}
+            />
+          </Dialog.Root>
+        )}
+        {item.downloadStrategy === "none" && !canActivate && !setupTarget && (
+          <span className="inline-flex min-h-9 items-center gap-2 text-sm text-muted-foreground">Provider setup required</span>
         )}
         {status === "downloaded" && !canActivate && (
           <span className="inline-flex min-h-9 items-center gap-2 text-sm text-muted-foreground">
@@ -366,6 +405,183 @@ function ModelPopover({
         )}
       </Toolbar>
     </div>
+  );
+}
+
+function ProviderSetupDialog({
+  state,
+  item,
+  target,
+  open,
+  onActivated
+}: {
+  state: AppStateSnapshot;
+  item: ModelCatalogItem;
+  target: ProviderSetupTarget;
+  open: boolean;
+  onActivated: () => void;
+}): JSX.Element {
+  const updateSettings = useMurmurStore((store) => store.updateSettings);
+  const validateSttProvider = useMurmurStore((store) => store.validateSttProvider);
+  const validateLlmProvider = useMurmurStore((store) => store.validateLlmProvider);
+  const setSttProviders = useMurmurStore((store) => store.setSttProviders);
+  const setLlmProviders = useMurmurStore((store) => store.setLlmProviders);
+  const activateModel = useMurmurStore((store) => store.activateModel);
+  const [apiKey, setApiKey] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isUpdatingCloudAccess, setIsUpdatingCloudAccess] = useState(false);
+  const cloudBlocked = state.settings.localOnly;
+  const canSubmit = apiKey.trim().length > 0 && !cloudBlocked && !isSubmitting && !isUpdatingCloudAccess;
+
+  useEffect(() => {
+    if (!open) return;
+    setApiKey(currentProviderSetupApiKey(item, state.transcriptionProviders, state.llmProviders));
+    setError(null);
+  }, [item, open, state.llmProviders, state.transcriptionProviders]);
+
+  const setCloudProvidersAllowed = async (allowed: boolean): Promise<void> => {
+    setError(null);
+    setIsUpdatingCloudAccess(true);
+    try {
+      await updateSettings({ localOnly: !allowed });
+    } catch (updateError) {
+      setError(`Could not update local-only mode: ${errorMessage(updateError)}`);
+    } finally {
+      setIsUpdatingCloudAccess(false);
+    }
+  };
+
+  const validateSaveAndActivate = async (): Promise<void> => {
+    setError(null);
+
+    if (cloudBlocked) {
+      setError("Turn off local-only mode before validating cloud providers.");
+      return;
+    }
+
+    const draft = buildProviderSetupDraft({
+      item,
+      apiKey,
+      transcriptionProviders: state.transcriptionProviders,
+      llmProviders: state.llmProviders
+    });
+
+    if (!draft) {
+      setError("This model does not support quick provider setup.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const validation =
+        draft.validation.kind === "stt"
+          ? await validateSttProvider(draft.validation.provider)
+          : await validateLlmProvider(draft.validation.provider);
+
+      if (!validation.ok) {
+        setError(validation.message || "Provider validation failed.");
+        return;
+      }
+
+      if (draft.target.sharedCredentialGroup === "openai") {
+        await setSttProviders(draft.transcriptionProviders);
+        await setLlmProviders(draft.llmProviders);
+      } else if (draft.validation.kind === "stt") {
+        await setSttProviders(draft.transcriptionProviders);
+      } else {
+        await setLlmProviders(draft.llmProviders);
+      }
+
+      await activateModel(item.id);
+      onActivated();
+    } catch (submitError) {
+      setError(errorMessage(submitError));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog.Portal>
+      <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/70" />
+      <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] w-[min(calc(100vw-2rem),30rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-2xl outline-none">
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (canSubmit) void validateSaveAndActivate();
+          }}
+        >
+          <header className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <Dialog.Title className="m-0 text-base font-semibold text-foreground">Set up {target.providerName}</Dialog.Title>
+              <Dialog.Description className="m-0 mt-1 text-sm leading-6 text-muted-foreground">
+                Validate credentials for {item.name}, then save and activate the model.
+              </Dialog.Description>
+            </div>
+            <Dialog.Close render={<IconButton title="Close" disabled={isSubmitting} />}>
+              <X size={18} />
+            </Dialog.Close>
+          </header>
+
+          <div className="grid grid-cols-2 gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm max-[520px]:grid-cols-1">
+            <div className="min-w-0">
+              <p className="m-0 text-xs font-medium text-muted-foreground">Provider</p>
+              <p className="m-0 mt-1 truncate text-foreground">{target.providerName}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="m-0 text-xs font-medium text-muted-foreground">Selected model</p>
+              <p className="m-0 mt-1 truncate text-foreground">{target.modelName}</p>
+            </div>
+          </div>
+
+          <Field
+            label={`${target.providerName} API key`}
+            description={target.sharedCredentialGroup === "openai" ? "This key will be saved for both OpenAI voice and language models." : undefined}
+          >
+            <Input
+              type="password"
+              value={apiKey}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="Enter API key"
+              disabled={isSubmitting}
+              onChange={(event) => setApiKey(event.currentTarget.value)}
+            />
+          </Field>
+
+          <Switch
+            className="rounded-md border border-border bg-muted/20 p-3"
+            label="Allow cloud providers"
+            description="Required for API-backed models."
+            checked={!cloudBlocked}
+            disabled={isSubmitting || isUpdatingCloudAccess}
+            onCheckedChange={(checked) => void setCloudProvidersAllowed(checked)}
+          />
+
+          {cloudBlocked && (
+            <p className="m-0 flex items-start gap-2 rounded-md border border-border bg-muted/50 p-3 text-xs leading-5 text-muted-foreground">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warning" />
+              Local-only mode is blocking cloud providers. Turn it off before validating and activating this model.
+            </p>
+          )}
+
+          {error && (
+            <p role="alert" className="m-0 rounded-md border border-border bg-muted/50 p-3 text-xs leading-5 text-danger">
+              {error}
+            </p>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <Dialog.Close render={<Button variant="secondary" disabled={isSubmitting} />}>Cancel</Dialog.Close>
+            <Button variant="primary" type="submit" disabled={!canSubmit}>
+              <Check size={18} /> {isSubmitting ? "Validating..." : "Validate and activate"}
+            </Button>
+          </div>
+        </form>
+      </Dialog.Popup>
+    </Dialog.Portal>
   );
 }
 
@@ -403,6 +619,7 @@ function ModelGlyph({ item, active = false }: { item: ModelCatalogItem; active?:
         "model-glyph relative grid h-9 w-9 shrink-0 place-items-center rounded-md border border-border bg-surface-raised text-foreground",
         active && "scale-105 border-foreground/40"
       )}
+      style={modelGlyphStyle(item.provider)}
     >
       {ProviderIcon ? <ProviderIcon className="h-[19px] w-[19px]" /> : <FallbackIcon size={17} />}
       {item.isOffline && <HardDrive size={10} className="absolute bottom-1 right-1 text-muted-foreground" />}
@@ -412,7 +629,7 @@ function ModelGlyph({ item, active = false }: { item: ModelCatalogItem; active?:
 
 function StatusBadge({ item, download }: { item: ModelCatalogItem; download?: ModelDownloadState }): JSX.Element {
   if (item.downloadStrategy === "none") {
-    return <Badge tone={item.isCloud ? "cloud" : "local"}>{item.isCloud ? "Cloud setup" : "Local runtime"}</Badge>;
+    return <Badge tone={item.isCloud ? "cloud" : "local"}>{providerModelLabel(item)}</Badge>;
   }
 
   const status = download?.status ?? "not_downloaded";
@@ -421,13 +638,54 @@ function StatusBadge({ item, download }: { item: ModelCatalogItem; download?: Mo
   return <Badge tone={tone}>{statusLabel(status)}</Badge>;
 }
 
-function RuntimeBadge({ item, runtime }: { item: ModelCatalogItem; runtime?: SttRuntimeInstallState }): JSX.Element {
+function SourceBadge({ item }: { item: ModelCatalogItem }): JSX.Element {
+  return <Badge tone={item.isCloud ? "cloud" : "local"}>{item.isCloud ? "Remote/API" : "Local"}</Badge>;
+}
+
+function RuntimeBadge({ item, runtime }: { item: ModelCatalogItem; runtime?: SttRuntimeInstallState }): JSX.Element | null {
   if (runtime) {
     return <Badge tone={runtime.status === "ready" ? "success" : "warning"}>{runtimeStatusLabel(runtime)}</Badge>;
   }
+  if (item.downloadStrategy === "none") return null;
   if (item.isCloud) return <Badge tone="cloud">Cloud</Badge>;
   if (item.isOffline) return <Badge tone="local">Offline</Badge>;
   return <Badge>Runtime</Badge>;
+}
+
+function providerModelLabel(item: ModelCatalogItem): string {
+  return item.isCloud ? "API-based model" : "Local";
+}
+
+function modelGlyphStyle(provider: ModelProvider): CSSProperties {
+  const styles: Partial<Record<ModelProvider, CSSProperties>> = {
+    whisper_cpp: {
+      "--model-glyph-bg": "#ffffff",
+      "--model-glyph-border": "#e0e0e0",
+      "--model-glyph-icon": "#111111"
+    } as CSSProperties,
+    nvidia: {
+      "--model-glyph-bg": "#76b900",
+      "--model-glyph-border": "#76b900",
+      "--model-glyph-icon": "#ffffff"
+    } as CSSProperties,
+    openai: {
+      "--model-glyph-bg": "#ffffff",
+      "--model-glyph-border": "#e0e0e0",
+      "--model-glyph-icon": "#111111"
+    } as CSSProperties,
+    anthropic: {
+      "--model-glyph-bg": "#d97757",
+      "--model-glyph-border": "#d97757",
+      "--model-glyph-icon": "#ffffff"
+    } as CSSProperties,
+    google: {
+      "--model-glyph-bg": "#ffffff",
+      "--model-glyph-border": "#e0e0e0",
+      "--model-glyph-icon": "#1f1f1f"
+    } as CSSProperties
+  };
+
+  return styles[provider] ?? {};
 }
 
 function kindLabel(kind: ModelCatalogItem["kind"]): string {
@@ -436,6 +694,7 @@ function kindLabel(kind: ModelCatalogItem["kind"]): string {
 
 function isActiveModel(state: AppStateSnapshot, item: ModelCatalogItem, download?: ModelDownloadState): boolean {
   if (state.modelLibrary.activeModelIds[item.kind] !== item.id) return false;
+  if (!isModelProviderUsable(item, state)) return false;
   return item.downloadStrategy === "none" || download?.status === "downloaded";
 }
 
@@ -479,6 +738,8 @@ const nvidiaLogoPath = [
 function providerIcon(provider: ModelProvider): ProviderIcon | null {
   if (provider === "openai" || provider === "whisper_cpp") return OpenAiMark;
   if (provider === "nvidia") return NvidiaMark;
+  if (provider === "anthropic") return AnthropicMark;
+  if (provider === "google") return GoogleMark;
   return null;
 }
 
@@ -492,8 +753,40 @@ function OpenAiMark({ className }: { className?: string }): JSX.Element {
 
 function NvidiaMark({ className }: { className?: string }): JSX.Element {
   return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className={className} fill="currentColor">
+      <path d={nvidiaLogoPath} />
+    </svg>
+  );
+}
+
+function AnthropicMark({ className }: { className?: string }): JSX.Element {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className={className} fill="currentColor">
+      <path d="M14.63 4.5 21 19.5h-3.33l-1.3-3.22H9.7L8.39 19.5H5.2L11.58 4.5h3.05Zm.61 8.98-2.2-5.45-2.2 5.45h4.4Z" />
+      <path d="M5.84 4.5 12.2 19.5H9.02L2.65 4.5h3.19Z" />
+    </svg>
+  );
+}
+
+function GoogleMark({ className }: { className?: string }): JSX.Element {
+  return (
     <svg aria-hidden="true" viewBox="0 0 24 24" className={className}>
-      <path d={nvidiaLogoPath} fill="#76B900" />
+      <path
+        fill="#4285F4"
+        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09Z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23Z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.84 14.1a6.61 6.61 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84Z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15A10.6 10.6 0 0 0 12 1 11 11 0 0 0 2.18 7.06L5.84 9.9C6.71 7.31 9.14 5.38 12 5.38Z"
+      />
     </svg>
   );
 }
@@ -525,4 +818,8 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

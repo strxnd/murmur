@@ -1,13 +1,15 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { modelCatalog } from "../../shared/model-catalog";
-import { transcriptionProviderFromModel } from "../../shared/model-activation";
+import {
+  isTranscriptionProviderUsable as isBaseTranscriptionProviderUsable,
+  transcriptionProviderFromModel
+} from "../../shared/model-activation";
 import type {
   AppSettings,
   LlmProviderConfig,
   ModelCatalogItem,
   ModelLibrarySnapshot,
-  SttModelRecommendation,
   SttRuntimeId,
   SttSetupSnapshot,
   TranscriptionProviderConfig
@@ -23,8 +25,6 @@ export interface SttUsabilityResult {
 }
 
 export class SttSetupService {
-  private recommendation?: SttModelRecommendation;
-
   constructor(
     private paths: AppPaths,
     private storage: StorageService,
@@ -40,8 +40,7 @@ export class SttSetupService {
       skipped: Boolean(state.settings.sttSetupSkippedAt),
       completed: Boolean(state.settings.sttSetupCompletedAt),
       needsSetup: !usability.usable && !state.settings.sttSetupSkippedAt,
-      runtimes: this.runtimeService.getInstallStates(),
-      recommendation: this.recommendation
+      runtimes: this.runtimeService.getInstallStates()
     };
   }
 
@@ -87,10 +86,6 @@ export class SttSetupService {
 
   skipSttSetup(): void {
     this.storage.updateSettings({ sttSetupSkippedAt: new Date().toISOString() });
-  }
-
-  setRecommendation(recommendation: SttModelRecommendation): void {
-    this.recommendation = recommendation;
   }
 
   private async ensureModelDownloaded(item: ModelCatalogItem): Promise<boolean> {
@@ -169,9 +164,7 @@ function providerUsable(
   runtimeService: Pick<SttRuntimeService, "getAvailability">,
   paths: Pick<AppPaths, "modelDir">
 ): boolean {
-  if (!provider.enabled) return false;
-  if (settings.localOnly && provider.isCloud) return false;
-  if (provider.isCloud && !provider.apiKey) return false;
+  if (!isBaseTranscriptionProviderUsable(provider, settings)) return false;
 
   if (provider.type === "whisper_cpp" && provider.baseUrl === "murmur://runtime/whisper.cpp") {
     return bundledProviderReady(provider, "whisper.cpp", runtimeService, paths);
@@ -180,7 +173,7 @@ function providerUsable(
     return bundledProviderReady(provider, "sherpa-onnx", runtimeService, paths);
   }
 
-  return Boolean(provider.baseUrl);
+  return true;
 }
 
 function bundledProviderReady(

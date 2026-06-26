@@ -9,7 +9,6 @@ export const transcriptionProviderTypeSchema = z.enum([
   "sherpa_onnx",
   "local_openai_compatible_stt",
   "cloud_openai",
-  "cloud_groq",
   "cloud_openai_compatible_stt"
 ]);
 export const llmProviderTypeSchema = z.enum([
@@ -23,12 +22,11 @@ export const llmProviderTypeSchema = z.enum([
   "custom_openai_compatible"
 ]);
 export const modelKindSchema = z.enum(["voice", "language"]);
-export const modelProviderSchema = z.enum(["whisper_cpp", "nvidia", "ollama", "openai", "groq", "anthropic", "google", "openrouter"]);
+export const modelProviderSchema = z.enum(["whisper_cpp", "nvidia", "ollama", "openai", "anthropic", "google", "openrouter"]);
 export const modelDownloadStrategySchema = z.enum(["direct_file", "archive", "ollama_pull", "none"]);
 export const modelDownloadStatusSchema = z.enum(["not_downloaded", "downloading", "downloaded", "error"]);
 export const sttRuntimeIdSchema = z.enum(["whisper.cpp", "sherpa-onnx"]);
 export const runtimeAvailabilityStatusSchema = z.enum(["available", "missing", "unsupported"]);
-export const sttPreferredLanguageScopeSchema = z.enum(["multilingual", "english"]);
 export const sttRuntimeInstallStatusSchema = z.enum([
   "ready",
   "not_installed",
@@ -219,8 +217,7 @@ export const appSettingsSchema = z
     typingBaselineWpm: z.number().min(1),
     trayCloseNoticeShownAt: optionalStringSchema,
     sttSetupSkippedAt: optionalStringSchema,
-    sttSetupCompletedAt: optionalStringSchema,
-    sttPreferredLanguageScope: sttPreferredLanguageScopeSchema
+    sttSetupCompletedAt: optionalStringSchema
   });
 
 export const dictationHistoryItemSchema = z
@@ -298,35 +295,12 @@ export const sttRuntimeInstallStateSchema = z
   })
   .passthrough();
 
-export const sttBenchmarkResultSchema = z
-  .object({
-    modelId: z.string().min(1),
-    audioDurationMs: z.number().min(0),
-    elapsedMs: z.number().min(0),
-    realtimeFactor: z.number().min(0),
-    totalMemoryBytes: z.number().min(0),
-    cpuThreadCount: z.number().min(1),
-    createdAt: z.string()
-  })
-  .passthrough();
-
-export const sttModelRecommendationSchema = z
-  .object({
-    recommendedModelId: z.string().min(1),
-    fallbackModelId: z.string().min(1),
-    reason: z.string(),
-    benchmark: sttBenchmarkResultSchema.optional(),
-    alternatives: z.array(z.object({ modelId: z.string().min(1), reason: z.string() }))
-  })
-  .passthrough();
-
 export const sttSetupSnapshotSchema = z
   .object({
     skipped: z.boolean(),
     completed: z.boolean(),
     needsSetup: z.boolean(),
-    runtimes: z.record(sttRuntimeIdSchema, sttRuntimeInstallStateSchema),
-    recommendation: sttModelRecommendationSchema.optional()
+    runtimes: z.record(sttRuntimeIdSchema, sttRuntimeInstallStateSchema)
   })
   .passthrough();
 

@@ -12,8 +12,6 @@ import type {
   RecordingLevelPayload,
   RecordingStartPayload,
   ReplacementRule,
-  SttModelRecommendation,
-  SttPreferredLanguageScope,
   SttRuntimeId,
   SttRuntimeInstallState,
   SttSetupSnapshot,
@@ -54,8 +52,6 @@ const api = {
   repairSttRuntime: (runtimeId: SttRuntimeId): Promise<SttSetupSnapshot> => ipcRenderer.invoke("stt-runtime:repair", runtimeId),
   cancelSttRuntimeDownload: (runtimeId: SttRuntimeId): Promise<SttSetupSnapshot> =>
     ipcRenderer.invoke("stt-runtime:cancel-download", runtimeId),
-  runSttBenchmark: (languageScope: SttPreferredLanguageScope): Promise<SttModelRecommendation> =>
-    ipcRenderer.invoke("stt-setup:benchmark", languageScope),
   setupBundledStt: (modelId: string): Promise<AppStateSnapshot> => ipcRenderer.invoke("stt-setup:setup-bundled", modelId),
   skipSttSetup: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("stt-setup:skip"),
   startDictation: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("dictation:start"),

@@ -57,7 +57,7 @@ describe("StorageService", () => {
     expect(settings.cancelHotkey).toBeUndefined();
   });
 
-  it("defaults new STT setup settings during migration", () => {
+  it("drops obsolete STT setup settings during migration", () => {
     const paths = testPaths();
     mkdirSync(paths.configDir, { recursive: true });
     writeFileSync(
@@ -66,15 +66,17 @@ describe("StorageService", () => {
         settings: {
           activeModeId: "default",
           theme: "dark",
-          sttPreferredLanguageScope: "invalid"
+          obsoleteSetting: true
         }
       })
     );
 
     const storage = jsonStorage(paths);
-    const settings = storage.getState().settings;
+    const settings = storage.getState().settings as typeof defaultSettings & {
+      obsoleteSetting?: unknown;
+    };
 
-    expect(settings.sttPreferredLanguageScope).toBe("multilingual");
+    expect(settings.obsoleteSetting).toBeUndefined();
     expect(settings.sttSetupSkippedAt).toBeUndefined();
     expect(settings.sttSetupCompletedAt).toBeUndefined();
   });

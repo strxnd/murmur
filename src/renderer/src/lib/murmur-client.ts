@@ -11,8 +11,6 @@ import type {
   RecordingLevelPayload,
   RecordingStartPayload,
   ReplacementRule,
-  SttModelRecommendation,
-  SttPreferredLanguageScope,
   SttRuntimeId,
   SttRuntimeInstallState,
   SttSetupSnapshot,
@@ -28,7 +26,6 @@ import {
   pasteResultSchema,
   pillStateSnapshotSchema,
   providerValidationResultSchema,
-  sttModelRecommendationSchema,
   sttRuntimeInstallStateSchema,
   sttSetupSnapshotSchema
 } from "../../../shared/schemas";
@@ -65,8 +62,6 @@ export const murmurClient = {
     window.murmur.repairSttRuntime(runtimeId).then(parseSttSetup),
   cancelSttRuntimeDownload: (runtimeId: SttRuntimeId): Promise<SttSetupSnapshot> =>
     window.murmur.cancelSttRuntimeDownload(runtimeId).then(parseSttSetup),
-  runSttBenchmark: (languageScope: SttPreferredLanguageScope): Promise<SttModelRecommendation> =>
-    window.murmur.runSttBenchmark(languageScope).then(parseSttRecommendation),
   setupBundledStt: (modelId: string): Promise<AppStateSnapshot> => window.murmur.setupBundledStt(modelId).then(parseState),
   skipSttSetup: (): Promise<AppStateSnapshot> => window.murmur.skipSttSetup().then(parseState),
   startDictation: (): Promise<AppStateSnapshot> => window.murmur.startDictation().then(parseState),
@@ -117,8 +112,4 @@ function parseModelLibrary(value: unknown): ModelLibrarySnapshot {
 
 function parseSttSetup(value: unknown): SttSetupSnapshot {
   return sttSetupSnapshotSchema.parse(value) as SttSetupSnapshot;
-}
-
-function parseSttRecommendation(value: unknown): SttModelRecommendation {
-  return sttModelRecommendationSchema.parse(value) as SttModelRecommendation;
 }

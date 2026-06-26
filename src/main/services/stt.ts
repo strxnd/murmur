@@ -107,7 +107,7 @@ export class TranscriptionService {
       return this.validateBundledRuntime(provider, "sherpa-onnx");
     }
 
-    if (provider.type === "cloud_openai" || provider.type === "cloud_groq" || provider.type.includes("openai")) {
+    if (provider.type === "cloud_openai" || provider.type.includes("openai")) {
       const headers = this.authHeaders(provider);
       const response = await fetchWithTimeout(joinUrl(provider.baseUrl, "/models"), { headers }, 8000);
       if (response.status === 401) return { ok: false, message: "Authentication failed." };
@@ -342,7 +342,6 @@ export class TranscriptionService {
   }
 
   private effectiveStreamingMode(provider: TranscriptionProviderConfig): SttStreamingMode {
-    if (provider.type === "cloud_groq") return "none";
     if (provider.defaultModel === "whisper-1") return "none";
     return provider.streamingMode;
   }

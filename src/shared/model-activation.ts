@@ -1,16 +1,23 @@
 import type {
+  AppSettings,
   LlmProviderConfig,
   ModelCatalogItem,
   ModelProvider,
   TranscriptionProviderConfig
 } from "./types";
 
+type ProviderUsabilitySettings = Pick<AppSettings, "localOnly">;
+
+interface CloudCredentialGate {
+  isCloud: boolean;
+  apiKey?: string;
+}
+
 const providerLabels: Record<ModelProvider, string> = {
   whisper_cpp: "whisper.cpp",
   nvidia: "NVIDIA",
   ollama: "Ollama",
   openai: "OpenAI",
-  groq: "Groq",
   anthropic: "Anthropic",
   google: "Google",
   openrouter: "OpenRouter"
@@ -27,6 +34,48 @@ export function canActivateModel(item: ModelCatalogItem): boolean {
 
 export function modelName(item: ModelCatalogItem): string | undefined {
   return item.defaultProviderConfig?.model ?? item.ollamaModel ?? item.extractDir ?? item.filename;
+}
+
+export function hasUsableCloudCredentials(provider: CloudCredentialGate): boolean {
+  return !provider.isCloud || hasNonEmptyString(provider.apiKey);
+}
+
+export function isProviderAllowedBySettings(provider: CloudCredentialGate, settings: ProviderUsabilitySettings): boolean {
+  if (settings.localOnly && provider.isCloud) return false;
+  return hasUsableCloudCredentials(provider);
+}
+
+export function isTranscriptionProviderUsable(
+  provider: TranscriptionProviderConfig,
+  settings: ProviderUsabilitySettings
+): boolean {
+  if (!provider.enabled) return false;
+  if (!isProviderAllowedBySettings(provider, settings)) return false;
+  return hasNonEmptyString(provider.baseUrl);
+}
+
+export function isLlmProviderUsable(provider: LlmProviderConfig, settings: ProviderUsabilitySettings): boolean {
+  if (!provider.enabled) return false;
+  if (!isProviderAllowedBySettings(provider, settings)) return false;
+  if (provider.type === "ollama") return true;
+  return hasNonEmptyString(provider.baseUrl);
+}
+
+export function isModelProviderUsable(
+  item: ModelCatalogItem,
+  state: {
+    settings: ProviderUsabilitySettings;
+    transcriptionProviders: TranscriptionProviderConfig[];
+    llmProviders: LlmProviderConfig[];
+  }
+): boolean {
+  if (item.kind === "voice") {
+    const provider = transcriptionProviderFromModel(item, state.transcriptionProviders);
+    return Boolean(provider && isTranscriptionProviderUsable(provider, state.settings));
+  }
+
+  const provider = llmProviderFromModel(item, state.llmProviders);
+  return Boolean(provider && isLlmProviderUsable(provider, state.settings));
 }
 
 export function transcriptionProviderFromModel(
@@ -79,6 +128,7 @@ export function sttProviderId(item: ModelCatalogItem): string {
   if (type === "whisper_cpp") return "local-whisper-cpp";
   if (type === "sherpa_onnx") return "local-nvidia-parakeet-stt";
   if (type === "local_openai_compatible_stt") return "local-openai-stt";
+  if (type === "cloud_openai") return "openai-stt";
   return `${item.id}-stt`;
 }
 
@@ -103,4 +153,8 @@ function sttProviderName(item: ModelCatalogItem): string {
 function llmProviderName(item: ModelCatalogItem): string {
   if (item.defaultProviderConfig?.llmProviderType === "ollama") return "Ollama";
   return `${providerLabel(item.provider)} language`;
+}
+
+function hasNonEmptyString(value: string | undefined): boolean {
+  return typeof value === "string" && value.trim().length > 0;
 }

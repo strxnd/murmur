@@ -159,6 +159,7 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
   const setModes = useMurmurStore((store) => store.setModes);
   const activateMode = useMurmurStore((store) => store.activateMode);
   const [openModeId, setOpenModeId] = useState<string | null>(null);
+  const [isModeDialogOpen, setIsModeDialogOpen] = useState(false);
   const form = useForm<ModesFormValues>({
     resolver: zodResolver(modesFormSchema),
     defaultValues: { modes: state.modes }
@@ -166,6 +167,7 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
   const modes = form.watch("modes");
   const openModeIndex = openModeId ? modes.findIndex((mode) => mode.id === openModeId) : -1;
   const openMode = openModeIndex >= 0 ? modes[openModeIndex] : undefined;
+  const modeDialogOpen = isModeDialogOpen && Boolean(openMode);
   const modeListParent = useAutoAnimateRef<HTMLDivElement>();
 
   useEffect(() => {
@@ -183,10 +185,11 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
     const next = createBlankMode();
     form.setValue("modes", [...form.getValues("modes"), next], { shouldDirty: true, shouldValidate: true });
     setOpenModeId(next.id);
+    setIsModeDialogOpen(true);
   };
 
   const closeModePopup = (): void => {
-    setOpenModeId(null);
+    setIsModeDialogOpen(false);
   };
 
   const deleteMode = (modeId: string): void => {
@@ -237,6 +240,7 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
                 )}
                 onClick={() => {
                   setOpenModeId(mode.id);
+                  setIsModeDialogOpen(true);
                 }}
               >
                 <ModeGlyph iconKey={mode.iconKey} active={openModeId === mode.id} />
@@ -260,9 +264,16 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
       </View>
 
       <Dialog.Root
-        open={Boolean(openMode)}
+        open={modeDialogOpen}
         onOpenChange={(open) => {
-          if (!open) closeModePopup();
+          if (open) {
+            setIsModeDialogOpen(true);
+          } else {
+            closeModePopup();
+          }
+        }}
+        onOpenChangeComplete={(open) => {
+          if (!open) setOpenModeId(null);
         }}
       >
         <Dialog.Portal>

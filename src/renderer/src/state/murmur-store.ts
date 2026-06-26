@@ -9,8 +9,6 @@ import type {
   ModeConfig,
   ProviderValidationResult,
   ReplacementRule,
-  SttModelRecommendation,
-  SttPreferredLanguageScope,
   SttRuntimeId,
   SttRuntimeInstallState,
   SttSetupSnapshot,
@@ -49,7 +47,6 @@ interface MurmurStore {
   downloadSttRuntime: (runtimeId: SttRuntimeId) => Promise<void>;
   repairSttRuntime: (runtimeId: SttRuntimeId) => Promise<void>;
   cancelSttRuntimeDownload: (runtimeId: SttRuntimeId) => Promise<void>;
-  runSttBenchmark: (languageScope: SttPreferredLanguageScope) => Promise<SttModelRecommendation>;
   setupBundledStt: (modelId: string) => Promise<void>;
   skipSttSetup: () => Promise<void>;
   startDictation: () => Promise<void>;
@@ -159,28 +156,6 @@ export const useMurmurStore = create<MurmurStore>()((set, get) => {
     downloadSttRuntime: (runtimeId) => commitSttSetup(() => murmurClient.downloadSttRuntime(runtimeId)),
     repairSttRuntime: (runtimeId) => commitSttSetup(() => murmurClient.repairSttRuntime(runtimeId)),
     cancelSttRuntimeDownload: (runtimeId) => commitSttSetup(() => murmurClient.cancelSttRuntimeDownload(runtimeId)),
-    runSttBenchmark: async (languageScope) => {
-      try {
-        const recommendation = await murmurClient.runSttBenchmark(languageScope);
-        set((current) => ({
-          snapshot: current.snapshot
-            ? {
-                ...current.snapshot,
-                sttSetup: {
-                  ...current.snapshot.sttSetup,
-                  recommendation
-                }
-              }
-            : current.snapshot,
-          status: current.snapshot ? "ready" : current.status,
-          error: null
-        }));
-        return recommendation;
-      } catch (error) {
-        set({ status: get().snapshot ? "ready" : "error", error: errorMessage(error) });
-        throw error;
-      }
-    },
     setupBundledStt: (modelId) => commit(() => murmurClient.setupBundledStt(modelId)),
     skipSttSetup: () => commit(() => murmurClient.skipSttSetup()),
     startDictation: () => commit(() => murmurClient.startDictation()),
