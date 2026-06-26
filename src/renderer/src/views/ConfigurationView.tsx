@@ -1,9 +1,10 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useRef, type JSX } from "react";
+import { Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type JSX } from "react";
+import { createPortal } from "react-dom";
 import { Controller, useForm, useWatch, type Control, type Path } from "react-hook-form";
 import { z } from "zod";
-import type { AppStateSnapshot } from "../../../shared/types";
+import type { AppSettings, AppStateSnapshot } from "../../../shared/types";
 import { appSettingsSchema, replacementRuleSchema } from "../../../shared/schemas";
 import { ShortcutRecorder } from "../components/ShortcutRecorder";
 import { View } from "../components/View";
@@ -29,7 +30,23 @@ const configurationFormSchema = z.object({
 
 type ConfigurationFormValues = z.infer<typeof configurationFormSchema>;
 
-const autosaveDelayMs = 350;
+const promptAnimationMs = 180;
+
+const editableSettingsKeys = [
+  "theme",
+  "launchAtLogin",
+  "localOnly",
+  "retainAudio",
+  "audioRetentionDays",
+  "textRetentionDays",
+  "activationMode",
+  "activationHotkey",
+  "recordingPillPosition",
+  "preferredAudioInputId",
+  "typingBaselineWpm"
+] as const satisfies ReadonlyArray<keyof AppSettings>;
+
+type EditableSettingsKey = (typeof editableSettingsKeys)[number];
 
 const themeItems: Array<SelectItem<ConfigurationFormValues["settings"]["theme"]>> = [
   { value: "system", label: "System" },
@@ -70,8 +87,9 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
       replacements: state.replacements
     })
   );
-  const isAutosavingRef = useRef(false);
-  const pendingAutosaveRef = useRef(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isPromptMounted, setIsPromptMounted] = useState(false);
   const replacementsParent = useAutoAnimateRef<HTMLDivElement>();
   const actionableHotkeyDiagnostics = state.capabilities.hotkeys.diagnostics.filter(isActionableHotkeyDiagnostic);
   const audioInputItems: Array<SelectItem<string>> = [
@@ -81,6 +99,23 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
       label: device.label || `Microphone ${device.deviceId.slice(0, 6)}`
     }))
   ];
+  const currentValues = {
+    settings: settings ?? state.settings,
+    replacements
+  };
+  const hasUnsavedChanges = hasConfigurationChanges(currentValues, persistedValuesRef.current);
+
+  useEffect(() => {
+    if (hasUnsavedChanges) {
+      setIsPromptMounted(true);
+      return undefined;
+    }
+
+    if (!isPromptMounted) return undefined;
+
+    const timeout = window.setTimeout(() => setIsPromptMounted(false), promptAnimationMs);
+    return () => window.clearTimeout(timeout);
+  }, [hasUnsavedChanges, isPromptMounted]);
 
   useEffect(() => {
     if (form.formState.isDirty) return;
@@ -92,200 +127,225 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
     form.reset(values);
   }, [form, form.formState.isDirty, state.replacements, state.settings]);
 
-  const autosave = useCallback(async (): Promise<void> => {
-    if (isAutosavingRef.current) {
-      pendingAutosaveRef.current = true;
+  const saveChanges = useCallback(async (): Promise<void> => {
+    setSaveError(null);
+
+    const isValid = await form.trigger();
+    if (!isValid) {
+      setSaveError("Fix the highlighted fields before saving.");
       return;
     }
 
-    isAutosavingRef.current = true;
-    pendingAutosaveRef.current = false;
-    let savedValues: ConfigurationFormValues | null = null;
+    const values = cloneConfigurationValues(form.getValues());
+    const persistedValues = persistedValuesRef.current;
+    const settingsPatch = changedSettingsPatch(values.settings, persistedValues.settings);
+    const shouldSaveSettings = Object.keys(settingsPatch).length > 0;
+    const shouldSaveReplacements = !sameValue(values.replacements, persistedValues.replacements);
+
+    if (!shouldSaveSettings && !shouldSaveReplacements) {
+      form.reset(cloneConfigurationValues(persistedValues));
+      return;
+    }
+
+    setIsSaving(true);
 
     try {
-      const isValid = await form.trigger();
-      if (!isValid) return;
-
-      const values = cloneConfigurationValues(form.getValues());
-      const persistedValues = persistedValuesRef.current;
-      const shouldSaveSettings = !sameValue(values.settings, persistedValues.settings);
-      const shouldSaveReplacements = !sameValue(values.replacements, persistedValues.replacements);
-
-      if (!shouldSaveSettings && !shouldSaveReplacements) return;
-
-      if (shouldSaveSettings) await updateSettings(values.settings);
+      if (shouldSaveSettings) await updateSettings(settingsPatch);
       if (shouldSaveReplacements) await setReplacements(values.replacements);
 
-      savedValues = cloneConfigurationValues(values);
       persistedValuesRef.current = cloneConfigurationValues(values);
-
-      if (sameValue(form.getValues(), values)) {
-        form.reset(cloneConfigurationValues(values));
-      }
-    } catch {
-      return;
+      form.reset(cloneConfigurationValues(values));
+    } catch (error) {
+      setSaveError(`Could not save configuration: ${errorMessage(error)}`);
     } finally {
-      isAutosavingRef.current = false;
-      const shouldRunAgain = pendingAutosaveRef.current || (savedValues !== null && !sameValue(form.getValues(), savedValues));
-      pendingAutosaveRef.current = false;
-
-      if (shouldRunAgain) {
-        window.setTimeout(() => void autosave(), autosaveDelayMs);
-      }
+      setIsSaving(false);
     }
   }, [form, setReplacements, updateSettings]);
 
-  useEffect(() => {
-    if (!form.formState.isDirty) return undefined;
+  const restoreSavedChanges = useCallback((): void => {
+    setSaveError(null);
+    form.reset(cloneConfigurationValues(persistedValuesRef.current));
+  }, [form]);
 
-    const timeout = window.setTimeout(() => void autosave(), autosaveDelayMs);
-    return () => window.clearTimeout(timeout);
-  }, [autosave, form.formState.isDirty, replacements, settings]);
+  const unsavedChangesPrompt = isPromptMounted
+    ? createPortal(
+        <div className="pointer-events-none fixed bottom-4 left-[17rem] right-4 z-40 max-[980px]:left-4">
+          <div
+            data-state={hasUnsavedChanges ? "open" : "closed"}
+            role="region"
+            aria-label="Unsaved configuration changes"
+            className="configuration-unsaved-prompt pointer-events-auto mx-auto flex w-full max-w-3xl items-center justify-between gap-3 rounded-md border border-border bg-surface-raised px-3 py-3 shadow-[var(--console-popover-shadow)] max-[760px]:flex-col max-[760px]:items-stretch"
+          >
+            <div className="min-w-0">
+              <p className="m-0 text-sm font-medium text-foreground">You have unsaved changes</p>
+              <p className="m-0 mt-1 text-xs text-muted-foreground">Save your edits, or restore the last saved configuration.</p>
+              {saveError && (
+                <p role="alert" className="m-0 mt-1 text-xs text-danger">
+                  {saveError}
+                </p>
+              )}
+            </div>
+            <div className="flex shrink-0 items-center justify-end gap-2">
+              <Button variant="ghost" onClick={restoreSavedChanges} disabled={isSaving}>
+                <RotateCcw size={16} /> Restore saved
+              </Button>
+              <Button variant="primary" onClick={() => void saveChanges()} disabled={isSaving}>
+                <Save size={16} /> {isSaving ? "Saving..." : "Save changes"}
+              </Button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )
+    : null;
 
   return (
-    <View title="Configuration">
-      <section className="grid grid-cols-2 gap-4 max-[980px]:grid-cols-1">
-        <Panel title="Appearance">
-          <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
-            <Field label="Theme">
-              <FormSelect control={form.control} name="settings.theme" items={themeItems} />
+    <>
+      <View title="Configuration">
+        <section className="grid grid-cols-2 gap-4 max-[980px]:grid-cols-1">
+          <Panel title="Appearance">
+            <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
+              <Field label="Theme">
+                <FormSelect control={form.control} name="settings.theme" items={themeItems} />
+              </Field>
+              <Field label="Recording pill">
+                <FormSelect control={form.control} name="settings.recordingPillPosition" items={recordingPillPositionItems} />
+              </Field>
+            </div>
+          </Panel>
+
+          <Panel title="Keyboard Shortcuts">
+            <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
+              <Field label="Activation mode" error={form.formState.errors.settings?.activationMode?.message}>
+                <FormSelect control={form.control} name="settings.activationMode" items={activationModeItems} />
+              </Field>
+              <Field label="Activation shortcut" error={form.formState.errors.settings?.activationHotkey?.message}>
+                <FormShortcutRecorder control={form.control} name="settings.activationHotkey" />
+              </Field>
+              {actionableHotkeyDiagnostics.length > 0 && (
+                <p className="col-span-full m-0 text-xs leading-5 text-muted-foreground">
+                  {actionableHotkeyDiagnostics.join(" ")}
+                </p>
+              )}
+            </div>
+          </Panel>
+        </section>
+
+        <Panel title="Application">
+          <div className="grid grid-cols-4 gap-3 max-[1180px]:grid-cols-2 max-[760px]:grid-cols-1">
+            <FormSwitch control={form.control} name="settings.launchAtLogin" label="Launch at login" />
+            <FormSwitch control={form.control} name="settings.localOnly" label="Local-only mode" />
+            <FormSwitch control={form.control} name="settings.retainAudio" label="Retain audio" />
+            <Field label="Preferred audio input">
+              <FormSelect control={form.control} name="settings.preferredAudioInputId" items={audioInputItems} />
             </Field>
-            <Field label="Recording pill">
-              <FormSelect control={form.control} name="settings.recordingPillPosition" items={recordingPillPositionItems} />
+            <Field label="Text retention days" error={form.formState.errors.settings?.textRetentionDays?.message}>
+              <Input type="number" min={0} {...form.register("settings.textRetentionDays", { valueAsNumber: true })} />
+            </Field>
+            <Field label="Audio retention days" error={form.formState.errors.settings?.audioRetentionDays?.message}>
+              <Input type="number" min={0} {...form.register("settings.audioRetentionDays", { valueAsNumber: true })} />
+            </Field>
+            <Field label="Typing baseline WPM" error={form.formState.errors.settings?.typingBaselineWpm?.message}>
+              <Input type="number" min={1} {...form.register("settings.typingBaselineWpm", { valueAsNumber: true })} />
             </Field>
           </div>
         </Panel>
 
-        <Panel title="Keyboard Shortcuts">
-          <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
-            <Field label="Activation mode" error={form.formState.errors.settings?.activationMode?.message}>
-              <FormSelect control={form.control} name="settings.activationMode" items={activationModeItems} />
-            </Field>
-            <Field label="Activation shortcut" error={form.formState.errors.settings?.activationHotkey?.message}>
-              <FormShortcutRecorder control={form.control} name="settings.activationHotkey" />
-            </Field>
-            {actionableHotkeyDiagnostics.length > 0 && (
-              <p className="col-span-full m-0 text-xs leading-5 text-muted-foreground">
-                {actionableHotkeyDiagnostics.join(" ")}
-              </p>
-            )}
-          </div>
-        </Panel>
-      </section>
+        <section id="advanced-settings" className="flex flex-col gap-4">
+          <h2 className="m-0 text-sm font-semibold text-foreground">Advanced Settings</h2>
+          <Panel
+            title="Text replacements"
+            actions={
+              <Button
+                size="sm"
+                onClick={() =>
+                  form.setValue(
+                    "replacements",
+                    [
+                      {
+                        id: makeClientId("replace"),
+                        source: "",
+                        target: "",
+                        category: "",
+                        caseSensitive: false,
+                        regex: false,
+                        runBeforeLlm: true,
+                        runAfterLlm: true,
+                        enabled: true,
+                        notes: ""
+                      },
+                      ...form.getValues("replacements")
+                    ],
+                    { shouldDirty: true, shouldValidate: true }
+                  )
+                }
+              >
+                <Plus size={16} /> Add
+              </Button>
+            }
+          >
+            <div ref={replacementsParent} className="flex flex-col gap-3">
+              {replacements.length === 0 && <p className="m-0 text-sm text-muted-foreground">No text replacements.</p>}
+              {replacements.map((rule, index) => (
+                <div key={rule.id} className="grid grid-cols-[repeat(3,minmax(8rem,1fr))_repeat(5,5.5rem)_2.5rem] items-start gap-2.5 border-t border-border pt-3 first:border-t-0 first:pt-0 max-[1180px]:grid-cols-1">
+                  <Field label="Source">
+                    <Input {...form.register(`replacements.${index}.source`)} />
+                  </Field>
+                  <Field label="Target">
+                    <Input {...form.register(`replacements.${index}.target`)} />
+                  </Field>
+                  <Field label="Category">
+                    <Input {...form.register(`replacements.${index}.category`)} />
+                  </Field>
+                  <div className="pt-6 max-[1180px]:pt-0">
+                    <FormCheckbox control={form.control} name={`replacements.${index}.enabled`} label="Enabled" />
+                  </div>
+                  <div className="pt-6 max-[1180px]:pt-0">
+                    <FormCheckbox control={form.control} name={`replacements.${index}.caseSensitive`} label="Case" />
+                  </div>
+                  <div className="pt-6 max-[1180px]:pt-0">
+                    <FormCheckbox control={form.control} name={`replacements.${index}.regex`} label="Regex" />
+                  </div>
+                  <div className="pt-6 max-[1180px]:pt-0">
+                    <FormCheckbox control={form.control} name={`replacements.${index}.runBeforeLlm`} label="Pre" />
+                  </div>
+                  <div className="pt-6 max-[1180px]:pt-0">
+                    <FormCheckbox control={form.control} name={`replacements.${index}.runAfterLlm`} label="Post" />
+                  </div>
+                  <div className="pt-6 max-[1180px]:pt-0">
+                    <IconButton
+                      title="Delete replacement"
+                      onClick={() =>
+                        form.setValue(
+                          "replacements",
+                          form.getValues("replacements").filter((candidate) => candidate.id !== rule.id),
+                          { shouldDirty: true, shouldValidate: true }
+                        )
+                      }
+                    >
+                      <Trash2 size={18} />
+                    </IconButton>
+                  </div>
+                  <Field label="Notes" className="col-span-full">
+                    <Textarea className="min-h-16" {...form.register(`replacements.${index}.notes`)} />
+                  </Field>
+                </div>
+              ))}
+            </div>
+          </Panel>
 
-      <Panel title="Application">
-        <div className="grid grid-cols-4 gap-3 max-[1180px]:grid-cols-2 max-[760px]:grid-cols-1">
-          <FormSwitch control={form.control} name="settings.launchAtLogin" label="Launch at login" />
-          <FormSwitch control={form.control} name="settings.localOnly" label="Local-only mode" />
-          <FormSwitch control={form.control} name="settings.retainAudio" label="Retain audio" />
-          <Field label="Preferred audio input">
-            <FormSelect control={form.control} name="settings.preferredAudioInputId" items={audioInputItems} />
-          </Field>
-          <Field label="Text retention days">
-            <Input type="number" min={0} {...form.register("settings.textRetentionDays", { valueAsNumber: true })} />
-          </Field>
-          <Field label="Audio retention days">
-            <Input type="number" min={0} {...form.register("settings.audioRetentionDays", { valueAsNumber: true })} />
-          </Field>
-          <Field label="Typing baseline WPM">
-            <Input type="number" min={1} {...form.register("settings.typingBaselineWpm", { valueAsNumber: true })} />
-          </Field>
-        </div>
-      </Panel>
-
-      <section id="advanced-settings" className="flex flex-col gap-4">
-        <h2 className="m-0 text-sm font-semibold text-foreground">Advanced Settings</h2>
-        <Panel
-          title="Text replacements"
-          actions={
-            <Button
-              size="sm"
-              onClick={() =>
-                form.setValue(
-                  "replacements",
-                  [
-                    {
-                      id: makeClientId("replace"),
-                      source: "",
-                      target: "",
-                      category: "",
-                      caseSensitive: false,
-                      regex: false,
-                      runBeforeLlm: true,
-                      runAfterLlm: true,
-                      enabled: true,
-                      notes: ""
-                    },
-                    ...form.getValues("replacements")
-                  ],
-                  { shouldDirty: true, shouldValidate: true }
-                )
-              }
-            >
-              <Plus size={16} /> Add
-            </Button>
-          }
-        >
-          <div ref={replacementsParent} className="flex flex-col gap-3">
-            {replacements.length === 0 && <p className="m-0 text-sm text-muted-foreground">No text replacements.</p>}
-            {replacements.map((rule, index) => (
-              <div key={rule.id} className="grid grid-cols-[repeat(3,minmax(8rem,1fr))_repeat(5,5.5rem)_2.5rem] items-start gap-2.5 border-t border-border pt-3 first:border-t-0 first:pt-0 max-[1180px]:grid-cols-1">
-                <Field label="Source">
-                  <Input {...form.register(`replacements.${index}.source`)} />
-                </Field>
-                <Field label="Target">
-                  <Input {...form.register(`replacements.${index}.target`)} />
-                </Field>
-                <Field label="Category">
-                  <Input {...form.register(`replacements.${index}.category`)} />
-                </Field>
-                <div className="pt-6 max-[1180px]:pt-0">
-                  <FormCheckbox control={form.control} name={`replacements.${index}.enabled`} label="Enabled" />
-                </div>
-                <div className="pt-6 max-[1180px]:pt-0">
-                  <FormCheckbox control={form.control} name={`replacements.${index}.caseSensitive`} label="Case" />
-                </div>
-                <div className="pt-6 max-[1180px]:pt-0">
-                  <FormCheckbox control={form.control} name={`replacements.${index}.regex`} label="Regex" />
-                </div>
-                <div className="pt-6 max-[1180px]:pt-0">
-                  <FormCheckbox control={form.control} name={`replacements.${index}.runBeforeLlm`} label="Pre" />
-                </div>
-                <div className="pt-6 max-[1180px]:pt-0">
-                  <FormCheckbox control={form.control} name={`replacements.${index}.runAfterLlm`} label="Post" />
-                </div>
-                <div className="pt-6 max-[1180px]:pt-0">
-                  <IconButton
-                    title="Delete replacement"
-                    onClick={() =>
-                      form.setValue(
-                        "replacements",
-                        form.getValues("replacements").filter((candidate) => candidate.id !== rule.id),
-                        { shouldDirty: true, shouldValidate: true }
-                      )
-                    }
-                  >
-                    <Trash2 size={18} />
-                  </IconButton>
-                </div>
-                <Field label="Notes" className="col-span-full">
-                  <Textarea className="min-h-16" {...form.register(`replacements.${index}.notes`)} />
-                </Field>
-              </div>
-            ))}
-          </div>
-        </Panel>
-
-        <Panel title="Clear local data">
-          <div className="flex flex-col gap-3">
-            <p className="m-0 text-sm text-muted-foreground">Clears persisted settings, modes, providers, vocabulary, replacements, and history.</p>
-            <Button variant="danger" onClick={() => void clearLocalData()}>
-              <Trash2 size={18} /> Clear local data
-            </Button>
-          </div>
-        </Panel>
-      </section>
-    </View>
+          <Panel title="Clear local data">
+            <div className="flex flex-col gap-3">
+              <p className="m-0 text-sm text-muted-foreground">Clears persisted settings, modes, providers, vocabulary, replacements, and history.</p>
+              <Button variant="danger" onClick={() => void clearLocalData()}>
+                <Trash2 size={18} /> Clear local data
+              </Button>
+            </div>
+          </Panel>
+        </section>
+      </View>
+      {unsavedChangesPrompt}
+    </>
   );
 }
 
@@ -310,8 +370,28 @@ function sameValue(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function hasConfigurationChanges(values: ConfigurationFormValues, persistedValues: ConfigurationFormValues): boolean {
+  return editableSettingsKeys.some((key) => !sameValue(values.settings[key], persistedValues.settings[key])) || !sameValue(values.replacements, persistedValues.replacements);
+}
+
+function changedSettingsPatch(values: AppSettings, persistedValues: AppSettings): Partial<AppSettings> {
+  const patch: Partial<AppSettings> = {};
+
+  for (const key of editableSettingsKeys) {
+    if (!sameValue(values[key], persistedValues[key])) {
+      (patch as Partial<Record<EditableSettingsKey, AppSettings[EditableSettingsKey]>>)[key] = values[key];
+    }
+  }
+
+  return patch;
+}
+
 function cloneConfigurationValues(values: ConfigurationFormValues): ConfigurationFormValues {
   return JSON.parse(JSON.stringify(values)) as ConfigurationFormValues;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function FormSelect({
