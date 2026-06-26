@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
+import { defaultLlmProviders, defaultTranscriptionProviders } from "../../../shared/defaults";
 import {
+  applyCloudCredentialApiKey,
   applyLlmProviderType,
   applyTranscriptionProviderType,
+  cloudCredentialApiKey,
+  cloudCredentialValidationProviders,
   createCustomLlmProvider,
   createCustomTranscriptionProvider,
   customTranscriptionProviderTypes,
+  isCloudCredentialLlmProvider,
+  isCloudCredentialTranscriptionProvider,
   isDefaultLlmProvider,
   isDefaultTranscriptionProvider,
   normalizeProvidersFormValues
@@ -62,12 +68,12 @@ describe("provider form helpers", () => {
 
   it("applies LLM type presets and preserves API keys", () => {
     const provider = createCustomLlmProvider("custom-llm");
-    const nextProvider = applyLlmProviderType({ ...provider, apiKey: "sk-test" }, "openrouter");
+    const nextProvider = applyLlmProviderType({ ...provider, apiKey: "sk-test" }, "anthropic");
 
     expect(nextProvider).toMatchObject({
-      type: "openrouter",
-      name: "OpenRouter",
-      baseUrl: "https://openrouter.ai/api/v1",
+      type: "anthropic",
+      name: "Anthropic",
+      baseUrl: "https://api.anthropic.com",
       apiKey: "sk-test",
       isCloud: true
     });
@@ -111,6 +117,117 @@ describe("provider form helpers", () => {
     expect(values.llmProviders[0]).toMatchObject({
       apiKey: "sk-test",
       defaultModel: undefined
+    });
+  });
+
+  it("applies one OpenAI credential to voice and language providers", () => {
+    const values = applyCloudCredentialApiKey(
+      {
+        transcriptionProviders: defaultTranscriptionProviders,
+        llmProviders: defaultLlmProviders
+      },
+      "openai",
+      " sk-openai "
+    );
+
+    expect(values.transcriptionProviders.find((provider) => provider.id === "openai-stt")).toMatchObject({
+      apiKey: " sk-openai ",
+      enabled: true
+    });
+    expect(values.llmProviders.find((provider) => provider.id === "openai-llm")).toMatchObject({
+      apiKey: " sk-openai ",
+      enabled: true
+    });
+    expect(cloudCredentialApiKey("openai", values)).toBe(" sk-openai ");
+  });
+
+  it("applies Anthropic and Google credentials only to their provider records", () => {
+    const customStt = createCustomTranscriptionProvider("custom-stt");
+    const customLlm = createCustomLlmProvider("custom-llm");
+    const values = applyCloudCredentialApiKey(
+      {
+        transcriptionProviders: [...defaultTranscriptionProviders, customStt],
+        llmProviders: [...defaultLlmProviders, customLlm]
+      },
+      "anthropic",
+      "sk-ant"
+    );
+
+    expect(values.transcriptionProviders).toEqual([...defaultTranscriptionProviders, customStt]);
+    expect(values.llmProviders.find((provider) => provider.id === "anthropic")).toMatchObject({
+      apiKey: "sk-ant",
+      enabled: true
+    });
+    expect(values.llmProviders.find((provider) => provider.id === "google")).toEqual(
+      defaultLlmProviders.find((provider) => provider.id === "google")
+    );
+    expect(values.llmProviders.find((provider) => provider.id === "custom-llm")).toEqual(customLlm);
+  });
+
+  it("clearing a cloud credential disables matching provider records", () => {
+    const configured = applyCloudCredentialApiKey(
+      {
+        transcriptionProviders: defaultTranscriptionProviders,
+        llmProviders: defaultLlmProviders
+      },
+      "openai",
+      "sk-openai"
+    );
+    const cleared = applyCloudCredentialApiKey(configured, "openai", "  ");
+
+    expect(cleared.transcriptionProviders.find((provider) => provider.id === "openai-stt")).toMatchObject({
+      apiKey: "  ",
+      enabled: false
+    });
+    expect(cleared.llmProviders.find((provider) => provider.id === "openai-llm")).toMatchObject({
+      apiKey: "  ",
+      enabled: false
+    });
+    expect(cloudCredentialApiKey("openai", cleared)).toBe("");
+  });
+
+  it("upserts missing default cloud provider records", () => {
+    const values = applyCloudCredentialApiKey(
+      {
+        transcriptionProviders: defaultTranscriptionProviders.filter((provider) => provider.id !== "openai-stt"),
+        llmProviders: defaultLlmProviders.filter((provider) => provider.id !== "openai-llm")
+      },
+      "openai",
+      "sk-openai"
+    );
+
+    expect(values.transcriptionProviders.find((provider) => provider.id === "openai-stt")).toMatchObject({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "sk-openai",
+      enabled: true
+    });
+    expect(values.llmProviders.find((provider) => provider.id === "openai-llm")).toMatchObject({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "sk-openai",
+      enabled: true
+    });
+  });
+
+  it("identifies curated cloud providers for the advanced editor filter", () => {
+    expect(isCloudCredentialTranscriptionProvider({ id: "openai-stt" })).toBe(true);
+    expect(isCloudCredentialTranscriptionProvider({ id: "local-openai-stt" })).toBe(false);
+    expect(isCloudCredentialLlmProvider({ id: "openai-llm" })).toBe(true);
+    expect(isCloudCredentialLlmProvider({ id: "ollama" })).toBe(false);
+  });
+
+  it("returns validation provider records for a cloud credential row", () => {
+    const values = applyCloudCredentialApiKey(
+      {
+        transcriptionProviders: defaultTranscriptionProviders,
+        llmProviders: defaultLlmProviders
+      },
+      "openai",
+      "sk-openai"
+    );
+
+    expect(cloudCredentialValidationProviders("openai", values)).toMatchObject({
+      transcriptionProviders: [{ id: "openai-stt", apiKey: "sk-openai" }],
+      llmProviders: [{ id: "openai-llm", apiKey: "sk-openai" }]
     });
   });
 });

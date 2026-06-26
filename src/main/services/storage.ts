@@ -18,6 +18,7 @@ import type {
   DictationHistoryItem,
   DictationModeKind,
   LlmProviderConfig,
+  LlmProviderType,
   ModelKind,
   ModelDownloadState,
   ModelLibrarySnapshot,
@@ -135,7 +136,7 @@ export class StorageService {
       settings,
       modes,
       transcriptionProviders: this.normalizeTranscriptionProviders(state.transcriptionProviders),
-      llmProviders: state.llmProviders?.length ? state.llmProviders : clone(defaultLlmProviders),
+      llmProviders: this.normalizeLlmProviders(state.llmProviders),
       autoModeRules: this.normalizeAutoModeRules(state.autoModeRules ?? defaultAutoModeRules, modes),
       vocabulary: state.vocabulary ?? [],
       history: state.history ?? [],
@@ -173,7 +174,7 @@ export class StorageService {
 
   setLlmProviders(providers: LlmProviderConfig[]): PersistedState {
     const state = this.getState();
-    state.llmProviders = providers;
+    state.llmProviders = this.normalizeLlmProviders(providers);
     this.writeState(state);
     return state;
   }
@@ -574,6 +575,20 @@ export class StorageService {
     return [...normalizedDefaults, ...customProviders];
   }
 
+  private normalizeLlmProviders(providers: Array<Partial<LlmProviderConfig>> | undefined): LlmProviderConfig[] {
+    if (!providers?.length) return clone(defaultLlmProviders);
+
+    const defaultIds = new Set(defaultLlmProviders.map((provider) => provider.id));
+    const usableProviders = providers.filter((provider) => !isRemovedLlmProvider(provider));
+    const byId = new Map(usableProviders.filter((provider) => isNonEmptyString(provider.id)).map((provider) => [provider.id!, provider]));
+    const normalizedDefaults = defaultLlmProviders.map((defaultProvider) => normalizeLlmProvider(defaultProvider, byId.get(defaultProvider.id)));
+    const customProviders = usableProviders
+      .filter((provider) => isNonEmptyString(provider.id) && !defaultIds.has(provider.id))
+      .map((provider) => normalizeLlmProvider(undefined, provider));
+
+    return [...normalizedDefaults, ...customProviders];
+  }
+
   private normalizeModelLibrary(modelLibrary: ModelLibrarySnapshot | undefined): ModelLibrarySnapshot {
     const catalogIds = new Set(modelCatalog.map((item) => item.id));
     const activeModelIds: ModelLibrarySnapshot["activeModelIds"] = {};
@@ -662,6 +677,18 @@ const sttProviderTypes = new Set<TranscriptionProviderConfig["type"]>([
   "cloud_openai",
   "cloud_openai_compatible_stt"
 ]);
+const llmProviderTypes = new Set<LlmProviderType>([
+  "ollama",
+  "lmstudio",
+  "llama_cpp_openai",
+  "openai",
+  "anthropic",
+  "google",
+  "custom_openai_compatible"
+]);
+const removedLlmProviderIds = new Set(["openrouter", "groq"]);
+const removedLlmProviderTypes = new Set(["openrouter", "groq"]);
+const removedLlmProviderNames = new Set(["openrouter", "groq"]);
 const sttStreamingModes = new Set<TranscriptionProviderConfig["streamingMode"]>(["none", "completed_audio_sse", "live_realtime"]);
 const legacyWhisperBaseUrl = "http://127.0.0.1:8080";
 
@@ -705,6 +732,36 @@ function isLegacyDefaultWhisperProvider(provider: Partial<TranscriptionProviderC
 
 function isLegacyExternalWhisperProvider(provider: Partial<TranscriptionProviderConfig>): boolean {
   return provider.type === "whisper_cpp" && isNonEmptyString(provider.baseUrl) && provider.baseUrl !== "murmur://runtime/whisper.cpp";
+}
+
+function normalizeLlmProvider(
+  defaultProvider: LlmProviderConfig | undefined,
+  provider: Partial<LlmProviderConfig> | undefined
+): LlmProviderConfig {
+  const source = { ...(defaultProvider ?? {}), ...(provider ?? {}) };
+  const type = llmProviderTypes.has(source.type as LlmProviderType)
+    ? (source.type as LlmProviderType)
+    : (defaultProvider?.type ?? "custom_openai_compatible");
+
+  return {
+    id: isNonEmptyString(source.id) ? source.id : (defaultProvider?.id ?? "custom-llm"),
+    type,
+    name: isNonEmptyString(source.name) ? source.name : (defaultProvider?.name ?? "Custom LLM"),
+    baseUrl: isNonEmptyString(source.baseUrl) ? source.baseUrl : defaultProvider?.baseUrl,
+    apiKeySecretId: isNonEmptyString(source.apiKeySecretId) ? source.apiKeySecretId : defaultProvider?.apiKeySecretId,
+    apiKey: typeof source.apiKey === "string" ? source.apiKey : defaultProvider?.apiKey,
+    isCloud: typeof source.isCloud === "boolean" ? source.isCloud : Boolean(defaultProvider?.isCloud),
+    defaultModel: isNonEmptyString(source.defaultModel) ? source.defaultModel : defaultProvider?.defaultModel,
+    enabled: typeof source.enabled === "boolean" ? source.enabled : Boolean(defaultProvider?.enabled)
+  };
+}
+
+function isRemovedLlmProvider(provider: Partial<LlmProviderConfig>): boolean {
+  return (
+    removedLlmProviderIds.has(String(provider.id ?? "").toLowerCase()) ||
+    removedLlmProviderTypes.has(String(provider.type ?? "").toLowerCase()) ||
+    removedLlmProviderNames.has(String(provider.name ?? "").toLowerCase())
+  );
 }
 
 function normalizeExamples(examples: unknown): ModeConfig["examples"] {

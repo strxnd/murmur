@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { AlertTriangle, CheckCircle2, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, KeyRound, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import { createPortal } from "react-dom";
 import { Controller, useForm, useWatch, type Path, type UseFormReturn } from "react-hook-form";
@@ -23,20 +23,27 @@ import { Select, type SelectItem } from "../components/ui/Select";
 import { Switch } from "../components/ui/Switch";
 import { makeClientId } from "../lib/ids";
 import {
+  applyCloudCredentialApiKey,
   applyLlmProviderType,
   applyTranscriptionProviderType,
+  cloudCredentialApiKey,
+  cloudCredentialProviders,
+  cloudCredentialValidationProviders,
   cloneProvidersFormValues,
   createCustomLlmProvider,
   createCustomTranscriptionProvider,
   customLlmProviderTypes,
   customTranscriptionProviderTypes,
   hasProvidersFormChanges,
+  isCloudCredentialLlmProvider,
+  isCloudCredentialTranscriptionProvider,
   isDefaultLlmProvider,
   isDefaultTranscriptionProvider,
   llmProviderTypeLabel,
   normalizeProvidersFormValues,
   providersFormValuesFromState,
-  transcriptionProviderTypeLabel
+  transcriptionProviderTypeLabel,
+  type CloudCredentialProviderId
 } from "../lib/provider-form";
 import { useMurmurStore } from "../state/murmur-store";
 
@@ -95,6 +102,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
     })
   );
   const [validationByProvider, setValidationByProvider] = useState<Record<string, ValidationState>>({});
+  const [cloudValidationByProvider, setCloudValidationByProvider] = useState<Partial<Record<CloudCredentialProviderId, ValidationState>>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isPromptMounted, setIsPromptMounted] = useState(false);
@@ -163,6 +171,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
   const restoreSavedChanges = useCallback((): void => {
     setSaveError(null);
     setValidationByProvider({});
+    setCloudValidationByProvider({});
     form.reset(cloneProvidersFormValues(persistedValuesRef.current));
   }, [form]);
 
@@ -245,6 +254,71 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
     }
   };
 
+  const updateCloudCredential = (providerId: CloudCredentialProviderId, apiKey: string): void => {
+    const nextValues = applyCloudCredentialApiKey(form.getValues(), providerId, apiKey);
+    form.setValue("transcriptionProviders", nextValues.transcriptionProviders, { shouldDirty: true, shouldValidate: true });
+    form.setValue("llmProviders", nextValues.llmProviders, { shouldDirty: true, shouldValidate: true });
+    setCloudValidationByProvider((current) => {
+      const next = { ...current };
+      delete next[providerId];
+      return next;
+    });
+  };
+
+  const validateCloudCredential = async (providerId: CloudCredentialProviderId): Promise<void> => {
+    const providerName = cloudCredentialProviders.find((provider) => provider.id === providerId)?.name ?? "Cloud";
+    const normalizedValues = normalizeProvidersFormValues(form.getValues());
+    const apiKey = cloudCredentialApiKey(providerId, normalizedValues);
+
+    if (!apiKey.trim()) {
+      setCloudValidationByProvider((current) => ({
+        ...current,
+        [providerId]: { status: "error", message: `Enter a ${providerName} API key before validating.` }
+      }));
+      return;
+    }
+
+    const targets = cloudCredentialValidationProviders(providerId, normalizedValues);
+    setCloudValidationByProvider((current) => ({
+      ...current,
+      [providerId]: { status: "validating", message: `Validating ${providerName} credentials...` }
+    }));
+
+    try {
+      const results: ProviderValidationResult[] = [];
+      for (const provider of targets.transcriptionProviders) {
+        results.push(await validateSttProvider(provider));
+      }
+      for (const provider of targets.llmProviders) {
+        results.push(await validateLlmProvider(provider));
+      }
+
+      const failed = results.find((result) => !result.ok);
+      const capabilities = results.find((result) => result.capabilities)?.capabilities;
+      setCloudValidationByProvider((current) => ({
+        ...current,
+        [providerId]: {
+          status: failed ? "error" : "success",
+          message: failed?.message || `${providerName} credentials validated.`,
+          capabilities
+        }
+      }));
+    } catch (error) {
+      setCloudValidationByProvider((current) => ({
+        ...current,
+        [providerId]: { status: "error", message: errorMessage(error) }
+      }));
+    }
+  };
+
+  const advancedTranscriptionProviders = transcriptionProviders
+    .map((provider, index) => ({ provider, index }))
+    .filter(({ provider }) => !isDefaultTranscriptionProvider(provider) && !isCloudCredentialTranscriptionProvider(provider));
+  const advancedLlmProviders = llmProviders
+    .map((provider, index) => ({ provider, index }))
+    .filter(({ provider }) => !isDefaultLlmProvider(provider) && !isCloudCredentialLlmProvider(provider));
+  const hasAdvancedProviders = advancedTranscriptionProviders.length > 0 || advancedLlmProviders.length > 0;
+
   const unsavedChangesPrompt = isPromptMounted
     ? createPortal(
         <div className="pointer-events-none fixed bottom-4 left-[17rem] right-4 z-40 max-[980px]:left-4">
@@ -279,49 +353,181 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
 
   return (
     <>
-      <View
-        title="Providers"
-        actions={
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button onClick={addSttProvider}>
-              <Plus size={16} /> Add STT
-            </Button>
-            <Button onClick={addLlmProvider}>
-              <Plus size={16} /> Add LLM
-            </Button>
-          </div>
-        }
-      >
-        <ProviderGroup title="Speech-to-text" actionLabel="Add STT provider" onAdd={addSttProvider}>
-          {transcriptionProviders.map((provider, index) => (
-            <TranscriptionProviderCard
-              key={provider.id}
-              form={form}
-              index={index}
-              provider={provider}
-              validation={validationByProvider[providerKey("stt", provider.id)]}
-              onValidate={() => void validateProvider("stt", index)}
-              onDelete={() => deleteSttProvider(provider.id)}
-            />
-          ))}
-        </ProviderGroup>
+      <View title="Providers">
+        <CloudCredentialsSection
+          values={currentValues}
+          validationByProvider={cloudValidationByProvider}
+          onApiKeyChange={updateCloudCredential}
+          onValidate={(providerId) => void validateCloudCredential(providerId)}
+          onDismissValidation={(providerId) => {
+            setCloudValidationByProvider((current) => {
+              const next = { ...current };
+              delete next[providerId];
+              return next;
+            });
+          }}
+        />
 
-        <ProviderGroup title="Language models" actionLabel="Add LLM provider" onAdd={addLlmProvider}>
-          {llmProviders.map((provider, index) => (
-            <LlmProviderCard
-              key={provider.id}
-              form={form}
-              index={index}
-              provider={provider}
-              validation={validationByProvider[providerKey("llm", provider.id)]}
-              onValidate={() => void validateProvider("llm", index)}
-              onDelete={() => deleteLlmProvider(provider.id)}
-            />
-          ))}
-        </ProviderGroup>
+        <section className="flex flex-col gap-4 border-t border-border pt-4">
+          <header className="flex items-center justify-between gap-3 max-[760px]:items-start">
+            <div className="min-w-0">
+              <h2 className="m-0 text-sm font-semibold text-foreground">Custom providers</h2>
+              <p className="m-0 mt-1 text-xs text-muted-foreground">Custom provider records.</p>
+            </div>
+          </header>
+
+          <div className="flex flex-col gap-6">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Button onClick={addSttProvider}>
+                <Plus size={16} /> Add custom STT
+              </Button>
+              <Button onClick={addLlmProvider}>
+                <Plus size={16} /> Add custom LLM
+              </Button>
+            </div>
+
+            {!hasAdvancedProviders && (
+              <div className="flex min-h-24 items-center justify-center rounded-md border border-dashed border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                No custom providers.
+              </div>
+            )}
+
+            {advancedTranscriptionProviders.length > 0 && (
+              <ProviderGroup title="Custom speech-to-text" actionLabel="Add custom STT provider" onAdd={addSttProvider}>
+                {advancedTranscriptionProviders.map(({ provider, index }) => (
+                  <TranscriptionProviderCard
+                    key={provider.id}
+                    form={form}
+                    index={index}
+                    provider={provider}
+                    validation={validationByProvider[providerKey("stt", provider.id)]}
+                    onValidate={() => void validateProvider("stt", index)}
+                    onDismissValidation={() => clearValidation(providerKey("stt", provider.id), setValidationByProvider)}
+                    onDelete={() => deleteSttProvider(provider.id)}
+                  />
+                ))}
+              </ProviderGroup>
+            )}
+
+            {advancedLlmProviders.length > 0 && (
+              <ProviderGroup title="Custom language models" actionLabel="Add custom LLM provider" onAdd={addLlmProvider}>
+                {advancedLlmProviders.map(({ provider, index }) => (
+                  <LlmProviderCard
+                    key={provider.id}
+                    form={form}
+                    index={index}
+                    provider={provider}
+                    validation={validationByProvider[providerKey("llm", provider.id)]}
+                    onValidate={() => void validateProvider("llm", index)}
+                    onDismissValidation={() => clearValidation(providerKey("llm", provider.id), setValidationByProvider)}
+                    onDelete={() => deleteLlmProvider(provider.id)}
+                  />
+                ))}
+              </ProviderGroup>
+            )}
+          </div>
+        </section>
       </View>
       {unsavedChangesPrompt}
     </>
+  );
+}
+
+function CloudCredentialsSection({
+  values,
+  validationByProvider,
+  onApiKeyChange,
+  onValidate,
+  onDismissValidation
+}: {
+  values: ProvidersFormValues;
+  validationByProvider: Partial<Record<CloudCredentialProviderId, ValidationState>>;
+  onApiKeyChange: (providerId: CloudCredentialProviderId, apiKey: string) => void;
+  onValidate: (providerId: CloudCredentialProviderId) => void;
+  onDismissValidation: (providerId: CloudCredentialProviderId) => void;
+}): JSX.Element {
+  return (
+    <section className="flex flex-col gap-3">
+      <header className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="m-0 text-sm font-semibold text-foreground">Cloud credentials</h2>
+          <p className="m-0 mt-1 text-xs text-muted-foreground">Curated API providers.</p>
+        </div>
+        <Badge tone="cloud">API key only</Badge>
+      </header>
+
+      <div className="divide-y divide-border rounded-md border border-border bg-surface">
+        {cloudCredentialProviders.map((provider) => (
+          <CloudCredentialRow
+            key={provider.id}
+            provider={provider}
+            values={values}
+            validation={validationByProvider[provider.id]}
+            onApiKeyChange={onApiKeyChange}
+            onValidate={onValidate}
+            onDismissValidation={onDismissValidation}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CloudCredentialRow({
+  provider,
+  values,
+  validation,
+  onApiKeyChange,
+  onValidate,
+  onDismissValidation
+}: {
+  provider: (typeof cloudCredentialProviders)[number];
+  values: ProvidersFormValues;
+  validation?: ValidationState;
+  onApiKeyChange: (providerId: CloudCredentialProviderId, apiKey: string) => void;
+  onValidate: (providerId: CloudCredentialProviderId) => void;
+  onDismissValidation: (providerId: CloudCredentialProviderId) => void;
+}): JSX.Element {
+  const apiKey = cloudCredentialApiKey(provider.id, values);
+  const configured = apiKey.trim().length > 0;
+
+  return (
+    <div className="grid grid-cols-[minmax(10rem,13rem)_minmax(12rem,1fr)_auto] items-end gap-3 px-3 py-3 max-[760px]:grid-cols-1 max-[760px]:items-stretch">
+      <div className="flex min-w-0 items-center gap-3 self-center">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-border bg-surface-raised text-foreground">
+          <KeyRound size={18} />
+        </span>
+        <div className="min-w-0">
+          <p className="m-0 truncate text-sm font-medium text-foreground">{provider.name}</p>
+          <p className="m-0 mt-1 truncate text-xs text-muted-foreground">{provider.usage}</p>
+        </div>
+      </div>
+
+      <Field label="API key">
+        <Input
+          type="password"
+          value={apiKey}
+          autoComplete="off"
+          spellCheck={false}
+          aria-label={`${provider.name} API key`}
+          placeholder="Enter API key"
+          onChange={(event) => onApiKeyChange(provider.id, event.currentTarget.value)}
+        />
+      </Field>
+
+      <div className="flex items-center justify-end gap-2 max-[760px]:justify-between">
+        <Badge tone={configured ? "success" : "neutral"}>{configured ? "Configured" : "Missing key"}</Badge>
+        <Button size="sm" onClick={() => onValidate(provider.id)} disabled={validation?.status === "validating"}>
+          <CheckCircle2 size={15} /> {validation?.status === "validating" ? "Validating..." : "Validate"}
+        </Button>
+      </div>
+
+      {validation && (
+        <div className="col-span-full">
+          <ValidationMessage state={validation} onDismiss={() => onDismissValidation(provider.id)} />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -355,6 +561,7 @@ function TranscriptionProviderCard({
   provider,
   validation,
   onValidate,
+  onDismissValidation,
   onDelete
 }: {
   form: UseFormReturn<ProvidersFormValues>;
@@ -362,6 +569,7 @@ function TranscriptionProviderCard({
   provider: TranscriptionProviderConfig;
   validation?: ValidationState;
   onValidate: () => void;
+  onDismissValidation: () => void;
   onDelete: () => void;
 }): JSX.Element {
   const isDefault = isDefaultTranscriptionProvider(provider);
@@ -474,7 +682,7 @@ function TranscriptionProviderCard({
         </Field>
       </div>
 
-      <ValidationMessage state={validation} />
+      <ValidationMessage state={validation} onDismiss={onDismissValidation} />
     </Panel>
   );
 }
@@ -485,6 +693,7 @@ function LlmProviderCard({
   provider,
   validation,
   onValidate,
+  onDismissValidation,
   onDelete
 }: {
   form: UseFormReturn<ProvidersFormValues>;
@@ -492,6 +701,7 @@ function LlmProviderCard({
   provider: LlmProviderConfig;
   validation?: ValidationState;
   onValidate: () => void;
+  onDismissValidation: () => void;
   onDelete: () => void;
 }): JSX.Element {
   const isDefault = isDefaultLlmProvider(provider);
@@ -575,12 +785,12 @@ function LlmProviderCard({
         </Field>
       </div>
 
-      <ValidationMessage state={validation} />
+      <ValidationMessage state={validation} onDismiss={onDismissValidation} />
     </Panel>
   );
 }
 
-function ValidationMessage({ state }: { state?: ValidationState }): JSX.Element | null {
+function ValidationMessage({ state, onDismiss }: { state?: ValidationState; onDismiss?: () => void }): JSX.Element | null {
   if (!state) return null;
 
   const isSuccess = state.status === "success";
@@ -592,18 +802,33 @@ function ValidationMessage({ state }: { state?: ValidationState }): JSX.Element 
       role={isSuccess ? "status" : "alert"}
       className="mt-4 rounded-md border border-border bg-muted/40 p-3 text-xs leading-5 text-muted-foreground"
     >
-      <p className={isSuccess ? "m-0 flex items-center gap-2 text-foreground" : "m-0 flex items-center gap-2 text-danger"}>
-        <Icon size={15} /> {state.message}
-      </p>
-      {capabilityLabels.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {capabilityLabels.map((label) => (
-            <Badge key={label} tone="success">
-              {label}
-            </Badge>
-          ))}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className={isSuccess ? "m-0 flex items-center gap-2 text-foreground" : "m-0 flex items-center gap-2 text-danger"}>
+            <Icon size={15} className="shrink-0" /> <span className="min-w-0">{state.message}</span>
+          </p>
+          {capabilityLabels.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {capabilityLabels.map((label) => (
+                <Badge key={label} tone="success">
+                  {label}
+                </Badge>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+        {onDismiss && (
+          <button
+            type="button"
+            className="grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/30"
+            aria-label="Dismiss message"
+            title="Dismiss message"
+            onClick={onDismiss}
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
     </div>
   );
 }

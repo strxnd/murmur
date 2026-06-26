@@ -18,11 +18,10 @@ export const llmProviderTypeSchema = z.enum([
   "openai",
   "anthropic",
   "google",
-  "openrouter",
   "custom_openai_compatible"
 ]);
 export const modelKindSchema = z.enum(["voice", "language"]);
-export const modelProviderSchema = z.enum(["whisper_cpp", "nvidia", "ollama", "openai", "anthropic", "google", "openrouter"]);
+export const modelProviderSchema = z.enum(["whisper_cpp", "nvidia", "ollama", "openai", "anthropic", "google"]);
 export const modelDownloadStrategySchema = z.enum(["direct_file", "archive", "ollama_pull", "none"]);
 export const modelDownloadStatusSchema = z.enum(["not_downloaded", "downloading", "downloaded", "error"]);
 export const sttRuntimeIdSchema = z.enum(["whisper.cpp", "sherpa-onnx"]);
