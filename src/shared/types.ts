@@ -228,6 +228,8 @@ export interface AppSettings {
   trayCloseNoticeShownAt?: string;
   sttSetupSkippedAt?: string;
   sttSetupCompletedAt?: string;
+  onboardingSkippedAt?: string;
+  onboardingCompletedAt?: string;
 }
 
 export interface DictationHistoryItem {

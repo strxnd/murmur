@@ -5,8 +5,8 @@ On startup, Murmur creates a main window, tray icon, and hidden recording pill w
 ## Basic Flow
 
 1. Start the app with `mise run dev` or a packaged build.
-2. Open **Configuration** and confirm the activation hotkey and audio input.
-3. Configure a speech-to-text provider or use the local setup flow from [local STT setup](local-stt.md).
+2. Complete the first-time setup wizard for microphone access, local speech-to-text setup, hotkey registration, paste capability, and a test dictation.
+3. Open **Configuration** later to change the activation hotkey or audio input.
 4. Press the activation hotkey or use the in-app controls to start dictation.
 5. Press the hotkey again, release push-to-talk, or stop manually to finish recording.
 

@@ -67,9 +67,13 @@ export const murmurClient = {
   cancelDictation: (): Promise<AppStateSnapshot> => window.murmur.cancelDictation().then(parseState),
   completeRecording: (payload: { sessionId: string; audio: ArrayBuffer; mimeType: string }): Promise<AppStateSnapshot> =>
     window.murmur.completeRecording(completeRecordingPayloadSchema.parse(payload)).then(parseState),
+  reportRecordingError: (payload: { sessionId: string; message: string }): Promise<AppStateSnapshot> =>
+    window.murmur.reportRecordingError(payload).then(parseState),
   publishRecordingLevel: (payload: RecordingLevelPayload): void => {
     window.murmur.publishRecordingLevel(payload);
   },
+  testPaste: (text: string): Promise<{ pasted: boolean; message: string }> =>
+    window.murmur.testPaste(text).then((value) => pasteResultSchema.parse(value)),
   copyHistoryOutput: (text: string): Promise<{ ok: boolean }> => window.murmur.copyHistoryOutput(text).then((value) => copyResultSchema.parse(value)),
   repasteHistoryOutput: (text: string): Promise<{ pasted: boolean; message: string }> =>
     window.murmur.repasteHistoryOutput(text).then((value) => pasteResultSchema.parse(value)),

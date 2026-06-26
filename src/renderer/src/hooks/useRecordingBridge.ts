@@ -57,13 +57,21 @@ export function useRecordingBridge(enabled: boolean): void {
       cancelledRef.current = false;
       sessionRef.current = sessionId;
 
-      const audioConstraint: MediaTrackConstraints | boolean = preferredAudioInputId
-        ? { deviceId: { exact: preferredAudioInputId } }
-        : true;
+      try {
+        const audioConstraint: MediaTrackConstraints | boolean = preferredAudioInputId
+          ? { deviceId: { exact: preferredAudioInputId } }
+          : true;
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
-      streamRef.current = stream;
-      recorderRef.current = await startWavRecorder(stream, sessionId);
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
+        streamRef.current = stream;
+        recorderRef.current = await startWavRecorder(stream, sessionId);
+      } catch (error) {
+        stopTracks();
+        await murmurClient.reportRecordingError({
+          sessionId,
+          message: `Microphone recording failed: ${errorMessage(error)}`
+        });
+      }
     });
 
     const stop = murmurClient.onRecordingStop(() => {
@@ -203,4 +211,8 @@ function writeAscii(view: DataView, offset: number, value: string): void {
   for (let index = 0; index < value.length; index += 1) {
     view.setUint8(offset + index, value.charCodeAt(index));
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

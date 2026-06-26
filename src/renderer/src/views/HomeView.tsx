@@ -1,4 +1,4 @@
-import { Clock3, Mic, Square, Wrench } from "lucide-react";
+import { Clock3, Library, Mic, Square, Wrench } from "lucide-react";
 import { useMemo, type JSX } from "react";
 import type { AppStateSnapshot, DictationHistoryItem } from "../../../shared/types";
 import { StatCard } from "../components/StatCard";
@@ -10,14 +10,22 @@ import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { recordingUnavailableReason, shouldShowSttSetupCallout } from "../lib/stt-setup";
 import { useMurmurStore } from "../state/murmur-store";
 
-export function HomeView({ state, onOpenModels }: { state: AppStateSnapshot; onOpenModels: () => void }): JSX.Element {
+export function HomeView({
+  state,
+  onOpenModels,
+  onOpenOnboarding
+}: {
+  state: AppStateSnapshot;
+  onOpenModels: () => void;
+  onOpenOnboarding: () => void;
+}): JSX.Element {
   const metrics = useMemo(() => computeHomeMetrics(state), [state]);
   const recentHistoryParent = useAutoAnimateRef<HTMLDivElement>();
   const releaseNotesParent = useAutoAnimateRef<HTMLDivElement>();
 
   return (
     <View title="Home" actions={<SessionActions state={state} />}>
-      {shouldShowSttSetupCallout(state) && <SttSetupCallout onOpenModels={onOpenModels} />}
+      {shouldShowSttSetupCallout(state) && <SttSetupCallout onOpenModels={onOpenModels} onOpenOnboarding={onOpenOnboarding} />}
 
       <section className="grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[640px]:grid-cols-1">
         <StatCard label="Average speed" value={metrics.averageSpeed} detail="spoken words per recorded minute" />
@@ -87,7 +95,13 @@ function SessionActions({ state }: { state: AppStateSnapshot }): JSX.Element {
   );
 }
 
-function SttSetupCallout({ onOpenModels }: { onOpenModels: () => void }): JSX.Element {
+function SttSetupCallout({
+  onOpenModels,
+  onOpenOnboarding
+}: {
+  onOpenModels: () => void;
+  onOpenOnboarding: () => void;
+}): JSX.Element {
   return (
     <Panel>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -95,9 +109,14 @@ function SttSetupCallout({ onOpenModels }: { onOpenModels: () => void }): JSX.El
           <h2 className="m-0 text-sm font-medium text-foreground">Local dictation is not set up</h2>
           <p className="m-0 mt-1 text-sm text-muted-foreground">Recording is disabled until a speech-to-text provider or local voice model is ready.</p>
         </div>
-        <Button variant="primary" onClick={onOpenModels}>
-          <Wrench size={18} /> Set up local dictation
-        </Button>
+        <Toolbar>
+          <Button variant="secondary" onClick={onOpenModels}>
+            <Library size={18} /> Models
+          </Button>
+          <Button variant="primary" onClick={onOpenOnboarding}>
+            <Wrench size={18} /> Guided setup
+          </Button>
+        </Toolbar>
       </div>
     </Panel>
   );

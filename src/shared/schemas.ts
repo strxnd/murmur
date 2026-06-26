@@ -199,7 +199,9 @@ export const appSettingsSchema = z
     typingBaselineWpm: z.number().min(1),
     trayCloseNoticeShownAt: optionalStringSchema,
     sttSetupSkippedAt: optionalStringSchema,
-    sttSetupCompletedAt: optionalStringSchema
+    sttSetupCompletedAt: optionalStringSchema,
+    onboardingSkippedAt: optionalStringSchema,
+    onboardingCompletedAt: optionalStringSchema
   });
 
 export const dictationHistoryItemSchema = z
@@ -375,6 +377,11 @@ export const completeRecordingPayloadSchema = z.object({
   sessionId: z.string().min(1),
   audio: z.instanceof(ArrayBuffer),
   mimeType: z.string().min(1)
+});
+
+export const recordingErrorPayloadSchema = z.object({
+  sessionId: z.string().min(1),
+  message: z.string().min(1)
 });
 
 export const recordingLevelPayloadSchema = z.object({

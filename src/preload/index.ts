@@ -56,9 +56,12 @@ const api = {
   cancelDictation: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("dictation:cancel"),
   completeRecording: (payload: { sessionId: string; audio: ArrayBuffer; mimeType: string }): Promise<AppStateSnapshot> =>
     ipcRenderer.invoke("dictation:complete-recording", payload),
+  reportRecordingError: (payload: { sessionId: string; message: string }): Promise<AppStateSnapshot> =>
+    ipcRenderer.invoke("dictation:recording-error", payload),
   publishRecordingLevel: (payload: RecordingLevelPayload): void => {
     ipcRenderer.send("recording:level", payload);
   },
+  testPaste: (text: string): Promise<{ pasted: boolean; message: string }> => ipcRenderer.invoke("onboarding:test-paste", text),
   copyHistoryOutput: (text: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("history:copy", text),
   repasteHistoryOutput: (text: string): Promise<{ pasted: boolean; message: string }> =>
     ipcRenderer.invoke("history:repaste", text),

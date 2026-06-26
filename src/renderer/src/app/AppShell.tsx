@@ -9,6 +9,8 @@ import { ConfigurationView } from "../views/ConfigurationView";
 import { ModelsLibraryView } from "../views/ModelsLibraryView";
 import { HistoryView } from "../views/HistoryView";
 import { cn } from "../lib/cn";
+import { shouldAutoOpenOnboarding } from "../lib/onboarding";
+import { OnboardingWizard } from "../views/OnboardingWizard";
 
 type SectionId = "home" | "modes" | "vocabulary" | "configuration" | "models" | "history";
 
@@ -23,7 +25,15 @@ const sections: Array<{ id: SectionId; label: string; icon: LucideIcon }> = [
 
 export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
   const [activeSection, setActiveSection] = useState<SectionId>("home");
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [autoPromptedOnboarding, setAutoPromptedOnboarding] = useState(false);
   const isCompact = useMediaQuery("(max-width: 980px)");
+
+  useEffect(() => {
+    if (autoPromptedOnboarding || !shouldAutoOpenOnboarding(state)) return;
+    setAutoPromptedOnboarding(true);
+    setOnboardingOpen(true);
+  }, [autoPromptedOnboarding, state]);
 
   return (
     <>
@@ -67,7 +77,11 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
 
         <section className="min-w-0 overflow-auto">
           <Tabs.Panel value="home" id="home" className="outline-none">
-            <HomeView state={state} onOpenModels={() => setActiveSection("models")} />
+            <HomeView
+              state={state}
+              onOpenModels={() => setActiveSection("models")}
+              onOpenOnboarding={() => setOnboardingOpen(true)}
+            />
           </Tabs.Panel>
           <Tabs.Panel value="modes" id="modes" className="outline-none">
             <ModesView state={state} />
@@ -86,6 +100,7 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
           </Tabs.Panel>
         </section>
       </Tabs.Root>
+      <OnboardingWizard state={state} open={onboardingOpen} onOpenChange={setOnboardingOpen} />
     </>
   );
 }
