@@ -104,6 +104,7 @@ export class AppController {
     this.storage = new StorageService(this.paths);
     this.runtimeService = new SttRuntimeService({
       runtimeDir: this.paths.runtimeDir,
+      downloadsEnabled: !app.isPackaged,
       emitProgress: (state) => {
         this.mainWindow?.webContents.send("stt-runtime:progress", state);
         this.pillWindow?.webContents.send("stt-runtime:progress", state);

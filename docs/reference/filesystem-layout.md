@@ -10,14 +10,14 @@ Paths are resolved by [`resolveAppPaths()`](../../src/main/services/app-paths.ts
 | `tempDir` | `<electron temp>/murmur` | Temporary audio and runtime work files. |
 | `audioDir` | `$HOME/.local/share/murmur/audio` | Retained recording audio. |
 | `modelDir` | `$HOME/.cache/murmur/models/stt` | Downloaded STT models. |
-| `runtimeDir` | `$HOME/.cache/murmur/runtimes/stt` | Managed STT runtime installs. |
+| `runtimeDir` | `$HOME/.cache/murmur/runtimes/stt` | Development-managed STT runtime installs. |
 | `configPath` | `$HOME/.config/murmur/murmur-config.json` | Persisted settings and config. |
 | `historyDbPath` | `$HOME/.local/share/murmur/murmur-history.sqlite` | SQLite history database. |
 | `historyJsonPath` | `$HOME/.local/share/murmur/murmur-history.json` | JSON history fallback. |
 
 ## Runtime Cache
 
-Managed STT runtimes install under:
+Development-managed STT runtimes install under:
 
 ```text
 <runtimeDir>/<platform-key>/<runtime-id>/<version>/
@@ -39,4 +39,4 @@ Packaged Linux builds may include:
 <process.resourcesPath>/runtimes/<platform-key>/<runtime-dir>/
 ```
 
-The current `electron-builder` config includes `resources/bin/linux-fast-paste` as an extra resource when present. Runtime resources are supported by lookup order, but production runtime installs are primarily managed through cache downloads.
+The current `electron-builder` config includes `resources/bin/linux-fast-paste` as an extra resource when present and copies staged STT runtimes from `.cache/bundled-runtimes/runtimes` to `runtimes`. Packaged apps use these runtime resources and do not download runtime binaries; STT model files are still downloaded into `modelDir`.

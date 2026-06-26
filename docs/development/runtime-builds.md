@@ -41,9 +41,12 @@ mise run runtimes:doctor
 Package after runtimes are present:
 
 ```sh
+mise run runtimes:stage
 mise run runtimes:package
 mise run runtimes:manifest-check
 ```
+
+`runtimes:stage` copies exactly one prepared platform from `vendor/runtimes/<platform-key>/` into `.cache/bundled-runtimes/runtimes/<platform-key>/` for `electron-builder` to place under `<process.resourcesPath>/runtimes/`.
 
 `runtimes:package` writes archives to `dist/runtimes/` and prints size and SHA-256 values. Those values must match `src/shared/stt-runtime-catalog.ts` for `runtimes:manifest-check` to pass.
 
@@ -100,7 +103,8 @@ Missing executable:
 - Run `mise run runtimes:prepare`.
 - Confirm `mise run runtimes:doctor` reports both runtimes available.
 - Check that the executable is under `vendor/runtimes/<platform-key>/<runtime>/`.
-- For production downloads, confirm `mise run runtimes:manifest-check` passes and the release archive exists.
+- For app packaging, run `mise run runtimes:stage` and confirm both runtimes exist under `.cache/bundled-runtimes/runtimes/<platform-key>/`.
+- For development runtime downloads or archive releases, confirm `mise run runtimes:manifest-check` passes and the release archive exists.
 
 Unsupported platform:
 

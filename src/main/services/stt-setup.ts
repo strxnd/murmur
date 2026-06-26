@@ -61,7 +61,11 @@ export class SttSetupService {
       throw new Error(runtimeState.message);
     }
     if (runtimeState.status !== "ready") {
-      await this.runtimeService.repairRuntime(runtimeId);
+      if (runtimeState.canRepair || runtimeState.canDownload) {
+        await this.runtimeService.repairRuntime(runtimeId);
+      } else {
+        throw new Error(runtimeState.message);
+      }
     }
 
     const readyRuntime = this.runtimeService.getInstallState(runtimeId);

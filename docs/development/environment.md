@@ -29,6 +29,7 @@ This starts Electron through Electron Vite. In development, `AppController.loadR
 | `mise run dist` | Build distributable Electron artifacts. |
 | `mise run runtimes:prepare` | Prepare current-platform STT runtime binaries. |
 | `mise run runtimes:package` | Package current-platform STT runtime archives. |
+| `mise run runtimes:stage` | Stage prepared current-platform STT runtimes for app packaging. |
 | `mise run runtimes:doctor` | Check current-platform runtime readiness. |
 | `mise run runtimes:manifest-check` | Validate runtime archive metadata. |
 | `mise run linux-helper:build` | Build the optional native Linux keyboard helper. |
@@ -39,6 +40,7 @@ Do not edit generated output directly:
 
 - `out/`
 - `dist/runtimes/`
+- `.cache/bundled-runtimes/`
 - `vendor/runtimes/`
 - `resources/bin/linux-fast-paste`
 

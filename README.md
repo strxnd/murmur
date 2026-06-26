@@ -38,6 +38,9 @@ The mise tasks wrap the existing npm scripts in `package.json`; npm remains the 
 | `mise run dist` | Build distributable Electron artifacts. |
 | `mise run runtimes:prepare` | Prepare current-platform local STT runtime binaries. |
 | `mise run runtimes:package` | Package current-platform local STT runtime binaries. |
+| `mise run runtimes:stage` | Stage prepared current-platform STT runtimes for app packaging. |
 | `mise run runtimes:doctor` | Check current-platform local STT runtime readiness. |
 | `mise run runtimes:manifest-check` | Validate pinned STT runtime archive metadata. |
 | `mise run linux-helper:build` | Build the optional native Linux keyboard helper. |
+
+Packaged app artifacts include the prepared `whisper.cpp` and `sherpa-onnx` runtime binaries for the target platform. Voice model files are still downloaded separately into the user cache.

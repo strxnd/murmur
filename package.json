@@ -15,11 +15,12 @@
     "test": "vitest run",
     "runtimes:prepare": "node scripts/prepare-runtimes.mjs --platform current",
     "runtimes:package": "node scripts/package-runtimes.mjs --platform current",
+    "runtimes:stage": "node scripts/stage-bundled-runtimes.mjs --platform current",
     "runtimes:doctor": "node scripts/check-runtimes.mjs",
     "runtimes:manifest-check": "node scripts/check-runtime-manifest.mjs",
     "linux-helper:build": "node scripts/build-linux-fast-paste.mjs",
-    "pack": "npm run build && npm run runtimes:manifest-check && electron-builder --dir",
-    "dist": "npm run build && npm run runtimes:manifest-check && electron-builder"
+    "pack": "npm run build && npm run runtimes:manifest-check && npm run runtimes:stage && electron-builder --dir",
+    "dist": "npm run build && npm run runtimes:manifest-check && npm run runtimes:stage && electron-builder"
   },
   "build": {
     "appId": "dev.murmur.app",
@@ -34,6 +35,13 @@
         "to": "bin",
         "filter": [
           "linux-fast-paste"
+        ]
+      },
+      {
+        "from": ".cache/bundled-runtimes/runtimes",
+        "to": "runtimes",
+        "filter": [
+          "**/*"
         ]
       }
     ]

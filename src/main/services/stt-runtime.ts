@@ -78,6 +78,7 @@ export interface SttRuntimeServiceOptions {
   catalog?: RuntimeCatalog;
   emitProgress?: ProgressEmitter;
   onBeforeRuntimeMutation?: RuntimeMutationHook;
+  downloadsEnabled?: boolean;
 }
 
 export { sttRuntimeIds };
@@ -95,6 +96,7 @@ export class SttRuntimeService {
   private catalog: RuntimeCatalog;
   private emitProgress?: ProgressEmitter;
   private onBeforeRuntimeMutation?: RuntimeMutationHook;
+  private downloadsEnabled: boolean;
   private operations = new Map<SttRuntimeId, RuntimeOperation>();
   private activeStates = new Map<SttRuntimeId, SttRuntimeInstallState>();
   private lastErrors = new Map<SttRuntimeId, string>();
@@ -112,6 +114,7 @@ export class SttRuntimeService {
     this.catalog = options.catalog ?? sttRuntimeCatalog;
     this.emitProgress = options.emitProgress;
     this.onBeforeRuntimeMutation = options.onBeforeRuntimeMutation;
+    this.downloadsEnabled = options.downloadsEnabled ?? true;
     this.cleanupPartialInstalls();
   }
 
@@ -154,7 +157,9 @@ export class SttRuntimeService {
         status: "missing",
         platformKey,
         version: definition.version,
-        message: `${definition.label} runtime binary was not found for ${platformKey}. Set ${definition.envVar}, install it from the setup flow, or install it under vendor/runtimes/${platformKey}/${definition.runtimeDir}.`
+        message: this.downloadsEnabled
+          ? `${definition.label} runtime binary was not found for ${platformKey}. Set ${definition.envVar}, install it from the setup flow, or install it under vendor/runtimes/${platformKey}/${definition.runtimeDir}.`
+          : this.missingBundledRuntimeMessage(definition, platformKey)
       };
     }
 
@@ -205,7 +210,7 @@ export class SttRuntimeService {
     }
 
     const cacheProblem = this.cacheInstallProblem(definition, platformKey);
-    if (cacheProblem) {
+    if (cacheProblem && this.downloadsEnabled) {
       return this.state(id, "repairable", {
         error: cacheProblem,
         message: `${definition.label} runtime cache needs repair.`,
@@ -225,8 +230,8 @@ export class SttRuntimeService {
     }
 
     return this.state(id, "not_installed", {
-      message: `${definition.label} runtime is not installed.`,
-      canDownload: true,
+      message: this.downloadsEnabled ? `${definition.label} runtime is not installed.` : this.missingBundledRuntimeMessage(definition, platformKey),
+      canDownload: this.downloadsEnabled,
       canRepair: false
     });
   }
@@ -236,6 +241,8 @@ export class SttRuntimeService {
   }
 
   async downloadRuntime(id: SttRuntimeId): Promise<SttRuntimeInstallState> {
+    if (!this.downloadsEnabled) return this.getInstallState(id);
+
     const existingOperation = this.operations.get(id);
     if (existingOperation) return existingOperation.promise;
 
@@ -552,6 +559,10 @@ export class SttRuntimeService {
     return new Set(supportedSttRuntimePlatformKeys);
   }
 
+  private missingBundledRuntimeMessage(definition: SttRuntimeCatalogEntry, platformKey: string): string {
+    return `${definition.label} runtime was not found in bundled application resources for ${platformKey}. Reinstall Murmur or set ${definition.envVar} to a compatible binary.`;
+  }
+
   private definition(id: SttRuntimeId): SttRuntimeCatalogEntry {
     return this.catalog[id];
   }
@@ -564,7 +575,7 @@ export class SttRuntimeService {
     const definition = this.definition(id);
     const platformKey = this.getPlatformKey();
     const asset = definition.platforms[platformKey];
-    return {
+    const state: SttRuntimeInstallState = {
       id,
       label: definition.label,
       platformKey,
@@ -577,6 +588,7 @@ export class SttRuntimeService {
       canRepair: false,
       ...patch
     };
+    return this.downloadsEnabled ? state : { ...state, canDownload: false, canRepair: false };
   }
 
   private emit(state: SttRuntimeInstallState): void {

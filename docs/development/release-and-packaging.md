@@ -13,17 +13,22 @@ flowchart TD
 
   RuntimeManifest["scripts/runtime-manifest.json"]
   Prepare["prepare-runtimes.mjs"]
+  Stage["stage-bundled-runtimes.mjs"]
   Doctor["check-runtimes.mjs"]
   PackageRuntime["package-runtimes.mjs"]
   ManifestCheck["check-runtime-manifest.mjs"]
   RuntimeCatalog["src/shared/stt-runtime-catalog.ts"]
   RuntimeArchives["dist/runtimes/*.tar.gz"]
+  BundledRuntimes[".cache/bundled-runtimes/runtimes"]
 
   Source --> Build --> Pack --> AfterPack --> AppArtifacts
   Build --> Dist --> AfterPack
+  Prepare --> Stage --> BundledRuntimes --> Pack
+  BundledRuntimes --> Dist
   RuntimeManifest --> Prepare --> Doctor --> PackageRuntime --> RuntimeArchives
   RuntimeCatalog --> PackageRuntime
   RuntimeCatalog --> ManifestCheck
+  RuntimeCatalog --> Stage
 ```
 
 ## App Packaging Commands
@@ -38,10 +43,11 @@ mise run dist
 ```sh
 npm run build
 npm run runtimes:manifest-check
+npm run runtimes:stage
 electron-builder --dir
 ```
 
-`dist` runs the same build and manifest check, then invokes `electron-builder`.
+`dist` runs the same build, manifest check, and runtime staging, then invokes `electron-builder`.
 
 The `build` block in `package.json` sets:
 
@@ -49,6 +55,9 @@ The `build` block in `package.json` sets:
 - `afterPack: scripts/after-pack.cjs`
 - packaged files from `out/**` and `package.json`
 - extra resource `resources/bin/linux-fast-paste` to `bin/linux-fast-paste`
+- extra resource `.cache/bundled-runtimes/runtimes` to `runtimes`
+
+`pack` and `dist` require prepared runtimes for the target platform. Run `mise run runtimes:prepare` first; staging fails before `electron-builder` if either runtime executable is missing.
 
 ## Linux afterPack Launcher
 
@@ -56,7 +65,7 @@ The `build` block in `package.json` sets:
 
 ## Runtime Artifacts
 
-Runtime archives are prepared manually with the runtime scripts when a development build needs them. Supported runtime platform keys are:
+Runtime binaries are prepared manually with the runtime scripts before packaging. Supported runtime platform keys are:
 
 - `linux-x64`
 - `linux-arm64`
@@ -69,8 +78,11 @@ For the current platform, run:
 ```sh
 mise run runtimes:prepare
 mise run runtimes:doctor
+mise run runtimes:stage
 mise run runtimes:package
 ```
+
+`runtimes:stage` copies one platform from `vendor/runtimes/<platform-key>/` into `.cache/bundled-runtimes/runtimes/<platform-key>/` for inclusion under `<process.resourcesPath>/runtimes/` in packaged apps. Packaged apps do not download runtime binaries at startup; voice model files are still downloaded separately into the user cache.
 
 `runtimes:package` writes archives to `dist/runtimes/*.tar.gz`.
 

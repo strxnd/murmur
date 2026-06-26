@@ -54,6 +54,28 @@ describe("SttRuntimeService", () => {
     expect(availability.binaryPath).toBe(resourcesBinary);
   });
 
+  it("reports packaged resource runtimes as ready without download actions when downloads are disabled", () => {
+    const root = tempRoot();
+    const resourcesPath = join(root, "resources");
+    const resourcesBinary = touch(join(resourcesPath, "runtimes", "linux-x64", "sherpa-onnx", "bin", "sherpa-onnx-offline"));
+
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      resourcesPath,
+      env: {},
+      downloadsEnabled: false
+    });
+
+    const state = service.getInstallState("sherpa-onnx");
+    expect(state.status).toBe("ready");
+    expect(state.source).toBe("resources");
+    expect(state.binaryPath).toBe(resourcesBinary);
+    expect(state.canDownload).toBe(false);
+    expect(state.canRepair).toBe(false);
+  });
+
   it("resolves cache installs before dev vendor", () => {
     const root = tempRoot();
     const runtimeDir = join(root, "cache", "runtimes", "stt");
@@ -74,6 +96,30 @@ describe("SttRuntimeService", () => {
     expect(availability.status).toBe("available");
     expect(availability.source).toBe("cache");
     expect(availability.binaryPath).toBe(cacheBinary);
+  });
+
+  it("keeps cache installs ready but disables actions when downloads are disabled", () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const cacheRoot = join(runtimeDir, "linux-x64", "whisper.cpp", "v1.8.6");
+    const cacheBinary = touch(join(cacheRoot, "whisper-server"));
+    writeRuntimeReceipt(cacheRoot, "whisper.cpp", "linux-x64", "v1.8.6");
+
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      runtimeDir,
+      env: {},
+      downloadsEnabled: false
+    });
+
+    const state = service.getInstallState("whisper.cpp");
+    expect(state.status).toBe("ready");
+    expect(state.source).toBe("cache");
+    expect(state.binaryPath).toBe(cacheBinary);
+    expect(state.canDownload).toBe(false);
+    expect(state.canRepair).toBe(false);
   });
 
   it("handles .exe candidates on Windows", () => {
@@ -105,6 +151,30 @@ describe("SttRuntimeService", () => {
     expect(availability.status).toBe("missing");
     expect(availability.message).toContain("MURMUR_WHISPER_CPP_SERVER");
     expect(availability.message).toContain("vendor/runtimes/linux-x64/whisper.cpp");
+
+    const state = service.getInstallState("whisper.cpp");
+    expect(state.status).toBe("not_installed");
+    expect(state.canDownload).toBe(true);
+    expect(state.canRepair).toBe(false);
+  });
+
+  it("reports missing packaged runtimes without download actions when downloads are disabled", () => {
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: tempRoot(),
+      env: {},
+      downloadsEnabled: false
+    });
+
+    const state = service.getInstallState("sherpa-onnx");
+
+    expect(state.status).toBe("not_installed");
+    expect(state.canDownload).toBe(false);
+    expect(state.canRepair).toBe(false);
+    expect(state.message).toBe(
+      "Sherpa ONNX runtime was not found in bundled application resources for linux-x64. Reinstall Murmur or set MURMUR_SHERPA_ONNX_OFFLINE to a compatible binary."
+    );
   });
 
   it("returns unsupported for unknown platform and arch", () => {
@@ -187,6 +257,33 @@ describe("SttRuntimeService", () => {
     expect(state.status).toBe("error");
     expect(state.error).toContain("SHA-256 mismatch");
     expect(service.getInstallState("whisper.cpp").status).toBe("error");
+  });
+
+  it("does not fetch or emit progress when download and repair are disabled", async () => {
+    let fetchCalls = 0;
+    let progressEvents = 0;
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: tempRoot(),
+      env: {},
+      downloadsEnabled: false,
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response("bytes", { status: 200 });
+      },
+      emitProgress: () => {
+        progressEvents += 1;
+      }
+    });
+
+    const downloadState = await service.downloadRuntime("whisper.cpp");
+    const repairState = await service.repairRuntime("whisper.cpp");
+
+    expect(downloadState.status).toBe("not_installed");
+    expect(repairState.status).toBe("not_installed");
+    expect(fetchCalls).toBe(0);
+    expect(progressEvents).toBe(0);
   });
 
   it("passes cancellation to runtime archive extraction", async () => {

@@ -78,6 +78,18 @@ describe("SttSetupService", () => {
       await closeServer(server.server);
     }
   });
+
+  it("does not repair the required runtime when runtime actions are disabled", async () => {
+    const runtime = fakeRuntimeService("not_installed", {
+      canDownload: false,
+      canRepair: false,
+      message: "Packaged runtime is missing."
+    });
+    const { setup } = createSetup("not_installed", runtime);
+
+    await expect(setup.setupBundledStt("whisper-tiny-en")).rejects.toThrow("Packaged runtime is missing.");
+    expect(runtime.repaired).toBe(false);
+  });
 });
 
 function createSetup(status: SttRuntimeInstallState["status"], runtime = fakeRuntimeService(status)) {
@@ -88,7 +100,10 @@ function createSetup(status: SttRuntimeInstallState["status"], runtime = fakeRun
   return { setup, storage, modelLibrary, paths };
 }
 
-function fakeRuntimeService(initialStatus: SttRuntimeInstallState["status"]) {
+function fakeRuntimeService(
+  initialStatus: SttRuntimeInstallState["status"],
+  options: Partial<Pick<SttRuntimeInstallState, "canDownload" | "canRepair" | "message">> = {}
+) {
   let status = initialStatus;
   const runtime = {
     repaired: false,
@@ -102,12 +117,12 @@ function fakeRuntimeService(initialStatus: SttRuntimeInstallState["status"]) {
       };
     },
     getInstallState(id: SttRuntimeId): SttRuntimeInstallState {
-      return installState(id, status);
+      return installState(id, status, options);
     },
     getInstallStates(): Record<SttRuntimeId, SttRuntimeInstallState> {
       return {
-        "whisper.cpp": installState("whisper.cpp", status),
-        "sherpa-onnx": installState("sherpa-onnx", status)
+        "whisper.cpp": installState("whisper.cpp", status, options),
+        "sherpa-onnx": installState("sherpa-onnx", status, options)
       };
     },
     async repairRuntime(): Promise<SttRuntimeInstallState> {
@@ -119,7 +134,11 @@ function fakeRuntimeService(initialStatus: SttRuntimeInstallState["status"]) {
   return runtime;
 }
 
-function installState(id: SttRuntimeId, status: SttRuntimeInstallState["status"]): SttRuntimeInstallState {
+function installState(
+  id: SttRuntimeId,
+  status: SttRuntimeInstallState["status"],
+  options: Partial<Pick<SttRuntimeInstallState, "canDownload" | "canRepair" | "message">> = {}
+): SttRuntimeInstallState {
   return {
     id,
     label: id,
@@ -127,9 +146,9 @@ function installState(id: SttRuntimeId, status: SttRuntimeInstallState["status"]
     requiredVersion: "test",
     status,
     progressBytes: 0,
-    message: `${id} ${status}`,
-    canDownload: status !== "ready",
-    canRepair: status !== "ready"
+    message: options.message ?? `${id} ${status}`,
+    canDownload: options.canDownload ?? status !== "ready",
+    canRepair: options.canRepair ?? status !== "ready"
   };
 }
 

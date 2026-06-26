@@ -49,9 +49,11 @@ For each runtime, Murmur checks:
 
 Cache installs must include a matching `runtime.json` receipt and a supported executable. Corrupt or mismatched cache installs are reported as repairable.
 
+Packaged apps include `whisper.cpp` and `sherpa-onnx` under `process.resourcesPath/runtimes/<platform-key>/`. In packaged mode, runtime download and repair actions are disabled; users can reinstall Murmur or set the runtime environment override if bundled resources are missing.
+
 ## Runtime Install Flow
 
-`SttRuntimeService.downloadRuntime()` downloads a pinned archive from `stt-runtime-catalog.ts`, streams progress, verifies SHA-256, extracts to a staging directory, finds the expected executable, chmods executables on non-Windows platforms, writes `runtime.json`, and atomically replaces the final cache directory.
+In development, `SttRuntimeService.downloadRuntime()` downloads a pinned archive from `stt-runtime-catalog.ts`, streams progress, verifies SHA-256, extracts to a staging directory, finds the expected executable, chmods executables on non-Windows platforms, writes `runtime.json`, and atomically replaces the final cache directory.
 
 Before replacing a runtime, the controller stops any running runtime process for that runtime id.
 
@@ -65,6 +67,8 @@ Before replacing a runtime, the controller stops any running runtime process for
 - `none` for cloud or externally managed models.
 
 Model download states are persisted in the model library snapshot. Direct-file and archive downloads are refreshed against the cache on library reads.
+
+Voice model files are not bundled with packaged apps. They remain user-cache downloads under the model directory.
 
 ## Local Runtime Behavior
 

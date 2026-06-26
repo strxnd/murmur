@@ -5,7 +5,7 @@ Murmur manages native runtime binaries for local voice models:
 - `whisper.cpp` for local Whisper GGML models.
 - `sherpa-onnx` for NVIDIA Parakeet ONNX models.
 
-The local setup flow downloads or repairs the required runtime, downloads the selected model, activates the model, and records setup completion in settings.
+Packaged apps include the native runtime binaries for the target platform. The local setup flow downloads the selected voice model, activates the model, and records setup completion in settings. In development, the same setup flow can also download or repair runtime binaries.
 
 ## Supported Runtime Platforms
 
@@ -31,6 +31,12 @@ Managed runtime installs are stored under:
 
 ```text
 ${XDG_CACHE_HOME:-$HOME/.cache}/murmur/runtimes/stt/<platform-key>/<runtime-id>/<version>/
+```
+
+Packaged runtime binaries are loaded from:
+
+```text
+<process.resourcesPath>/runtimes/<platform-key>/<runtime-dir>/
 ```
 
 Development runtime artifacts may also exist under `vendor/runtimes/<platform-key>/`, but production builds do not require that directory.
