@@ -38,38 +38,58 @@
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --background: #080808;
-  --surface: #101010;
-  --surface-raised: #171717;
-  --muted: #202020;
-  --border: #2d2d2d;
-  --foreground: #f4f4f4;
-  --muted-foreground: #a3a3a3;
-  --subtle: #737373;
-  --brand: #f4f4f4;
-  --brand-strong: #e5e5e5;
-  --brand-soft: #222222;
-  --danger: #d4d4d4;
-  --success: #f4f4f4;
-  --warning: #a3a3a3;
+  --background: #0b0b0b;
+  --surface: #141414;
+  --surface-raised: #1d1d1d;
+  --muted: #262626;
+  --border: #3a3a3a;
+  --foreground: #f5f5f5;
+  --muted-foreground: #b8b8b8;
+  --subtle: #8a8a8a;
+  --brand: #f5f5f5;
+  --brand-strong: #ffffff;
+  --brand-soft: #2a2a2a;
+  --danger: #d0d0d0;
+  --success: #e8e8e8;
+  --warning: #ababab;
+  --console-edge: #c8c8c8;
+  --console-edge-strong: #ffffff;
+  --console-contrast: #9f9f9f;
+  --console-contrast-deep: #303030;
+  --console-fill: #e5e5e5;
+  --console-fill-soft: #303030;
+  --console-on-strong: #0b0b0b;
+  --console-panel-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
+  --console-control-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset;
+  --console-focus: rgba(255, 255, 255, 0.24);
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --background: #f6f6f6;
+  --background: #f2f2f2;
   --surface: #ffffff;
-  --surface-raised: #fefefe;
-  --muted: #ececec;
-  --border: #d4d4d4;
-  --foreground: #171717;
-  --muted-foreground: #525252;
-  --subtle: #737373;
-  --brand: #171717;
+  --surface-raised: #fafafa;
+  --muted: #e6e6e6;
+  --border: #c8c8c8;
+  --foreground: #181818;
+  --muted-foreground: #555555;
+  --subtle: #777777;
+  --brand: #181818;
   --brand-strong: #000000;
-  --brand-soft: #e5e5e5;
-  --danger: #171717;
-  --success: #171717;
-  --warning: #525252;
+  --brand-soft: #e4e4e4;
+  --danger: #3f3f3f;
+  --success: #242424;
+  --warning: #686868;
+  --console-edge: #5e5e5e;
+  --console-edge-strong: #2e2e2e;
+  --console-contrast: #343434;
+  --console-contrast-deep: #dddddd;
+  --console-fill: #222222;
+  --console-fill-soft: #e2e2e2;
+  --console-on-strong: #ffffff;
+  --console-panel-shadow: 0 18px 36px rgba(0, 0, 0, 0.12);
+  --console-control-shadow: 0 1px 0 rgba(255, 255, 255, 0.72) inset;
+  --console-focus: rgba(0, 0, 0, 0.18);
 }
 
 :root.theme-transition-suppressed,
@@ -352,5 +372,292 @@ pre {
 
   .mode-dialog-popup {
     transform: translate(-50%, -50%) !important;
+  }
+}
+
+:root:not([data-window="pill"]) body {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--foreground) 4%, transparent), transparent 18rem),
+    linear-gradient(90deg, color-mix(in srgb, var(--foreground) 3%, transparent) 1px, transparent 1px) 0 0 / 56px 56px,
+    var(--background);
+  color: var(--foreground);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--console-fill) 34%, transparent);
+  color: var(--foreground);
+}
+
+#root > .grid.h-screen {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--background) 94%, var(--foreground) 6%), var(--background) 46%),
+    var(--background);
+}
+
+aside.flex.min-w-0.flex-col {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 86%, var(--foreground) 14%), var(--surface) 58%),
+    var(--surface);
+  border-color: color-mix(in srgb, var(--border) 86%, var(--foreground) 14%);
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--foreground) 7%, transparent);
+}
+
+aside > .flex.min-h-20 {
+  border-color: color-mix(in srgb, var(--border) 82%, var(--foreground) 18%);
+}
+
+aside .h-10.w-10 {
+  background: linear-gradient(145deg, var(--foreground), color-mix(in srgb, var(--foreground) 72%, var(--muted-foreground)));
+  border-color: color-mix(in srgb, var(--foreground) 52%, var(--border));
+  color: var(--console-on-strong);
+  box-shadow:
+    0 10px 24px color-mix(in srgb, var(--foreground) 20%, transparent),
+    var(--console-control-shadow);
+}
+
+aside button {
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+aside button:hover {
+  background: color-mix(in srgb, var(--muted) 78%, var(--foreground) 22%);
+}
+
+aside button[data-active] {
+  background: linear-gradient(135deg, var(--foreground), color-mix(in srgb, var(--foreground) 78%, var(--muted-foreground)));
+  color: var(--console-on-strong);
+  box-shadow:
+    inset 3px 0 0 var(--muted-foreground),
+    0 10px 22px color-mix(in srgb, var(--foreground) 20%, transparent);
+}
+
+.min-h-screen > header.sticky {
+  background: color-mix(in srgb, var(--background) 90%, transparent);
+  border-color: var(--border);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
+section.rounded-md.border.border-border.bg-surface,
+article.rounded-md.border.border-border.bg-surface,
+.flex.min-h-64.rounded-md.border.border-border.bg-surface,
+.flex.min-h-32.rounded-md.border.border-dashed,
+.rounded-md.border.border-border.bg-muted\/20,
+.rounded-md.border.border-border.bg-muted\/30,
+.rounded-md.border.border-border.bg-muted\/40,
+.rounded-md.border.border-border.bg-muted\/50 {
+  border-color: color-mix(in srgb, var(--border) 88%, var(--console-contrast) 12%);
+  border-radius: 8px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 94%, var(--foreground) 6%), var(--surface));
+  box-shadow: var(--console-panel-shadow), var(--console-control-shadow);
+}
+
+.rounded-md.border.border-border.bg-muted\/20,
+.rounded-md.border.border-border.bg-muted\/30,
+.rounded-md.border.border-border.bg-muted\/40,
+.rounded-md.border.border-border.bg-muted\/50 {
+  background: color-mix(in srgb, var(--muted) 66%, var(--surface));
+  box-shadow: var(--console-control-shadow);
+}
+
+.border-t.border-border,
+.border-b.border-border,
+.border-r.border-border {
+  border-color: color-mix(in srgb, var(--border) 86%, var(--foreground) 14%);
+}
+
+button.inline-flex.rounded-md.border,
+button.h-9.w-9.rounded-md {
+  border-radius: 7px;
+  box-shadow: var(--console-control-shadow);
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+button.inline-flex.rounded-md.border:hover,
+button.h-9.w-9.rounded-md:hover {
+  transform: translateY(-1px);
+}
+
+button.bg-brand {
+  background: linear-gradient(180deg, var(--brand), var(--brand-strong));
+  border-color: color-mix(in srgb, var(--brand-strong) 82%, var(--foreground));
+  color: var(--console-on-strong);
+  box-shadow:
+    0 10px 22px color-mix(in srgb, var(--brand) 24%, transparent),
+    var(--console-control-shadow);
+}
+
+button.bg-brand:hover {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--brand-strong) 88%, var(--foreground)), var(--brand-strong));
+}
+
+button.bg-surface-raised,
+button.border-border.bg-surface-raised {
+  background: color-mix(in srgb, var(--surface-raised) 86%, var(--foreground) 14%);
+  border-color: var(--border);
+}
+
+button.bg-surface-raised:hover,
+button.border-border.bg-surface-raised:hover {
+  background: color-mix(in srgb, var(--muted) 78%, var(--foreground) 22%);
+  border-color: color-mix(in srgb, var(--border) 70%, var(--foreground) 30%);
+}
+
+input.bg-surface,
+textarea.bg-surface,
+button.flex.min-h-9.w-full.bg-surface,
+button.flex.min-h-11.w-full.bg-surface {
+  background: color-mix(in srgb, var(--surface) 88%, var(--background));
+  border-color: color-mix(in srgb, var(--border) 88%, var(--foreground) 12%);
+  border-radius: 7px;
+  box-shadow: var(--console-control-shadow);
+}
+
+input.bg-surface:focus,
+textarea.bg-surface:focus,
+button.flex.min-h-9.w-full.bg-surface:focus-visible,
+button.flex.min-h-11.w-full.bg-surface:focus {
+  border-color: color-mix(in srgb, var(--console-fill) 70%, var(--border));
+  box-shadow:
+    0 0 0 3px var(--console-focus),
+    var(--console-control-shadow);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: color-mix(in srgb, var(--subtle) 82%, var(--foreground));
+}
+
+span.inline-flex.items-center.rounded.border {
+  border-color: color-mix(in srgb, var(--border) 76%, var(--console-contrast) 24%);
+  background: color-mix(in srgb, var(--muted) 68%, var(--console-contrast-deep) 32%);
+  color: var(--muted-foreground);
+  box-shadow: var(--console-control-shadow);
+}
+
+span.inline-flex.items-center.rounded.border.text-foreground {
+  border-color: color-mix(in srgb, var(--console-fill) 34%, var(--border));
+  background: color-mix(in srgb, var(--console-fill-soft) 58%, var(--muted));
+  color: var(--foreground);
+}
+
+.inline-flex.max-w-full.items-center.rounded-full {
+  background: color-mix(in srgb, var(--surface-raised) 74%, var(--console-fill-soft) 26%);
+  border-color: color-mix(in srgb, var(--border) 80%, var(--console-fill) 20%);
+  box-shadow: var(--console-control-shadow);
+}
+
+.mode-row,
+.model-row {
+  background: color-mix(in srgb, var(--surface) 88%, var(--background));
+  border-color: color-mix(in srgb, var(--border) 88%, var(--console-contrast) 12%);
+  border-radius: 8px;
+  box-shadow: var(--console-control-shadow);
+}
+
+.mode-row:hover,
+.mode-row[data-popup-open],
+.model-row:hover,
+.model-row[data-popup-open],
+.mode-row.bg-muted,
+.model-row.bg-muted {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--console-contrast) 18%, var(--muted)), var(--surface));
+  border-color: color-mix(in srgb, var(--console-fill) 36%, var(--border));
+}
+
+.mode-glyph,
+.model-glyph {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--surface-raised) 78%, var(--console-contrast) 22%), var(--surface-raised));
+  border-color: color-mix(in srgb, var(--border) 72%, var(--console-edge) 28%);
+  color: var(--foreground);
+  border-radius: 8px;
+  box-shadow: var(--console-control-shadow);
+}
+
+.mode-glyph.scale-105,
+.model-glyph.scale-105 {
+  border-color: color-mix(in srgb, var(--console-fill) 58%, var(--border));
+  color: var(--console-fill);
+}
+
+.mode-dialog-backdrop,
+[class~="bg-black/70"].fixed.inset-0 {
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.mode-dialog-popup,
+.model-popover-popup,
+[role="dialog"] {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-raised) 92%, var(--console-contrast) 8%), var(--surface-raised)),
+    var(--surface-raised);
+  border-color: color-mix(in srgb, var(--border) 74%, var(--console-edge) 26%);
+  border-radius: 8px;
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.34),
+    0 0 0 1px color-mix(in srgb, var(--foreground) 6%, transparent) inset;
+}
+
+.model-popover-popup {
+  box-shadow:
+    0 20px 54px rgba(0, 0, 0, 0.3),
+    0 0 0 1px color-mix(in srgb, var(--foreground) 6%, transparent) inset;
+}
+
+[role="listbox"] {
+  background: var(--surface-raised);
+  border-color: color-mix(in srgb, var(--border) 78%, var(--console-contrast) 22%);
+  border-radius: 8px;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+}
+
+[role="option"][data-highlighted] {
+  background: color-mix(in srgb, var(--muted) 74%, var(--console-contrast) 26%);
+}
+
+.recording-pill {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, #171717 86%, var(--console-contrast) 14%), #0f0f0f),
+    #0f0f0f;
+  border-color: color-mix(in srgb, var(--console-fill) 34%, rgba(255, 255, 255, 0.12));
+  box-shadow:
+    0 18px 34px rgba(0, 0, 0, 0.34),
+    0 0 0 1px color-mix(in srgb, var(--console-edge) 18%, transparent) inset,
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.recording-wave__bar::before {
+  background: linear-gradient(180deg, var(--console-fill), color-mix(in srgb, var(--console-edge) 50%, var(--console-fill)));
+}
+
+.recording-wave--muted .recording-wave__bar::before {
+  background: color-mix(in srgb, var(--muted-foreground) 66%, var(--console-contrast));
+}
+
+.h-2.overflow-hidden.rounded-full.bg-muted {
+  background: color-mix(in srgb, var(--muted) 76%, var(--console-contrast) 24%);
+}
+
+.h-full.rounded-full.bg-foreground {
+  background: linear-gradient(90deg, var(--console-fill), var(--console-contrast));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
   }
 }
