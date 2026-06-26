@@ -13,13 +13,8 @@ const platformKeys = resolvePlatformKeys(platformArg);
 let failed = false;
 for (const platformKey of platformKeys) {
   console.log(`Checking STT runtimes for ${platformKey}`);
-  failed = !checkRuntime(platformKey, "whisper.cpp", ["whisper-server", "whisper-server.exe"]) || failed;
-  failed = !checkRuntime(platformKey, "sherpa-onnx", [
-    "sherpa-onnx-offline",
-    "sherpa-onnx-offline.exe",
-    join("bin", "sherpa-onnx-offline"),
-    join("bin", "sherpa-onnx-offline.exe")
-  ]) || failed;
+  failed = !checkRuntime(platformKey, "whisper.cpp", ["whisper-server"]) || failed;
+  failed = !checkRuntime(platformKey, "sherpa-onnx", ["sherpa-onnx-offline", join("bin", "sherpa-onnx-offline")]) || failed;
 }
 
 if (failed) process.exitCode = 1;

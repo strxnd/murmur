@@ -122,22 +122,6 @@ describe("SttRuntimeService", () => {
     expect(state.canRepair).toBe(false);
   });
 
-  it("handles .exe candidates on Windows", () => {
-    const root = tempRoot();
-    const binary = touch(join(root, "vendor", "runtimes", "win32-x64", "whisper.cpp", "whisper-server.exe"));
-
-    const service = new SttRuntimeService({
-      platform: "win32",
-      arch: "x64",
-      projectRoot: root,
-      env: {}
-    });
-
-    const availability = service.getAvailability("whisper.cpp");
-    expect(availability.status).toBe("available");
-    expect(availability.binaryPath).toBe(binary);
-  });
-
   it("keeps missing runtime messages actionable", () => {
     const service = new SttRuntimeService({
       platform: "linux",

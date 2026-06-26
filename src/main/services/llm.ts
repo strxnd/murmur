@@ -4,15 +4,11 @@ import { fetchWithTimeout, joinUrl, parseJsonOrText } from "./http";
 interface LlmOptions {
   provider: LlmProviderConfig;
   prompt: string;
-  localOnly: boolean;
 }
 
 export class LlmService {
   async process(options: LlmOptions): Promise<ProcessedResult> {
-    const { provider, localOnly } = options;
-    if (localOnly && provider.isCloud) {
-      throw new Error(`Local-only mode blocks cloud LLM provider "${provider.name}".`);
-    }
+    const { provider } = options;
     if (!provider.enabled) {
       throw new Error(`LLM provider "${provider.name}" is disabled.`);
     }

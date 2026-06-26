@@ -15,7 +15,3 @@ On startup, Murmur creates a main window, tray icon, and hidden recording pill w
 Murmur ships with built-in modes for default dictation, direct voice-to-text, messages, mail, and notes. Modes control whether AI cleanup is used, the instruction prompt, language, examples, and what context can be included.
 
 Auto-mode rules can switch modes based on captured app metadata such as app id, app name, window title, or browser domain when that metadata is available.
-
-## Local-Only Mode
-
-When local-only mode is enabled, cloud STT and cloud LLM providers are blocked. Local-only mode still requires at least one usable local STT provider or active local voice model.

@@ -331,7 +331,7 @@ describe("StorageService", () => {
     ]);
   });
 
-  it("removes retained audio when deleting or clearing history", () => {
+  it("removes linked audio when deleting or clearing history", () => {
     const paths = testPaths();
     const storage = jsonStorage(paths);
     const firstAudio = join(paths.audioDir, "first.wav");

@@ -34,7 +34,6 @@ flowchart LR
   subgraph LocalStorage["Storage and cache"]
     Config["murmur-config.json"]
     History["SQLite or JSON history"]
-    Audio["retained audio"]
     ModelCache["models/stt"]
     RuntimeCache["runtimes/stt"]
   end

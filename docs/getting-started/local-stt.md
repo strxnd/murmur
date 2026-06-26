@@ -13,11 +13,6 @@ Bundled runtime archives are cataloged for:
 
 - `linux-x64`
 - `linux-arm64`
-- `darwin-x64`
-- `darwin-arm64`
-- `win32-x64`
-
-Windows ARM64 and GPU-specific runtime variants are not currently bundled.
 
 ## User Cache Layout
 

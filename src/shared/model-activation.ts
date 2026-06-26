@@ -1,12 +1,9 @@
 import type {
-  AppSettings,
   LlmProviderConfig,
   ModelCatalogItem,
   ModelProvider,
   TranscriptionProviderConfig
 } from "./types";
-
-type ProviderUsabilitySettings = Pick<AppSettings, "localOnly">;
 
 interface CloudCredentialGate {
   isCloud: boolean;
@@ -40,23 +37,15 @@ export function hasUsableCloudCredentials(provider: CloudCredentialGate): boolea
   return !provider.isCloud || hasNonEmptyString(provider.apiKey);
 }
 
-export function isProviderAllowedBySettings(provider: CloudCredentialGate, settings: ProviderUsabilitySettings): boolean {
-  if (settings.localOnly && provider.isCloud) return false;
-  return hasUsableCloudCredentials(provider);
-}
-
-export function isTranscriptionProviderUsable(
-  provider: TranscriptionProviderConfig,
-  settings: ProviderUsabilitySettings
-): boolean {
+export function isTranscriptionProviderUsable(provider: TranscriptionProviderConfig): boolean {
   if (!provider.enabled) return false;
-  if (!isProviderAllowedBySettings(provider, settings)) return false;
+  if (!hasUsableCloudCredentials(provider)) return false;
   return hasNonEmptyString(provider.baseUrl);
 }
 
-export function isLlmProviderUsable(provider: LlmProviderConfig, settings: ProviderUsabilitySettings): boolean {
+export function isLlmProviderUsable(provider: LlmProviderConfig): boolean {
   if (!provider.enabled) return false;
-  if (!isProviderAllowedBySettings(provider, settings)) return false;
+  if (!hasUsableCloudCredentials(provider)) return false;
   if (provider.type === "ollama") return true;
   return hasNonEmptyString(provider.baseUrl);
 }
@@ -64,18 +53,17 @@ export function isLlmProviderUsable(provider: LlmProviderConfig, settings: Provi
 export function isModelProviderUsable(
   item: ModelCatalogItem,
   state: {
-    settings: ProviderUsabilitySettings;
     transcriptionProviders: TranscriptionProviderConfig[];
     llmProviders: LlmProviderConfig[];
   }
 ): boolean {
   if (item.kind === "voice") {
     const provider = transcriptionProviderFromModel(item, state.transcriptionProviders);
-    return Boolean(provider && isTranscriptionProviderUsable(provider, state.settings));
+    return Boolean(provider && isTranscriptionProviderUsable(provider));
   }
 
   const provider = llmProviderFromModel(item, state.llmProviders);
-  return Boolean(provider && isLlmProviderUsable(provider, state.settings));
+  return Boolean(provider && isLlmProviderUsable(provider));
 }
 
 export function transcriptionProviderFromModel(

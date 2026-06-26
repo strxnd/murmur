@@ -10,7 +10,6 @@ import type {
   ProviderValidationResult,
   RecordingLevelPayload,
   RecordingStartPayload,
-  ReplacementRule,
   SttRuntimeId,
   SttRuntimeInstallState,
   SttSetupSnapshot,
@@ -45,7 +44,6 @@ export const murmurClient = {
   validateLlmProvider: (provider: LlmProviderConfig): Promise<ProviderValidationResult> =>
     window.murmur.validateLlmProvider(provider).then(parseProviderValidation),
   setAutoModeRules: (rules: AutoModeRule[]): Promise<AppStateSnapshot> => window.murmur.setAutoModeRules(rules).then(parseState),
-  setReplacements: (replacements: ReplacementRule[]): Promise<AppStateSnapshot> => window.murmur.setReplacements(replacements).then(parseState),
   setVocabulary: (vocabulary: VocabularyEntry[]): Promise<AppStateSnapshot> => window.murmur.setVocabulary(vocabulary).then(parseState),
   getModelLibrary: (): Promise<ModelLibrarySnapshot> => window.murmur.getModelLibrary().then(parseModelLibrary),
   downloadModel: (modelId: string): Promise<ModelLibrarySnapshot> => window.murmur.downloadModel(modelId).then(parseModelLibrary),

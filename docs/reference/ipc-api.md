@@ -20,7 +20,6 @@ The public renderer API is exposed as `window.murmur` by [`src/preload/index.ts`
 | `setModes(modes)` | `modes:set` | `AppStateSnapshot` |
 | `activateMode(modeId)` | `mode:activate` | `AppStateSnapshot` |
 | `setAutoModeRules(rules)` | `rules:set-auto-mode` | `AppStateSnapshot` |
-| `setReplacements(replacements)` | `replacements:set` | `AppStateSnapshot` |
 | `setVocabulary(vocabulary)` | `vocabulary:set` | `AppStateSnapshot` |
 
 ## Providers

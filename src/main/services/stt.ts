@@ -20,7 +20,6 @@ interface TranscribeOptions {
   provider: TranscriptionProviderConfig;
   language?: string | "auto";
   vocabularyPrompt?: string;
-  localOnly: boolean;
   onDelta?: (delta: string) => void;
 }
 
@@ -65,10 +64,7 @@ export class TranscriptionService {
   }
 
   async transcribe(options: TranscribeOptions): Promise<TranscriptionResult> {
-    const { provider, localOnly } = options;
-    if (localOnly && provider.isCloud) {
-      throw new Error(`Local-only mode blocks cloud STT provider "${provider.name}".`);
-    }
+    const { provider } = options;
     if (!provider.enabled) {
       throw new Error(`Transcription provider "${provider.name}" is disabled.`);
     }

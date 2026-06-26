@@ -143,13 +143,7 @@ class FakeBackend implements TextAutomationBackend {
 }
 
 describe("TextAutomationService", () => {
-  it("is unavailable on non-Linux or without a D-Bus session", async () => {
-    const nonLinux = new TextAutomationService(
-      new XdgRemoteDesktopKeyboardService({ platform: "darwin", env: { DBUS_SESSION_BUS_ADDRESS: "session" } } as never)
-    );
-    await nonLinux.initialize();
-    expect(nonLinux.getCapability()).toMatchObject({ automationAvailable: false, permissionRequired: false });
-
+  it("is unavailable without a D-Bus session", async () => {
     const noDbus = new TextAutomationService(new XdgRemoteDesktopKeyboardService({ platform: "linux", env: {} } as never));
     await noDbus.initialize();
     expect(noDbus.getCapability()).toMatchObject({ automationAvailable: false, permissionRequired: false });

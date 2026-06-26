@@ -4,7 +4,7 @@ import type {
   Notification as ElectronNotification,
   Tray as ElectronTray
 } from "electron";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type {
   AppSettings,
@@ -19,7 +19,6 @@ import type {
   ModeConfig,
   PillStateSnapshot,
   RecordingLevelPayload,
-  ReplacementRule,
   SttRuntimeId,
   TranscriptionProviderConfig,
   VocabularyEntry
@@ -33,7 +32,6 @@ import {
   transcriptionProviderFromModel
 } from "../shared/model-activation";
 import { buildProcessingPrompt, buildVocabularyPrompt } from "../shared/prompts";
-import { applyReplacements } from "../shared/replacements";
 import { resolveModeByContext } from "./services/auto-mode";
 import { createId } from "./services/ids";
 import { ContextService } from "./services/context";
@@ -238,9 +236,6 @@ export class AppController {
     if (this.tray) return;
 
     const image = nativeImage.createFromDataURL(trayIconDataUrl);
-    if (process.platform === "darwin") {
-      image.setTemplateImage(true);
-    }
 
     this.tray = new Tray(image);
     this.tray.setToolTip("Murmur");
@@ -405,11 +400,6 @@ export class AppController {
       this.broadcastState();
       return this.getSnapshot();
     });
-    ipcMain.handle("replacements:set", (_event, replacements: ReplacementRule[]) => {
-      this.storage.setReplacements(replacements);
-      this.broadcastState();
-      return this.getSnapshot();
-    });
     ipcMain.handle("vocabulary:set", (_event, vocabulary: VocabularyEntry[]) => {
       this.storage.setVocabulary(vocabulary);
       this.broadcastState();
@@ -501,7 +491,6 @@ export class AppController {
 
   private applySettings(settings: AppSettings): void {
     nativeTheme.themeSource = settings.theme;
-    app.setLoginItemSettings({ openAtLogin: settings.launchAtLogin });
     this.configurePillWindow();
   }
 
@@ -849,7 +838,6 @@ export class AppController {
     }
 
     const audio = new Uint8Array(payload.audio);
-    const audioPath = persisted.settings.retainAudio ? this.writeAudioFile(this.session.id, audio, payload.mimeType) : null;
     const vocabularyPrompt = buildVocabularyPrompt(persisted.vocabulary);
 
     try {
@@ -862,7 +850,6 @@ export class AppController {
         provider: sttProvider,
         language: mode.language ?? sttProvider.defaultLanguage,
         vocabularyPrompt,
-        localOnly: persisted.settings.localOnly,
         onDelta: (delta) => {
           this.session = { ...this.session, transcriptPreview: `${this.session.transcriptPreview ?? ""}${delta}` };
           this.mainWindow?.webContents.send("dictation:transcript-delta", delta);
@@ -870,22 +857,20 @@ export class AppController {
         }
       });
 
-      const beforeLlm = applyReplacements(transcription.text, persisted.replacements, "before");
-      let processedText = beforeLlm;
+      let processedText = transcription.text;
       let llmProvider = mode.aiEnabled ? this.selectLlmProvider(persisted) : undefined;
       let llmModel: string | undefined;
 
       if (mode.aiEnabled && llmProvider) {
         this.session = { ...this.session, status: "processing" };
         this.broadcastState();
-        const prompt = buildProcessingPrompt({ mode, context, rawTranscript: beforeLlm, vocabularyPrompt });
+        const prompt = buildProcessingPrompt({ mode, context, rawTranscript: transcription.text, vocabularyPrompt });
         try {
           const processed = await this.llm.process({
             provider: llmProvider,
-            prompt,
-            localOnly: persisted.settings.localOnly
+            prompt
           });
-          processedText = processed.text || beforeLlm;
+          processedText = processed.text || transcription.text;
           llmModel = processed.model;
         } catch (error) {
           console.warn(`LLM processing failed; using transcript without AI cleanup. ${errorMessage(error)}`);
@@ -895,7 +880,6 @@ export class AppController {
         llmProvider = undefined;
       }
 
-      processedText = applyReplacements(processedText, persisted.replacements, "after");
       const recordingStartedAt = this.session.startedAt;
       const recordingStoppedAt = this.recordingStoppedAt ?? new Date().toISOString();
       const recordingDurationMs = computeDurationMs(recordingStartedAt, recordingStoppedAt);
@@ -911,7 +895,7 @@ export class AppController {
 
       const item: DictationHistoryItem = {
         id: createId("dictation"),
-        audioPath,
+        audioPath: null,
         rawTranscript: transcription.text,
         processedOutput: processedText,
         modeId: mode.id,
@@ -989,9 +973,9 @@ export class AppController {
     };
     const vocabularyPrompt = buildVocabularyPrompt(state.vocabulary);
     const prompt = buildProcessingPrompt({ mode, context, rawTranscript: item.rawTranscript, vocabularyPrompt });
-    const processed = await this.llm.process({ provider, prompt, localOnly: state.settings.localOnly });
+    const processed = await this.llm.process({ provider, prompt });
     this.storage.updateHistoryItem(id, {
-      processedOutput: applyReplacements(processed.text, state.replacements, "after"),
+      processedOutput: processed.text,
       modeId: mode.id,
       modeName: mode.name,
       llmProviderId: provider.id,
@@ -1012,35 +996,24 @@ export class AppController {
     return this.getSnapshot();
   }
 
-  private writeAudioFile(sessionId: string, audio: Uint8Array, mimeType: string): string {
-    const dir = this.paths.audioDir;
-    mkdirSync(dir, { recursive: true });
-    const ext = mimeType.includes("wav") ? "wav" : mimeType.includes("ogg") ? "ogg" : "webm";
-    const audioPath = join(dir, `${sessionId}.${ext}`);
-    writeFileSync(audioPath, audio);
-    return audioPath;
-  }
-
   private selectTranscriptionProvider(state: {
-    settings: AppSettings;
     transcriptionProviders: TranscriptionProviderConfig[];
     modelLibrary: ModelLibrarySnapshot;
   }): TranscriptionProviderConfig | undefined {
     const activeModel = this.selectActiveModel(state.modelLibrary, "voice");
     const activeProvider = activeModel ? transcriptionProviderFromModel(activeModel, state.transcriptionProviders) : null;
-    if (activeProvider && this.isTranscriptionProviderUsable(activeProvider, state.settings)) return activeProvider;
-    return state.transcriptionProviders.find((provider) => this.isTranscriptionProviderUsable(provider, state.settings));
+    if (activeProvider && this.isTranscriptionProviderUsable(activeProvider)) return activeProvider;
+    return state.transcriptionProviders.find((provider) => this.isTranscriptionProviderUsable(provider));
   }
 
   private selectLlmProvider(state: {
-    settings: AppSettings;
     llmProviders: LlmProviderConfig[];
     modelLibrary: ModelLibrarySnapshot;
   }): LlmProviderConfig | undefined {
     const activeModel = this.selectActiveModel(state.modelLibrary, "language");
     const activeProvider = activeModel ? llmProviderFromModel(activeModel, state.llmProviders) : null;
-    if (activeProvider && isLlmProviderUsable(activeProvider, state.settings)) return activeProvider;
-    return state.llmProviders.find((provider) => isLlmProviderUsable(provider, state.settings));
+    if (activeProvider && isLlmProviderUsable(activeProvider)) return activeProvider;
+    return state.llmProviders.find((provider) => isLlmProviderUsable(provider));
   }
 
   private selectActiveModel(modelLibrary: ModelLibrarySnapshot, kind: ModelCatalogItem["kind"]): ModelCatalogItem | undefined {
@@ -1055,8 +1028,8 @@ export class AppController {
     return modelLibrary.downloads.some((download) => download.modelId === item.id && download.status === "downloaded") ? item : undefined;
   }
 
-  private isTranscriptionProviderUsable(provider: TranscriptionProviderConfig, settings: AppSettings): boolean {
-    if (!isBaseTranscriptionProviderUsable(provider, settings)) return false;
+  private isTranscriptionProviderUsable(provider: TranscriptionProviderConfig): boolean {
+    if (!isBaseTranscriptionProviderUsable(provider)) return false;
     if (provider.type === "whisper_cpp" && provider.baseUrl === "murmur://runtime/whisper.cpp") {
       return this.bundledProviderUsable(provider, "whisper.cpp");
     }

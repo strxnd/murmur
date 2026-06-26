@@ -26,7 +26,6 @@ This page is a maintainer-oriented checklist for common failure areas.
 ## Providers
 
 - Cloud providers need API keys before validation.
-- Local-only mode blocks cloud providers even if they are enabled.
 - OpenAI-compatible validation checks `/models` where applicable.
 - LLM failure during dictation falls back to transcript text; STT failure fails the session.
 
@@ -41,4 +40,4 @@ This page is a maintainer-oriented checklist for common failure areas.
 
 - `capabilities.storage.backend` reports `sqlite` or `json`.
 - SQLite initialization failure falls back to JSON history.
-- `clearLocalData()` removes config, history, and retained audio, but not downloaded models or runtime cache.
+- `clearLocalData()` removes config, history, and any legacy audio files linked from history, but not downloaded models or runtime cache.

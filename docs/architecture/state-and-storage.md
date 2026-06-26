@@ -10,7 +10,6 @@ classDiagram
     transcriptionProviders
     llmProviders
     autoModeRules
-    replacements
     vocabulary
     history
     modelLibrary
@@ -25,7 +24,6 @@ classDiagram
     modes
     providers
     rules
-    replacements
     vocabulary
     modelLibrary
     releaseNotes
@@ -33,7 +31,7 @@ classDiagram
 
   class History {
     DictationHistoryItem[]
-    retained audio paths
+    legacy nullable audio paths
   }
 
   class ModelLibrary {
@@ -75,7 +73,7 @@ classDiagram
 
 Configuration is stored as JSON at `configPath`. History uses SQLite when `node:sqlite` is available and falls back to JSON otherwise. The SQLite backend stores a `dictations` table and a `dictations_fts` virtual table, but current reads load the latest 2000 serialized history records.
 
-`StorageService` normalizes legacy settings, modes, providers, and model library state on read. History mutations delete retained audio only when the audio path is under the configured audio directory.
+`StorageService` normalizes legacy settings, modes, providers, and model library state on read. History mutations delete legacy linked audio files only when the audio path is under the configured audio directory.
 
 ## Snapshot Composition
 
@@ -89,4 +87,4 @@ This means not every field in `AppStateSnapshot` is persisted directly.
 
 ## Local Data Reset
 
-`data:clear-local` resets config and history to defaults, removes retained audio, reopens storage, reregisters hotkeys, and broadcasts a fresh snapshot. It does not delete downloaded model files or runtime cache files.
+`data:clear-local` resets config and history to defaults, removes legacy linked audio files, reopens storage, reregisters hotkeys, and broadcasts a fresh snapshot. It does not delete downloaded model files or runtime cache files.

@@ -13,7 +13,6 @@ interface AppStateSnapshot {
   transcriptionProviders: TranscriptionProviderConfig[];
   llmProviders: LlmProviderConfig[];
   autoModeRules: AutoModeRule[];
-  replacements: ReplacementRule[];
   vocabulary: VocabularyEntry[];
   history: DictationHistoryItem[];
   modelLibrary: ModelLibrarySnapshot;
@@ -29,9 +28,6 @@ interface AppStateSnapshot {
 Important settings:
 
 - `theme`: `system`, `light`, or `dark`.
-- `launchAtLogin`: passed to Electron login item settings.
-- `localOnly`: blocks cloud STT and LLM provider use.
-- `retainAudio`: controls whether completed recordings are saved.
 - `selectedTextCapture`: `disabled` or `clipboard_restore`.
 - `pasteMethod`: currently normalized to `clipboard_restore`.
 - `activationMode`: `toggle` or `push_to_talk`.
@@ -75,17 +71,15 @@ LLM provider types:
 - `google`
 - `custom_openai_compatible`
 
-## Rules, Replacements, and Vocabulary
+## Rules and Vocabulary
 
 `AutoModeRule` matches on domain, domain wildcard, app id, app name, or window title text. Enabled rules are sorted by descending priority.
-
-`ReplacementRule` can run before and/or after LLM processing, with optional regex and case-sensitive behavior.
 
 `VocabularyEntry` contributes domain terms and pronunciations to the vocabulary prompt when enabled.
 
 ## History and Session
 
-`DictationHistoryItem` stores raw transcript, processed output, mode/provider metadata, context metadata, timestamps, optional retained audio path, and word counts.
+`DictationHistoryItem` stores raw transcript, processed output, mode/provider metadata, context metadata, timestamps, a legacy nullable audio path, and word counts.
 
 `DictationSession.status` is one of `idle`, `recording`, `transcribing`, `processing`, `pasting`, `complete`, `cancelled`, or `error`.
 

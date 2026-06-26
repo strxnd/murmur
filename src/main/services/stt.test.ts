@@ -95,8 +95,7 @@ describe("STT runtime args", () => {
     const result = await service.transcribe({
       audio: new Uint8Array([1, 2, 3]),
       mimeType: "audio/wav",
-      provider: sherpaProvider("sherpa-test-model"),
-      localOnly: true
+      provider: sherpaProvider("sherpa-test-model")
     });
 
     const args = JSON.parse(readFileSync(argsPath, "utf8")) as string[];

@@ -8,7 +8,6 @@ import type {
   ModelLibrarySnapshot,
   ModeConfig,
   ProviderValidationResult,
-  ReplacementRule,
   SttRuntimeId,
   SttRuntimeInstallState,
   SttSetupSnapshot,
@@ -36,7 +35,6 @@ interface MurmurStore {
   validateLlmProvider: (provider: LlmProviderConfig) => Promise<ProviderValidationResult>;
   setAutoModeRules: (rules: AutoModeRule[]) => Promise<void>;
   setVocabulary: (entries: VocabularyEntry[]) => Promise<void>;
-  setReplacements: (rules: ReplacementRule[]) => Promise<void>;
   getModelLibrary: () => Promise<void>;
   downloadModel: (modelId: string) => Promise<void>;
   cancelModelDownload: (modelId: string) => Promise<void>;
@@ -145,7 +143,6 @@ export const useMurmurStore = create<MurmurStore>()((set, get) => {
     validateLlmProvider: (provider) => murmurClient.validateLlmProvider(provider),
     setAutoModeRules: (rules) => commit(() => murmurClient.setAutoModeRules(rules)),
     setVocabulary: (entries) => commit(() => murmurClient.setVocabulary(entries)),
-    setReplacements: (rules) => commit(() => murmurClient.setReplacements(rules)),
     getModelLibrary: () => commitLibrary(() => murmurClient.getModelLibrary()),
     downloadModel: (modelId) => commitLibrary(() => murmurClient.downloadModel(modelId)),
     cancelModelDownload: (modelId) => commitLibrary(() => murmurClient.cancelModelDownload(modelId)),

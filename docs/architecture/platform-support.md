@@ -1,6 +1,6 @@
 # Platform Support
 
-Murmur is Linux-first for desktop automation. Some runtime and provider code is portable, but global hotkeys, active-window metadata, selected-text capture, and paste automation are implemented around Linux desktop sessions.
+Murmur currently targets Linux desktop sessions.
 
 ## Linux Startup
 
@@ -31,7 +31,7 @@ Linux metadata providers are detected from session and desktop environment varia
 
 ## Text Automation
 
-Text automation backends include the native helper, `wtype`, `xdotool`, `ydotool`, and XDG RemoteDesktop keyboard portal. On non-Linux platforms, automation is unavailable and paste falls back to clipboard behavior.
+Text automation backends include the native helper, `wtype`, `xdotool`, `ydotool`, and XDG RemoteDesktop keyboard portal.
 
 ## STT Runtime Platform Keys
 
@@ -39,8 +39,3 @@ Managed local STT runtime archives are cataloged for:
 
 - `linux-x64`
 - `linux-arm64`
-- `darwin-x64`
-- `darwin-arm64`
-- `win32-x64`
-
-This runtime support does not imply full desktop automation support on every platform.

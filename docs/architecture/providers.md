@@ -37,11 +37,7 @@ Supported language provider types:
 
 Ollama uses `/api/chat`. OpenAI-compatible providers use `/chat/completions`. Anthropic uses `/v1/messages`. Google uses `/models/<model>:generateContent`.
 
-If LLM processing fails during dictation, Murmur logs a warning and uses the transcript after before-LLM replacements rather than failing the whole dictation.
-
-## Local-Only Behavior
-
-Local-only mode blocks cloud STT and cloud LLM providers at use time. It does not disable provider records; it filters them from selection and raises an error if a cloud provider is invoked.
+If LLM processing fails during dictation, Murmur logs a warning and uses the transcript rather than failing the whole dictation.
 
 ## Model Activation
 

@@ -12,10 +12,6 @@ import { modelCatalog } from "./model-catalog";
 
 export const defaultSettings: AppSettings = {
   theme: "dark",
-  launchAtLogin: false,
-  localOnly: false,
-  retainAudio: false,
-  audioRetentionDays: 7,
   textRetentionDays: 90,
   selectedTextCapture: "clipboard_restore",
   pasteMethod: "clipboard_restore",

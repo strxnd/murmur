@@ -1,5 +1,5 @@
 {
-  "platforms": ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64"],
+  "platforms": ["linux-x64", "linux-arm64"],
   "runtimes": {
     "whisper.cpp": {
       "version": "v1.8.6",
@@ -17,18 +17,6 @@
         "linux-arm64": {
           "name": "sherpa-onnx-v1.13.2-linux-aarch64-shared-cpu.tar.bz2",
           "sha256": "b54178420e9e6ff6c7f308b5f1cde827215b38393356ee0bd2b7595c648b330b"
-        },
-        "darwin-x64": {
-          "name": "sherpa-onnx-v1.13.2-osx-universal2-shared-no-tts.tar.bz2",
-          "sha256": "c1c799cadcd14877226a372dd038dd12f5283ebcc76ce94b8cda5039e27faa05"
-        },
-        "darwin-arm64": {
-          "name": "sherpa-onnx-v1.13.2-osx-universal2-shared-no-tts.tar.bz2",
-          "sha256": "c1c799cadcd14877226a372dd038dd12f5283ebcc76ce94b8cda5039e27faa05"
-        },
-        "win32-x64": {
-          "name": "sherpa-onnx-v1.13.2-win-x64-shared-MT-Release-no-tts.tar.bz2",
-          "sha256": "c0ad48e0b80544bb7b05031ac8a8760b9e0279832176d749fcf131c8a139e658"
         }
       }
     }

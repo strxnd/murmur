@@ -24,7 +24,6 @@ import type {
   ModeConfig,
   ModeIconKey,
   ReleaseNote,
-  ReplacementRule,
   RecordingPillPosition,
   TranscriptionProviderConfig,
   VocabularyEntry
@@ -37,7 +36,6 @@ interface PersistedConfigState {
   transcriptionProviders: TranscriptionProviderConfig[];
   llmProviders: LlmProviderConfig[];
   autoModeRules: AutoModeRule[];
-  replacements: ReplacementRule[];
   vocabulary: VocabularyEntry[];
   modelLibrary: ModelLibrarySnapshot;
   releaseNotes: ReleaseNote[];
@@ -77,10 +75,6 @@ const activationModes = new Set<ActivationMode>(["toggle", "push_to_talk"]);
 const recordingPillPositions = new Set<RecordingPillPosition>(["bottom_left", "bottom_center", "bottom_right"]);
 const appSettingKeys = [
   "theme",
-  "launchAtLogin",
-  "localOnly",
-  "retainAudio",
-  "audioRetentionDays",
   "textRetentionDays",
   "selectedTextCapture",
   "pasteMethod",
@@ -141,7 +135,6 @@ export class StorageService {
       transcriptionProviders: this.normalizeTranscriptionProviders(state.transcriptionProviders),
       llmProviders: state.llmProviders?.length ? state.llmProviders : clone(defaultLlmProviders),
       autoModeRules: this.normalizeAutoModeRules(state.autoModeRules ?? defaultAutoModeRules, modes),
-      replacements: state.replacements ?? [],
       vocabulary: state.vocabulary ?? [],
       history: state.history ?? [],
       modelLibrary: this.normalizeModelLibrary(state.modelLibrary),
@@ -186,13 +179,6 @@ export class StorageService {
   setAutoModeRules(rules: AutoModeRule[]): PersistedState {
     const state = this.getState();
     state.autoModeRules = rules;
-    this.writeState(state);
-    return state;
-  }
-
-  setReplacements(rules: ReplacementRule[]): PersistedState {
-    const state = this.getState();
-    state.replacements = rules;
     this.writeState(state);
     return state;
   }
@@ -442,7 +428,7 @@ export class StorageService {
     try {
       rmSync(audioPath, { force: true });
     } catch {
-      // Retained audio cleanup should not block history mutations.
+      // Legacy linked audio cleanup should not block history mutations.
     }
   }
 
@@ -453,7 +439,6 @@ export class StorageService {
       transcriptionProviders: clone(defaultTranscriptionProviders),
       llmProviders: clone(defaultLlmProviders),
       autoModeRules: clone(defaultAutoModeRules),
-      replacements: [],
       vocabulary: [],
       history: [],
       modelLibrary: clone(defaultModelLibrary),
@@ -635,7 +620,6 @@ function toConfigState(state: PersistedState): PersistedConfigState {
     transcriptionProviders: state.transcriptionProviders,
     llmProviders: state.llmProviders,
     autoModeRules: state.autoModeRules,
-    replacements: state.replacements,
     vocabulary: state.vocabulary,
     modelLibrary: state.modelLibrary,
     releaseNotes: state.releaseNotes

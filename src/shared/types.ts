@@ -205,19 +205,6 @@ export interface AutoModeRule {
   };
 }
 
-export interface ReplacementRule {
-  id: string;
-  source: string;
-  target: string;
-  category?: string;
-  caseSensitive: boolean;
-  regex: boolean;
-  runBeforeLlm: boolean;
-  runAfterLlm: boolean;
-  enabled: boolean;
-  notes?: string;
-}
-
 export interface VocabularyEntry {
   id: string;
   term: string;
@@ -229,10 +216,6 @@ export interface VocabularyEntry {
 
 export interface AppSettings {
   theme: "system" | "light" | "dark";
-  launchAtLogin: boolean;
-  localOnly: boolean;
-  retainAudio: boolean;
-  audioRetentionDays: number;
   textRetentionDays: number;
   selectedTextCapture: "disabled" | "clipboard_restore";
   pasteMethod: "clipboard_restore" | "clipboard_only";
@@ -316,7 +299,6 @@ export interface AppStateSnapshot {
   transcriptionProviders: TranscriptionProviderConfig[];
   llmProviders: LlmProviderConfig[];
   autoModeRules: AutoModeRule[];
-  replacements: ReplacementRule[];
   vocabulary: VocabularyEntry[];
   history: DictationHistoryItem[];
   modelLibrary: ModelLibrarySnapshot;

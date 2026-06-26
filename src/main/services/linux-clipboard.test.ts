@@ -53,21 +53,6 @@ describe("LinuxClipboardService", () => {
     );
   });
 
-  it("skips external clipboard tools outside Linux", async () => {
-    const commandExists = vi.fn(async () => true);
-    const execFileText = vi.fn(async () => "");
-    const service = new LinuxClipboardService({
-      commandExists,
-      execFileText,
-      platform: "darwin"
-    });
-
-    await service.writeTextForPaste("processed output");
-
-    expect(clipboardHarness.writeText).toHaveBeenCalledWith("processed output");
-    expect(commandExists).not.toHaveBeenCalled();
-    expect(execFileText).not.toHaveBeenCalled();
-  });
 });
 
 function createService(options: { calls: ExecCall[]; env: NodeJS.ProcessEnv; tools: string[] }): LinuxClipboardService {

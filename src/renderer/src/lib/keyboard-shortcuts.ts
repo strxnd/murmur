@@ -74,11 +74,8 @@ const keyAccelerators: Record<string, string> = {
   Tab: "Tab"
 };
 
-export function keyboardEventToAccelerator(
-  event: KeyboardShortcutEvent,
-  platform = globalThis.navigator?.platform ?? ""
-): KeyboardShortcutDraft {
-  const modifiers = modifierAccelerators(event, platform);
+export function keyboardEventToAccelerator(event: KeyboardShortcutEvent): KeyboardShortcutDraft {
+  const modifiers = modifierAccelerators(event);
   const key = keyAccelerator(event);
   const parts = key ? [...modifiers, key] : modifiers;
 
@@ -88,18 +85,12 @@ export function keyboardEventToAccelerator(
   };
 }
 
-function modifierAccelerators(event: KeyboardShortcutEvent, platform: string): string[] {
-  const isMac = /mac|iphone|ipad|ipod/i.test(platform);
+function modifierAccelerators(event: KeyboardShortcutEvent): string[] {
   const altGraph = event.getModifierState?.("AltGraph") ?? false;
   const modifiers: string[] = [];
 
-  if (isMac) {
-    if (event.metaKey) modifiers.push("CommandOrControl");
-    if (event.ctrlKey) modifiers.push("Control");
-  } else {
-    if (event.ctrlKey) modifiers.push("CommandOrControl");
-    if (event.metaKey) modifiers.push("Super");
-  }
+  if (event.ctrlKey) modifiers.push("CommandOrControl");
+  if (event.metaKey) modifiers.push("Super");
 
   if (altGraph) {
     modifiers.push("AltGr");

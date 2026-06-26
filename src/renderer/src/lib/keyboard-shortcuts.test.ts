@@ -10,8 +10,7 @@ describe("keyboardEventToAccelerator", () => {
           code: "Space",
           ctrlKey: true,
           key: " "
-        }),
-        "Linux x86_64"
+        })
       )
     ).toEqual({
       accelerator: "CommandOrControl+Alt+Space",
@@ -26,8 +25,7 @@ describe("keyboardEventToAccelerator", () => {
           code: "ControlLeft",
           ctrlKey: true,
           key: "Control"
-        }),
-        "Linux x86_64"
+        })
       )
     ).toEqual({
       accelerator: null,
@@ -35,23 +33,6 @@ describe("keyboardEventToAccelerator", () => {
     });
   });
 
-  it("preserves macOS control separately from command", () => {
-    expect(
-      keyboardEventToAccelerator(
-        shortcutEvent({
-          code: "KeyK",
-          ctrlKey: true,
-          key: "k",
-          metaKey: true,
-          shiftKey: true
-        }),
-        "MacIntel"
-      )
-    ).toEqual({
-      accelerator: "CommandOrControl+Control+Shift+K",
-      preview: "CommandOrControl+Control+Shift+K"
-    });
-  });
 });
 
 function shortcutEvent(overrides: Partial<KeyboardShortcutEvent>): KeyboardShortcutEvent {

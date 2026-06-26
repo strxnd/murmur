@@ -1,7 +1,6 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { Popover } from "@base-ui/react/popover";
 import {
-  AlertTriangle,
   BrainCircuit,
   Check,
   ChevronRight,
@@ -42,7 +41,6 @@ import { Input } from "../components/ui/Input";
 import { Panel } from "../components/ui/Panel";
 import { ProgressBar } from "../components/ui/ProgressBar";
 import { Select } from "../components/ui/Select";
-import { Switch } from "../components/ui/Switch";
 import { Toolbar } from "../components/ui/Toolbar";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { cn } from "../lib/cn";
@@ -421,7 +419,6 @@ function ProviderSetupDialog({
   open: boolean;
   onActivated: () => void;
 }): JSX.Element {
-  const updateSettings = useMurmurStore((store) => store.updateSettings);
   const validateSttProvider = useMurmurStore((store) => store.validateSttProvider);
   const validateLlmProvider = useMurmurStore((store) => store.validateLlmProvider);
   const setSttProviders = useMurmurStore((store) => store.setSttProviders);
@@ -430,9 +427,7 @@ function ProviderSetupDialog({
   const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isUpdatingCloudAccess, setIsUpdatingCloudAccess] = useState(false);
-  const cloudBlocked = state.settings.localOnly;
-  const canSubmit = apiKey.trim().length > 0 && !cloudBlocked && !isSubmitting && !isUpdatingCloudAccess;
+  const canSubmit = apiKey.trim().length > 0 && !isSubmitting;
 
   useEffect(() => {
     if (!open) return;
@@ -440,25 +435,8 @@ function ProviderSetupDialog({
     setError(null);
   }, [item, open, state.llmProviders, state.transcriptionProviders]);
 
-  const setCloudProvidersAllowed = async (allowed: boolean): Promise<void> => {
-    setError(null);
-    setIsUpdatingCloudAccess(true);
-    try {
-      await updateSettings({ localOnly: !allowed });
-    } catch (updateError) {
-      setError(`Could not update local-only mode: ${errorMessage(updateError)}`);
-    } finally {
-      setIsUpdatingCloudAccess(false);
-    }
-  };
-
   const validateSaveAndActivate = async (): Promise<void> => {
     setError(null);
-
-    if (cloudBlocked) {
-      setError("Turn off local-only mode before validating cloud providers.");
-      return;
-    }
 
     const draft = buildProviderSetupDraft({
       item,
@@ -550,22 +528,6 @@ function ProviderSetupDialog({
               onChange={(event) => setApiKey(event.currentTarget.value)}
             />
           </Field>
-
-          <Switch
-            className="rounded-md border border-border bg-muted/20 p-3"
-            label="Allow cloud providers"
-            description="Required for API-backed models."
-            checked={!cloudBlocked}
-            disabled={isSubmitting || isUpdatingCloudAccess}
-            onCheckedChange={(checked) => void setCloudProvidersAllowed(checked)}
-          />
-
-          {cloudBlocked && (
-            <p className="m-0 flex items-start gap-2 rounded-md border border-border bg-muted/50 p-3 text-xs leading-5 text-muted-foreground">
-              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warning" />
-              Local-only mode is blocking cloud providers. Turn it off before validating and activating this model.
-            </p>
-          )}
 
           {error && (
             <p role="alert" className="m-0 rounded-md border border-border bg-muted/50 p-3 text-xs leading-5 text-danger">

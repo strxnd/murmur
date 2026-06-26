@@ -14,9 +14,6 @@ Sherpa ONNX source assets:
 
 - `linux-x64`: `sherpa-onnx-v1.13.2-linux-x64-shared-no-tts.tar.bz2`
 - `linux-arm64`: `sherpa-onnx-v1.13.2-linux-aarch64-shared-cpu.tar.bz2`
-- `darwin-x64`: `sherpa-onnx-v1.13.2-osx-universal2-shared-no-tts.tar.bz2`
-- `darwin-arm64`: `sherpa-onnx-v1.13.2-osx-universal2-shared-no-tts.tar.bz2`
-- `win32-x64`: `sherpa-onnx-v1.13.2-win-x64-shared-MT-Release-no-tts.tar.bz2`
 
 ## Whisper Patch
 
@@ -109,10 +106,9 @@ Missing executable:
 Unsupported platform:
 
 - Confirm `node -p "process.platform + '-' + process.arch"` returns one of the supported platform keys.
-- Windows ARM64 is not currently bundled.
 
 Dynamic library load failure:
 
 - Confirm adjacent runtime `lib` or `bin` directories were copied with the executable.
-- For development, run through Murmur so `LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, or `PATH` is adjusted by `SttRuntimeService`.
+- For development, run through Murmur so `LD_LIBRARY_PATH` is adjusted by `SttRuntimeService`.
 - For direct shell smoke tests, export the needed library path manually from `vendor/runtimes/<platform-key>/<runtime>/lib`.

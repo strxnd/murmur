@@ -6,7 +6,6 @@ import {
   transcriptionProviderFromModel
 } from "../../shared/model-activation";
 import type {
-  AppSettings,
   LlmProviderConfig,
   ModelCatalogItem,
   ModelLibrarySnapshot,
@@ -110,7 +109,6 @@ export class SttSetupService {
 
 export function getSttUsability(
   state: {
-    settings: AppSettings;
     transcriptionProviders: TranscriptionProviderConfig[];
     llmProviders?: LlmProviderConfig[];
     modelLibrary: ModelLibrarySnapshot;
@@ -121,13 +119,13 @@ export function getSttUsability(
   const activeModel = selectReadyActiveVoiceModel(state.modelLibrary, runtimeService, paths);
   if (activeModel) {
     const provider = transcriptionProviderFromModel(activeModel, state.transcriptionProviders);
-    if (provider && providerUsable(provider, state.settings, runtimeService, paths)) {
+    if (provider && providerUsable(provider, runtimeService, paths)) {
       return { usable: true, reason: `${activeModel.name} is ready.` };
     }
   }
 
   for (const provider of state.transcriptionProviders) {
-    if (providerUsable(provider, state.settings, runtimeService, paths)) {
+    if (providerUsable(provider, runtimeService, paths)) {
       return { usable: true, reason: `${provider.name} is configured.` };
     }
   }
@@ -160,11 +158,10 @@ function selectReadyActiveVoiceModel(
 
 function providerUsable(
   provider: TranscriptionProviderConfig,
-  settings: AppSettings,
   runtimeService: Pick<SttRuntimeService, "getAvailability">,
   paths: Pick<AppPaths, "modelDir">
 ): boolean {
-  if (!isBaseTranscriptionProviderUsable(provider, settings)) return false;
+  if (!isBaseTranscriptionProviderUsable(provider)) return false;
 
   if (provider.type === "whisper_cpp" && provider.baseUrl === "murmur://runtime/whisper.cpp") {
     return bundledProviderReady(provider, "whisper.cpp", runtimeService, paths);

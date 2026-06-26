@@ -175,20 +175,6 @@ export const autoModeRuleSchema = z
       })
   });
 
-export const replacementRuleSchema = z
-  .object({
-    id: z.string().min(1),
-    source: z.string(),
-    target: z.string(),
-    category: optionalStringSchema,
-    caseSensitive: z.boolean(),
-    regex: z.boolean(),
-    runBeforeLlm: z.boolean(),
-    runAfterLlm: z.boolean(),
-    enabled: z.boolean(),
-    notes: optionalStringSchema
-  });
-
 export const vocabularyEntrySchema = z
   .object({
     id: z.string().min(1),
@@ -202,10 +188,6 @@ export const vocabularyEntrySchema = z
 export const appSettingsSchema = z
   .object({
     theme: z.enum(["system", "light", "dark"]),
-    launchAtLogin: z.boolean(),
-    localOnly: z.boolean(),
-    retainAudio: z.boolean(),
-    audioRetentionDays: z.number().min(0),
     textRetentionDays: z.number().min(0),
     selectedTextCapture: z.enum(["disabled", "clipboard_restore"]),
     pasteMethod: z.enum(["clipboard_restore", "clipboard_only"]),
@@ -357,7 +339,6 @@ export const appStateSnapshotSchema = z
     transcriptionProviders: z.array(transcriptionProviderConfigSchema),
     llmProviders: z.array(llmProviderConfigSchema),
     autoModeRules: z.array(autoModeRuleSchema),
-    replacements: z.array(replacementRuleSchema),
     vocabulary: z.array(vocabularyEntrySchema),
     history: z.array(dictationHistoryItemSchema),
     modelLibrary: modelLibrarySnapshotSchema,

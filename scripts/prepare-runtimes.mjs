@@ -95,7 +95,7 @@ async function prepareSherpaOnnx(platformKey) {
   try {
     await run("tar", ["-xjf", archivePath, "-C", extractDir]);
     const sourceRoot = singleChildDirectory(extractDir) ?? extractDir;
-    const offlineBinary = findFile(sourceRoot, (file) => ["sherpa-onnx-offline", "sherpa-onnx-offline.exe"].includes(basename(file)));
+    const offlineBinary = findFile(sourceRoot, (file) => basename(file) === "sherpa-onnx-offline");
     if (!offlineBinary) throw new Error(`Could not find sherpa-onnx-offline in ${asset.name}.`);
 
     const dest = join(vendorRoot, platformKey, "sherpa-onnx");
@@ -132,7 +132,7 @@ async function prepareWhisperCpp(platformKey) {
     ]);
     await run("cmake", ["--build", buildDir, "--config", "Release", "--target", "whisper-server"]);
 
-    const binaryName = process.platform === "win32" ? "whisper-server.exe" : "whisper-server";
+    const binaryName = "whisper-server";
     const binary = findFile(buildDir, (file) => basename(file) === binaryName);
     if (!binary) throw new Error(`Could not find built ${binaryName}.`);
 
@@ -172,7 +172,7 @@ function copySharedLibraries(buildDir, dest, platformKey) {
   const libraries = findFiles(buildDir, isSharedLibrary);
   if (!libraries.length) return;
 
-  const libraryDest = platformKey.startsWith("win32") ? dest : join(dest, "lib");
+  const libraryDest = join(dest, "lib");
   mkdirSync(libraryDest, { recursive: true });
   for (const library of libraries) {
     copyFileSync(library, join(libraryDest, basename(library)));
@@ -182,14 +182,11 @@ function copySharedLibraries(buildDir, dest, platformKey) {
 function isSharedLibrary(file) {
   const name = basename(file);
   return (
-    name.endsWith(".dll") ||
-    name.endsWith(".dylib") ||
     /\.so(?:\.\d+)*$/.test(name)
   );
 }
 
 function chmodExecutables(root, platformKey) {
-  if (platformKey.startsWith("win32")) return;
   for (const file of findFiles(root, (candidate) => ["whisper-server", "sherpa-onnx-offline"].includes(basename(candidate)))) {
     chmodSync(file, 0o755);
   }

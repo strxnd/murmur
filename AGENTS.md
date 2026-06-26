@@ -8,7 +8,7 @@ Murmur is an Electron desktop app with a React renderer.
 - `src/main/services/`: focused system services for STT, LLMs, storage, context capture, paste automation, and auto-mode matching.
 - `src/preload/`: secure preload bridge exposed as `window.murmur`.
 - `src/renderer/`: Vite/React UI entrypoint, app views, and global CSS.
-- `src/shared/`: shared TypeScript types, defaults, prompt builders, and replacement utilities.
+- `src/shared/`: shared TypeScript types, defaults, and prompt builders.
 - `out/`: generated build output. Do not edit directly.
 - `node_modules/`: installed dependencies. Do not edit directly.
 
@@ -44,12 +44,12 @@ Animations are important to Murmur's user experience. Use purposeful, restrained
 
 Tests are not scaffolded yet. When adding tests, keep them close to the behavior being verified:
 
-- Shared logic: unit tests for prompt building, replacements, and auto-mode matching.
+- Shared logic: unit tests for prompt building and auto-mode matching.
 - Main services: integration tests with mocked STT/LLM HTTP endpoints.
 - Renderer flows: Electron or Playwright tests for recording, provider settings, and history actions.
 
-Name tests after behavior, for example `auto-mode.test.ts` or `replacements.test.ts`.
+Name tests after behavior, for example `auto-mode.test.ts` or `prompts.test.ts`.
 
 ## Security & Configuration Tips
 
-Do not commit API keys, local provider secrets, retained audio, SQLite data, or generated `out/` artifacts. Cloud STT/LLM providers must remain opt-in and respect local-only mode.
+Do not commit API keys, local provider secrets, recorded audio, SQLite data, or generated `out/` artifacts. Cloud STT/LLM providers must remain opt-in and require explicit provider configuration.

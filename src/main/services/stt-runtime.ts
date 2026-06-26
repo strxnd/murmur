@@ -314,13 +314,7 @@ export class SttRuntimeService {
     const env = { ...this.env };
     const dirs = this.runtimeSearchDirs(runtime);
 
-    if (this.platform === "linux") {
-      env.LD_LIBRARY_PATH = prependPathList(dirs, env.LD_LIBRARY_PATH, this.platform);
-    } else if (this.platform === "darwin") {
-      env.DYLD_LIBRARY_PATH = prependPathList(dirs, env.DYLD_LIBRARY_PATH, this.platform);
-    } else if (this.platform === "win32") {
-      env.PATH = prependPathList(dirs, env.PATH, this.platform);
-    }
+    env.LD_LIBRARY_PATH = prependPathList(dirs, env.LD_LIBRARY_PATH);
 
     return env;
   }
@@ -379,7 +373,7 @@ export class SttRuntimeService {
       if (!binary) {
         throw new Error(`${definition.label} archive did not contain a supported executable.`);
       }
-      chmodExecutables(extractedRoot, definition, this.platform);
+      chmodExecutables(extractedRoot, definition);
       writeReceipt(join(extractedRoot, "runtime.json"), {
         id,
         platformKey,
@@ -521,10 +515,7 @@ export class SttRuntimeService {
     const definition = this.definition(runtime.id);
     const binaryDir = dirname(runtime.binaryPath);
     const configuredDirs = definition.libraryDirs.map((dir) => join(runtime.rootDir, dir));
-    const dirs =
-      this.platform === "win32"
-        ? [binaryDir, runtime.rootDir, ...configuredDirs]
-        : [...configuredDirs, runtime.rootDir, binaryDir, join(binaryDir, "lib")];
+    const dirs = [...configuredDirs, runtime.rootDir, binaryDir, join(binaryDir, "lib")];
 
     const existingDirs = unique(dirs).filter((dir) => this.exists(dir));
     return existingDirs.length ? existingDirs : [binaryDir];
@@ -610,9 +601,8 @@ function inferRuntimeRoot(binaryPath: string): string {
   return basename(binaryDir) === "bin" ? dirname(binaryDir) : binaryDir;
 }
 
-function prependPathList(dirs: string[], existing: string | undefined, platform: string): string {
-  const separator = platform === "win32" ? ";" : ":";
-  return [...dirs, ...(existing ? existing.split(separator).filter(Boolean) : [])].join(separator);
+function prependPathList(dirs: string[], existing: string | undefined): string {
+  return [...dirs, ...(existing ? existing.split(":").filter(Boolean) : [])].join(":");
 }
 
 function unique(values: string[]): string[] {
@@ -659,8 +649,7 @@ function replaceDirectory(sourceDir: string, targetDir: string): void {
   }
 }
 
-function chmodExecutables(root: string, definition: SttRuntimeCatalogEntry, platform: string): void {
-  if (platform === "win32") return;
+function chmodExecutables(root: string, definition: SttRuntimeCatalogEntry): void {
   for (const candidate of definition.executableCandidates) {
     const binaryPath = join(root, ...candidate.split("/"));
     if (!existsSync(binaryPath)) continue;

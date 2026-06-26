@@ -47,16 +47,6 @@ describe("ModelLibraryService", () => {
     expect(snapshot.activeModelIds.voice).toBeUndefined();
   });
 
-  it("does not activate an API voice model in local-only mode", async () => {
-    const { service, storage } = setup("available");
-    setSttApiKey(storage, "sk-test");
-    storage.updateSettings({ localOnly: true });
-
-    const snapshot = await service.activateModel("openai-gpt-4o-transcribe");
-
-    expect(snapshot.activeModelIds.voice).toBeUndefined();
-  });
-
   it("activates an API voice model when cloud credentials are usable", async () => {
     const { service, storage } = setup("available");
     setSttApiKey(storage, "sk-test");
@@ -68,16 +58,6 @@ describe("ModelLibraryService", () => {
 
   it("does not activate an API language model without credentials", async () => {
     const { service } = setup("available");
-
-    const snapshot = await service.activateModel("openai-gpt-5-5");
-
-    expect(snapshot.activeModelIds.language).toBeUndefined();
-  });
-
-  it("does not activate an API language model in local-only mode", async () => {
-    const { service, storage } = setup("available");
-    setLlmApiKey(storage, "sk-test");
-    storage.updateSettings({ localOnly: true });
 
     const snapshot = await service.activateModel("openai-gpt-5-5");
 

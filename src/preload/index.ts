@@ -11,7 +11,6 @@ import type {
   ProviderValidationResult,
   RecordingLevelPayload,
   RecordingStartPayload,
-  ReplacementRule,
   SttRuntimeId,
   SttRuntimeInstallState,
   SttSetupSnapshot,
@@ -38,8 +37,6 @@ const api = {
   validateLlmProvider: (provider: LlmProviderConfig): Promise<ProviderValidationResult> =>
     ipcRenderer.invoke("provider:validate-llm", provider),
   setAutoModeRules: (rules: AutoModeRule[]): Promise<AppStateSnapshot> => ipcRenderer.invoke("rules:set-auto-mode", rules),
-  setReplacements: (replacements: ReplacementRule[]): Promise<AppStateSnapshot> =>
-    ipcRenderer.invoke("replacements:set", replacements),
   setVocabulary: (vocabulary: VocabularyEntry[]): Promise<AppStateSnapshot> => ipcRenderer.invoke("vocabulary:set", vocabulary),
   getModelLibrary: (): Promise<ModelLibrarySnapshot> => ipcRenderer.invoke("models:get-library"),
   downloadModel: (modelId: string): Promise<ModelLibrarySnapshot> => ipcRenderer.invoke("models:download", modelId),

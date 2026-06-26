@@ -53,7 +53,7 @@ Packaged apps include `whisper.cpp` and `sherpa-onnx` under `process.resourcesPa
 
 ## Runtime Install Flow
 
-In development, `SttRuntimeService.downloadRuntime()` downloads a pinned archive from `stt-runtime-catalog.ts`, streams progress, verifies SHA-256, extracts to a staging directory, finds the expected executable, chmods executables on non-Windows platforms, writes `runtime.json`, and atomically replaces the final cache directory.
+In development, `SttRuntimeService.downloadRuntime()` downloads a pinned archive from `stt-runtime-catalog.ts`, streams progress, verifies SHA-256, extracts to a staging directory, finds the expected executable, chmods executables, writes `runtime.json`, and atomically replaces the final cache directory.
 
 Before replacing a runtime, the controller stops any running runtime process for that runtime id.
 

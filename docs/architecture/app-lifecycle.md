@@ -17,10 +17,10 @@
 - Initializes text automation, context capture, and paste services.
 - Registers IPC handlers.
 - Creates the tray, main window, and hidden recording pill window.
-- Applies persisted settings such as theme and launch-at-login.
+- Applies persisted settings such as theme.
 - Registers global hotkeys.
 
-## Windows
+## App Windows
 
 The main window is a normal Electron `BrowserWindow` with context isolation enabled, node integration disabled, and the preload script loaded from `out/preload/index.cjs`.
 

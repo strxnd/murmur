@@ -26,9 +26,8 @@ flowchart TB
     C5["provider:validate-stt"]
     C6["provider:validate-llm"]
     C7["rules:set-auto-mode"]
-    C8["replacements:set"]
-    C9["vocabulary:set"]
-    C10["hotkeys:capture-start/end"]
+    C8["vocabulary:set"]
+    C9["hotkeys:capture-start/end"]
   end
 
   subgraph Models["Models and runtimes"]

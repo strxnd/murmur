@@ -41,7 +41,7 @@ function activeReadyVoiceModel(state: AppStateSnapshot): ModelCatalogItem | null
 }
 
 function providerUsable(state: AppStateSnapshot, provider: TranscriptionProviderConfig): boolean {
-  if (!isBaseTranscriptionProviderUsable(provider, state.settings)) return false;
+  if (!isBaseTranscriptionProviderUsable(provider)) return false;
 
   if (provider.type === "whisper_cpp" && provider.baseUrl === "murmur://runtime/whisper.cpp") {
     return Boolean(provider.defaultModel && runtimeReady(state, "whisper.cpp"));

@@ -8,7 +8,6 @@ Murmur blocks recording when no enabled STT provider or local voice model is usa
 - Confirm the selected local model is downloaded.
 - Confirm the required runtime is ready in the setup or models view.
 - If using a cloud provider, confirm the provider is enabled and has an API key.
-- If local-only mode is enabled, use a local provider.
 
 ## Output Is Copied But Not Pasted
 

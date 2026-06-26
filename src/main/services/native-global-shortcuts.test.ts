@@ -31,11 +31,10 @@ describe("detectNativeShortcutBackends", () => {
     ).toEqual([]);
   });
 
-  it("detects KDE and ignores non-Linux platforms", () => {
+  it("detects KDE", () => {
     expect(detectNativeShortcutBackends({ XDG_CURRENT_DESKTOP: "KDE", XDG_SESSION_TYPE: "wayland" }, "linux")).toEqual([
       "kde_kglobalaccel"
     ]);
-    expect(detectNativeShortcutBackends({ XDG_CURRENT_DESKTOP: "KDE", XDG_SESSION_TYPE: "wayland" }, "darwin")).toEqual([]);
   });
 });
 
