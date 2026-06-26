@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Save, Trash2 } from "lucide-react";
-import { useEffect, type JSX } from "react";
-import { Controller, useForm, type Control, type Path } from "react-hook-form";
+import { Plus, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, type JSX } from "react";
+import { Controller, useForm, useWatch, type Control, type Path } from "react-hook-form";
 import { z } from "zod";
 import type { AppStateSnapshot } from "../../../shared/types";
 import { appSettingsSchema, replacementRuleSchema } from "../../../shared/schemas";
@@ -16,7 +16,6 @@ import { Panel } from "../components/ui/Panel";
 import { Select, type SelectItem } from "../components/ui/Select";
 import { Switch } from "../components/ui/Switch";
 import { Textarea } from "../components/ui/Textarea";
-import { Toolbar } from "../components/ui/Toolbar";
 import { useAudioDevices } from "../hooks/useAudioDevices";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { makeClientId } from "../lib/ids";
@@ -29,6 +28,8 @@ const configurationFormSchema = z.object({
 });
 
 type ConfigurationFormValues = z.infer<typeof configurationFormSchema>;
+
+const autosaveDelayMs = 350;
 
 const themeItems: Array<SelectItem<ConfigurationFormValues["settings"]["theme"]>> = [
   { value: "system", label: "System" },
@@ -61,7 +62,16 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
       replacements: state.replacements
     }
   });
-  const replacements = form.watch("replacements");
+  const settings = useWatch({ control: form.control, name: "settings" });
+  const replacements = useWatch({ control: form.control, name: "replacements" }) ?? [];
+  const persistedValuesRef = useRef<ConfigurationFormValues>(
+    cloneConfigurationValues({
+      settings: state.settings,
+      replacements: state.replacements
+    })
+  );
+  const isAutosavingRef = useRef(false);
+  const pendingAutosaveRef = useRef(false);
   const replacementsParent = useAutoAnimateRef<HTMLDivElement>();
   const actionableHotkeyDiagnostics = state.capabilities.hotkeys.diagnostics.filter(isActionableHotkeyDiagnostic);
   const audioInputItems: Array<SelectItem<string>> = [
@@ -74,29 +84,66 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
 
   useEffect(() => {
     if (form.formState.isDirty) return;
-    form.reset({
+    const values = {
       settings: state.settings,
       replacements: state.replacements
-    });
+    };
+    persistedValuesRef.current = cloneConfigurationValues(values);
+    form.reset(values);
   }, [form, form.formState.isDirty, state.replacements, state.settings]);
 
-  const save = form.handleSubmit(async (values) => {
-    await updateSettings(values.settings);
-    await setReplacements(values.replacements);
-    form.reset(values);
-  });
+  const autosave = useCallback(async (): Promise<void> => {
+    if (isAutosavingRef.current) {
+      pendingAutosaveRef.current = true;
+      return;
+    }
+
+    isAutosavingRef.current = true;
+    pendingAutosaveRef.current = false;
+    let savedValues: ConfigurationFormValues | null = null;
+
+    try {
+      const isValid = await form.trigger();
+      if (!isValid) return;
+
+      const values = cloneConfigurationValues(form.getValues());
+      const persistedValues = persistedValuesRef.current;
+      const shouldSaveSettings = !sameValue(values.settings, persistedValues.settings);
+      const shouldSaveReplacements = !sameValue(values.replacements, persistedValues.replacements);
+
+      if (!shouldSaveSettings && !shouldSaveReplacements) return;
+
+      if (shouldSaveSettings) await updateSettings(values.settings);
+      if (shouldSaveReplacements) await setReplacements(values.replacements);
+
+      savedValues = cloneConfigurationValues(values);
+      persistedValuesRef.current = cloneConfigurationValues(values);
+
+      if (sameValue(form.getValues(), values)) {
+        form.reset(cloneConfigurationValues(values));
+      }
+    } catch {
+      return;
+    } finally {
+      isAutosavingRef.current = false;
+      const shouldRunAgain = pendingAutosaveRef.current || (savedValues !== null && !sameValue(form.getValues(), savedValues));
+      pendingAutosaveRef.current = false;
+
+      if (shouldRunAgain) {
+        window.setTimeout(() => void autosave(), autosaveDelayMs);
+      }
+    }
+  }, [form, setReplacements, updateSettings]);
+
+  useEffect(() => {
+    if (!form.formState.isDirty) return undefined;
+
+    const timeout = window.setTimeout(() => void autosave(), autosaveDelayMs);
+    return () => window.clearTimeout(timeout);
+  }, [autosave, form.formState.isDirty, replacements, settings]);
 
   return (
-    <View
-      title="Configuration"
-      actions={
-        <Toolbar>
-          <Button variant="primary" onClick={() => void save()} disabled={form.formState.isSubmitting || !form.formState.isDirty}>
-            <Save size={18} /> Save
-          </Button>
-        </Toolbar>
-      }
-    >
+    <View title="Configuration">
       <section className="grid grid-cols-2 gap-4 max-[980px]:grid-cols-1">
         <Panel title="Appearance">
           <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
@@ -115,14 +162,7 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
               <FormSelect control={form.control} name="settings.activationMode" items={activationModeItems} />
             </Field>
             <Field label="Activation shortcut" error={form.formState.errors.settings?.activationHotkey?.message}>
-              <FormShortcutRecorder
-                control={form.control}
-                name="settings.activationHotkey"
-                onCommit={async (activationHotkey) => {
-                  await updateSettings({ activationHotkey });
-                  form.resetField("settings.activationHotkey", { defaultValue: activationHotkey });
-                }}
-              />
+              <FormShortcutRecorder control={form.control} name="settings.activationHotkey" />
             </Field>
             {actionableHotkeyDiagnostics.length > 0 && (
               <p className="col-span-full m-0 text-xs leading-5 text-muted-foreground">
@@ -266,6 +306,14 @@ function isActionableHotkeyDiagnostic(message: string): boolean {
   return false;
 }
 
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function cloneConfigurationValues(values: ConfigurationFormValues): ConfigurationFormValues {
+  return JSON.parse(JSON.stringify(values)) as ConfigurationFormValues;
+}
+
 function FormSelect({
   control,
   name,
@@ -290,12 +338,10 @@ function FormSelect({
 
 function FormShortcutRecorder({
   control,
-  name,
-  onCommit
+  name
 }: {
   control: Control<ConfigurationFormValues>;
   name: ShortcutSettingPath;
-  onCommit?: (value: string) => Promise<void> | void;
 }): JSX.Element {
   return (
     <Controller
@@ -304,10 +350,7 @@ function FormShortcutRecorder({
       render={({ field }) => (
         <ShortcutRecorder
           value={String(field.value ?? "")}
-          onChange={(value) => {
-            field.onChange(value);
-            void onCommit?.(value);
-          }}
+          onChange={field.onChange}
           onCaptureStart={murmurClient.beginHotkeyCapture}
           onCaptureEnd={murmurClient.endHotkeyCapture}
         />

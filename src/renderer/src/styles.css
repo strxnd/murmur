@@ -60,36 +60,50 @@
   --console-fill-soft: #303030;
   --console-on-strong: #0b0b0b;
   --console-panel-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
+  --console-dialog-shadow: 0 24px 64px rgba(0, 0, 0, 0.34);
+  --console-popover-shadow: 0 20px 54px rgba(0, 0, 0, 0.3);
+  --console-listbox-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+  --console-pill-shadow: 0 18px 34px rgba(0, 0, 0, 0.34);
   --console-control-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset;
   --console-focus: rgba(255, 255, 255, 0.24);
+  --console-overlay: rgba(0, 0, 0, 0.72);
+  --console-pill-inset: rgba(255, 255, 255, 0.1);
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --background: #f2f2f2;
-  --surface: #ffffff;
-  --surface-raised: #fafafa;
-  --muted: #e6e6e6;
-  --border: #c8c8c8;
-  --foreground: #181818;
-  --muted-foreground: #555555;
-  --subtle: #777777;
-  --brand: #181818;
+  --background: #ececec;
+  --surface: #f6f6f6;
+  --surface-raised: #ffffff;
+  --muted: #dedede;
+  --border: #bdbdbd;
+  --foreground: #161616;
+  --muted-foreground: #545454;
+  --subtle: #737373;
+  --brand: #161616;
   --brand-strong: #000000;
-  --brand-soft: #e4e4e4;
-  --danger: #3f3f3f;
-  --success: #242424;
-  --warning: #686868;
-  --console-edge: #5e5e5e;
-  --console-edge-strong: #2e2e2e;
-  --console-contrast: #343434;
-  --console-contrast-deep: #dddddd;
-  --console-fill: #222222;
-  --console-fill-soft: #e2e2e2;
+  --brand-soft: #d8d8d8;
+  --danger: #383838;
+  --success: #222222;
+  --warning: #646464;
+  --console-edge: #535353;
+  --console-edge-strong: #252525;
+  --console-contrast: #303030;
+  --console-contrast-deep: #d2d2d2;
+  --console-fill: #1f1f1f;
+  --console-fill-soft: #d7d7d7;
   --console-on-strong: #ffffff;
-  --console-panel-shadow: 0 18px 36px rgba(0, 0, 0, 0.12);
-  --console-control-shadow: 0 1px 0 rgba(255, 255, 255, 0.72) inset;
-  --console-focus: rgba(0, 0, 0, 0.18);
+  --console-panel-shadow: 0 18px 42px rgba(22, 22, 22, 0.1);
+  --console-dialog-shadow: 0 24px 64px rgba(22, 22, 22, 0.18);
+  --console-popover-shadow: 0 20px 54px rgba(22, 22, 22, 0.16);
+  --console-listbox-shadow: 0 18px 42px rgba(22, 22, 22, 0.14);
+  --console-pill-shadow: 0 18px 34px rgba(22, 22, 22, 0.2);
+  --console-control-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.86) inset,
+    0 1px 1px rgba(22, 22, 22, 0.04);
+  --console-focus: rgba(0, 0, 0, 0.16);
+  --console-overlay: rgba(18, 18, 18, 0.46);
+  --console-pill-inset: rgba(255, 255, 255, 0.12);
 }
 
 :root.theme-transition-suppressed,
@@ -590,7 +604,7 @@ span.inline-flex.items-center.rounded.border.text-foreground {
 
 .mode-dialog-backdrop,
 [class~="bg-black/70"].fixed.inset-0 {
-  background: rgba(0, 0, 0, 0.72);
+  background: var(--console-overlay);
   backdrop-filter: blur(8px);
 }
 
@@ -603,13 +617,13 @@ span.inline-flex.items-center.rounded.border.text-foreground {
   border-color: color-mix(in srgb, var(--border) 74%, var(--console-edge) 26%);
   border-radius: 8px;
   box-shadow:
-    0 24px 64px rgba(0, 0, 0, 0.34),
+    var(--console-dialog-shadow),
     0 0 0 1px color-mix(in srgb, var(--foreground) 6%, transparent) inset;
 }
 
 .model-popover-popup {
   box-shadow:
-    0 20px 54px rgba(0, 0, 0, 0.3),
+    var(--console-popover-shadow),
     0 0 0 1px color-mix(in srgb, var(--foreground) 6%, transparent) inset;
 }
 
@@ -617,7 +631,7 @@ span.inline-flex.items-center.rounded.border.text-foreground {
   background: var(--surface-raised);
   border-color: color-mix(in srgb, var(--border) 78%, var(--console-contrast) 22%);
   border-radius: 8px;
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--console-listbox-shadow);
 }
 
 [role="option"][data-highlighted] {
@@ -630,9 +644,9 @@ span.inline-flex.items-center.rounded.border.text-foreground {
     #0f0f0f;
   border-color: color-mix(in srgb, var(--console-fill) 34%, rgba(255, 255, 255, 0.12));
   box-shadow:
-    0 18px 34px rgba(0, 0, 0, 0.34),
+    var(--console-pill-shadow),
     0 0 0 1px color-mix(in srgb, var(--console-edge) 18%, transparent) inset,
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    inset 0 1px 0 var(--console-pill-inset);
 }
 
 .recording-wave__bar::before {
