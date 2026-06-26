@@ -1,22 +1,24 @@
 import { Tabs } from "@base-ui/react/tabs";
-import { BookOpen, Clock3, Home, Library, Settings, SlidersHorizontal, type LucideIcon } from "lucide-react";
+import { BookOpen, Clock3, Home, KeyRound, Library, Settings, SlidersHorizontal, type LucideIcon } from "lucide-react";
 import { useEffect, useState, type JSX } from "react";
 import type { AppStateSnapshot } from "../../../shared/types";
 import { HomeView } from "../views/HomeView";
 import { ModesView } from "../views/ModesView";
 import { VocabularyView } from "../views/VocabularyView";
 import { ConfigurationView } from "../views/ConfigurationView";
+import { ProvidersView } from "../views/ProvidersView";
 import { ModelsLibraryView } from "../views/ModelsLibraryView";
 import { HistoryView } from "../views/HistoryView";
 import { cn } from "../lib/cn";
 
-type SectionId = "home" | "modes" | "vocabulary" | "configuration" | "models" | "history";
+type SectionId = "home" | "modes" | "vocabulary" | "configuration" | "providers" | "models" | "history";
 
 const sections: Array<{ id: SectionId; label: string; icon: LucideIcon }> = [
   { id: "home", label: "Home", icon: Home },
   { id: "modes", label: "Modes", icon: SlidersHorizontal },
   { id: "vocabulary", label: "Vocabulary", icon: BookOpen },
   { id: "configuration", label: "Configuration", icon: Settings },
+  { id: "providers", label: "Providers", icon: KeyRound },
   { id: "models", label: "Models", icon: Library },
   { id: "history", label: "History", icon: Clock3 }
 ];
@@ -77,6 +79,9 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
           </Tabs.Panel>
           <Tabs.Panel value="configuration" id="configuration" className="outline-none">
             <ConfigurationView state={state} />
+          </Tabs.Panel>
+          <Tabs.Panel value="providers" id="providers" className="outline-none">
+            <ProvidersView state={state} />
           </Tabs.Panel>
           <Tabs.Panel value="models" id="models" className="outline-none">
             <ModelsLibraryView state={state} />
