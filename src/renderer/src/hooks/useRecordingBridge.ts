@@ -53,13 +53,12 @@ export function useRecordingBridge(enabled: boolean): void {
       }
     };
 
-    const start = murmurClient.onRecordingStart(async ({ sessionId }) => {
+    const start = murmurClient.onRecordingStart(async ({ sessionId, preferredAudioInputId }) => {
       cancelledRef.current = false;
       sessionRef.current = sessionId;
 
-      const state = await murmurClient.getState();
-      const audioConstraint: MediaTrackConstraints | boolean = state.settings.preferredAudioInputId
-        ? { deviceId: { exact: state.settings.preferredAudioInputId } }
+      const audioConstraint: MediaTrackConstraints | boolean = preferredAudioInputId
+        ? { deviceId: { exact: preferredAudioInputId } }
         : true;
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });

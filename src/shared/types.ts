@@ -315,6 +315,11 @@ export interface RecordingLevelPayload {
   level: number;
 }
 
+export interface RecordingStartPayload {
+  sessionId: string;
+  preferredAudioInputId?: string;
+}
+
 export interface TranscriptionResult {
   text: string;
   providerId: string;
@@ -342,6 +347,11 @@ export interface AppStateSnapshot {
   sttSetup: SttSetupSnapshot;
   session: DictationSession;
   capabilities: CapabilityReport;
+}
+
+export interface PillStateSnapshot {
+  session: DictationSession;
+  theme: AppSettings["theme"];
 }
 
 export interface CapabilityReport {

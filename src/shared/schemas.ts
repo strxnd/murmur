@@ -394,6 +394,13 @@ export const appStateSnapshotSchema = z
   })
   .passthrough();
 
+export const pillStateSnapshotSchema = z
+  .object({
+    session: dictationSessionSchema,
+    theme: appSettingsSchema.shape.theme
+  })
+  .passthrough();
+
 export const providerValidationResultSchema = z
   .object({
     ok: z.boolean(),

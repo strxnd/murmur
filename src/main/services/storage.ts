@@ -132,6 +132,12 @@ export class StorageService {
     };
   }
 
+  getSettings(): AppSettings {
+    const config = this.readConfig();
+    const modes = this.normalizeModes(config.modes);
+    return this.normalizeSettings(config.settings, modes);
+  }
+
   updateSettings(patch: Partial<AppSettings>): PersistedState {
     const state = this.getState();
     state.settings = { ...state.settings, ...patch };

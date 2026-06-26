@@ -6,8 +6,10 @@ import type {
   ModelDownloadState,
   ModelLibrarySnapshot,
   ModeConfig,
+  PillStateSnapshot,
   ProviderValidationResult,
   RecordingLevelPayload,
+  RecordingStartPayload,
   ReplacementRule,
   SttModelRecommendation,
   SttPreferredLanguageScope,
@@ -24,6 +26,7 @@ import {
   modelDownloadStateSchema,
   modelLibrarySnapshotSchema,
   pasteResultSchema,
+  pillStateSnapshotSchema,
   providerValidationResultSchema,
   sttModelRecommendationSchema,
   sttRuntimeInstallStateSchema,
@@ -32,6 +35,7 @@ import {
 
 export const murmurClient = {
   getState: (): Promise<AppStateSnapshot> => window.murmur.getState().then(parseState),
+  getPillState: (): Promise<PillStateSnapshot> => window.murmur.getPillState().then(parsePillState),
   updateSettings: (patch: Partial<AppSettings>): Promise<AppStateSnapshot> => window.murmur.updateSettings(patch).then(parseState),
   beginHotkeyCapture: (): Promise<void> => window.murmur.beginHotkeyCapture().then(() => undefined),
   endHotkeyCapture: (): Promise<void> => window.murmur.endHotkeyCapture().then(() => undefined),
@@ -82,7 +86,9 @@ export const murmurClient = {
   clearLocalData: (): Promise<AppStateSnapshot> => window.murmur.clearLocalData().then(parseState),
   onStateChanged: (callback: (state: AppStateSnapshot) => void): (() => void) =>
     window.murmur.onStateChanged((state) => callback(parseState(state))),
-  onRecordingStart: (callback: (payload: { sessionId: string }) => void): (() => void) => window.murmur.onRecordingStart(callback),
+  onPillStateChanged: (callback: (state: PillStateSnapshot) => void): (() => void) =>
+    window.murmur.onPillStateChanged((state) => callback(parsePillState(state))),
+  onRecordingStart: (callback: (payload: RecordingStartPayload) => void): (() => void) => window.murmur.onRecordingStart(callback),
   onRecordingStop: (callback: (payload: { sessionId: string }) => void): (() => void) => window.murmur.onRecordingStop(callback),
   onRecordingCancel: (callback: (payload: { sessionId: string }) => void): (() => void) => window.murmur.onRecordingCancel(callback),
   onRecordingLevel: (callback: (payload: RecordingLevelPayload) => void): (() => void) => window.murmur.onRecordingLevel(callback),
@@ -95,6 +101,10 @@ export const murmurClient = {
 
 function parseState(value: unknown): AppStateSnapshot {
   return appStateSnapshotSchema.parse(value) as AppStateSnapshot;
+}
+
+function parsePillState(value: unknown): PillStateSnapshot {
+  return pillStateSnapshotSchema.parse(value) as PillStateSnapshot;
 }
 
 function parseProviderValidation(value: unknown): ProviderValidationResult {

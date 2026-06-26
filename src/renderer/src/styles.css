@@ -178,7 +178,6 @@ pre {
   width: 5px;
   height: 24px;
   border-radius: 999px;
-  background: rgba(248, 248, 246, 0.94);
   opacity: 0.96;
   transform: scaleY(var(--bar-scale, 0.22));
   transform-origin: center;
@@ -186,6 +185,22 @@ pre {
     opacity 120ms ease,
     transform 70ms linear;
   will-change: transform, opacity;
+}
+
+.recording-wave__bar::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: rgba(248, 248, 246, 0.94);
+  content: "";
+  transform-origin: center;
+  will-change: transform, opacity;
+}
+
+.recording-wave--recording .recording-wave__bar::before {
+  animation: recording-pill-recording 980ms ease-in-out infinite;
+  animation-delay: var(--bar-recording-delay, 0ms);
 }
 
 .recording-wave--processing .recording-wave__bar {
@@ -196,6 +211,24 @@ pre {
 .recording-wave--muted .recording-wave__bar {
   opacity: 0.42;
   transform: scaleY(0.28);
+}
+
+@keyframes recording-pill-recording {
+  0%,
+  100% {
+    opacity: 0.82;
+    transform: scaleY(0.9);
+  }
+
+  42% {
+    opacity: 1;
+    transform: scaleY(1.08);
+  }
+
+  72% {
+    opacity: 0.92;
+    transform: scaleY(0.98);
+  }
 }
 
 @keyframes recording-pill-wave {
@@ -295,6 +328,12 @@ pre {
     animation: none;
     opacity: 0.72;
     transform: scaleY(0.42);
+  }
+
+  .recording-wave--recording .recording-wave__bar::before {
+    animation: none;
+    opacity: 1;
+    transform: none;
   }
 
   .mode-popover-popup,

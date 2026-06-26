@@ -17,6 +17,7 @@ import type {
   ModelCatalogItem,
   ModelLibrarySnapshot,
   ModeConfig,
+  PillStateSnapshot,
   RecordingLevelPayload,
   ReplacementRule,
   SttPreferredLanguageScope,
@@ -87,6 +88,7 @@ export class AppController {
   private sessionContext: ContextSnapshot | null = null;
   private pendingContextCapture: { sessionId: string; promise: Promise<ContextSnapshot> } | null = null;
   private recordingStoppedAt: string | null = null;
+  private pillHideTimer: ReturnType<typeof setTimeout> | null = null;
   private pushToTalkPressed = false;
   private pushToTalkSessionId: string | null = null;
   private hotkeyBackend: CapabilityReport["hotkeys"]["backend"] = "electron_global_shortcut";
@@ -134,6 +136,7 @@ export class AppController {
     this.closeToTrayNotification = null;
     this.tray?.destroy();
     this.tray = null;
+    this.clearPillHideTimer();
   }
 
   async initialize(): Promise<void> {
@@ -215,7 +218,8 @@ export class AppController {
       webPreferences: {
         preload: join(__dirname, "../preload/index.cjs"),
         contextIsolation: true,
-        nodeIntegration: false
+        nodeIntegration: false,
+        backgroundThrottling: false
       }
     });
     this.pillWindow = window;
@@ -355,6 +359,7 @@ export class AppController {
 
   private registerIpc(): void {
     ipcMain.handle("app:get-state", () => this.getSnapshot());
+    ipcMain.handle("app:get-pill-state", () => this.getPillSnapshot());
     ipcMain.handle("settings:update", async (_event, patch: Partial<AppSettings>) => {
       const state = this.storage.updateSettings(patch);
       this.applySettings(state.settings);
@@ -740,7 +745,10 @@ export class AppController {
     };
 
     this.showPill();
-    this.mainWindow?.webContents.send("recording:start", { sessionId: this.session.id });
+    this.mainWindow?.webContents.send("recording:start", {
+      sessionId: this.session.id,
+      preferredAudioInputId: persisted.settings.preferredAudioInputId
+    });
     this.broadcastState();
     this.beginRecordingContextCapture(sessionId, persisted);
     return this.getSnapshot();
@@ -1070,17 +1078,35 @@ export class AppController {
 
   private showPill(): void {
     if (!this.pillWindow) return;
+    this.clearPillHideTimer();
     this.configurePillWindow();
     this.positionPillWindow();
     this.pillWindow.showInactive();
   }
 
   private hidePillSoon(): void {
-    setTimeout(() => this.pillWindow?.hide(), 1800).unref();
+    this.clearPillHideTimer();
+    this.pillHideTimer = setTimeout(() => {
+      this.pillHideTimer = null;
+      if (this.isPillSessionActive()) return;
+      this.pillWindow?.hide();
+    }, 1800);
+    this.pillHideTimer.unref();
   }
 
   private hidePill(): void {
+    this.clearPillHideTimer();
     this.pillWindow?.hide();
+  }
+
+  private clearPillHideTimer(): void {
+    if (!this.pillHideTimer) return;
+    clearTimeout(this.pillHideTimer);
+    this.pillHideTimer = null;
+  }
+
+  private isPillSessionActive(): boolean {
+    return ["recording", "transcribing", "processing", "pasting"].includes(this.session.status);
   }
 
   private notifyPasteFallback(message: string): void {
@@ -1105,7 +1131,7 @@ export class AppController {
     if (!this.pillWindow) return;
 
     const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-    const position = this.storage.getState().settings.recordingPillPosition;
+    const position = this.storage.getSettings().recordingPillPosition;
     const { x, y, width, height } = display.workArea;
     const pillX =
       position === "bottom_left"
@@ -1129,6 +1155,13 @@ export class AppController {
       sttSetup: this.sttSetup.getSnapshot(),
       session: this.session,
       capabilities: this.getCapabilities()
+    };
+  }
+
+  private getPillSnapshot(snapshot?: AppStateSnapshot): PillStateSnapshot {
+    return {
+      session: this.session,
+      theme: snapshot?.settings.theme ?? this.storage.getSettings().theme
     };
   }
 
@@ -1175,7 +1208,7 @@ export class AppController {
   private broadcastState(): void {
     const snapshot = this.getSnapshot();
     this.mainWindow?.webContents.send("state:changed", snapshot);
-    this.pillWindow?.webContents.send("state:changed", snapshot);
+    this.pillWindow?.webContents.send("pill-state:changed", this.getPillSnapshot(snapshot));
   }
 }
 

@@ -7,8 +7,10 @@ import type {
   ModelDownloadState,
   ModelLibrarySnapshot,
   ModeConfig,
+  PillStateSnapshot,
   ProviderValidationResult,
   RecordingLevelPayload,
+  RecordingStartPayload,
   ReplacementRule,
   SttModelRecommendation,
   SttPreferredLanguageScope,
@@ -23,6 +25,7 @@ const { contextBridge, ipcRenderer } = require("electron") as typeof import("ele
 
 const api = {
   getState: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("app:get-state"),
+  getPillState: (): Promise<PillStateSnapshot> => ipcRenderer.invoke("app:get-pill-state"),
   updateSettings: (patch: Partial<AppSettings>): Promise<AppStateSnapshot> => ipcRenderer.invoke("settings:update", patch),
   beginHotkeyCapture: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("hotkeys:capture-start"),
   endHotkeyCapture: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("hotkeys:capture-end"),
@@ -77,8 +80,15 @@ const api = {
       ipcRenderer.removeListener("state:changed", listener);
     };
   },
-  onRecordingStart: (callback: (payload: { sessionId: string }) => void) => {
-    const listener = (_event: IpcRendererEvent, payload: { sessionId: string }): void => callback(payload);
+  onPillStateChanged: (callback: (state: PillStateSnapshot) => void) => {
+    const listener = (_event: IpcRendererEvent, state: PillStateSnapshot): void => callback(state);
+    ipcRenderer.on("pill-state:changed", listener);
+    return () => {
+      ipcRenderer.removeListener("pill-state:changed", listener);
+    };
+  },
+  onRecordingStart: (callback: (payload: RecordingStartPayload) => void) => {
+    const listener = (_event: IpcRendererEvent, payload: RecordingStartPayload): void => callback(payload);
     ipcRenderer.on("recording:start", listener);
     return () => {
       ipcRenderer.removeListener("recording:start", listener);

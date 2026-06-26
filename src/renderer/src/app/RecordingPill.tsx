@@ -1,5 +1,5 @@
 import { useEffect, useRef, type CSSProperties, type JSX } from "react";
-import type { AppStateSnapshot } from "../../../shared/types";
+import type { PillStateSnapshot } from "../../../shared/types";
 import { cn } from "../lib/cn";
 import { murmurClient } from "../lib/murmur-client";
 
@@ -12,11 +12,12 @@ const barStyles = barWeights.map(
   (_, index) =>
     ({
       "--bar-delay": `${index * 70}ms`,
+      "--bar-recording-delay": `${index * -80}ms`,
       "--bar-scale": idleBarScale.toString()
     }) as CSSProperties
 );
 
-export function RecordingPill({ state }: { state: AppStateSnapshot }): JSX.Element {
+export function RecordingPill({ state }: { state: PillStateSnapshot }): JSX.Element {
   const { id: sessionId, status } = state.session;
   const isRecording = status === "recording";
   const isProcessing = status === "transcribing" || status === "processing";
@@ -88,7 +89,14 @@ export function RecordingPill({ state }: { state: AppStateSnapshot }): JSX.Eleme
   return (
     <div className="recording-pill-shell">
       <div className="recording-pill" role="status" aria-label={ariaLabel}>
-        <div className={cn("recording-wave", isProcessing && "recording-wave--processing", !isRecording && !isProcessing && "recording-wave--muted")}>
+        <div
+          className={cn(
+            "recording-wave",
+            isRecording && "recording-wave--recording",
+            isProcessing && "recording-wave--processing",
+            !isRecording && !isProcessing && "recording-wave--muted"
+          )}
+        >
           {barStyles.map((style, index) => (
             <span
               key={`recording-bar-${index}`}
