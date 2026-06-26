@@ -19,6 +19,7 @@ import type {
   DictationModeKind,
   LlmProviderConfig,
   LlmProviderType,
+  ModelCatalogItem,
   ModelKind,
   ModelDownloadState,
   ModelLibrarySnapshot,
@@ -204,7 +205,7 @@ export class StorageService {
     const state = this.getState();
     const downloads = state.modelLibrary.downloads.filter((candidate) => candidate.modelId !== download.modelId);
     state.modelLibrary = this.normalizeModelLibrary({
-      catalog: modelCatalog,
+      catalog: state.modelLibrary.catalog,
       downloads: [download, ...downloads],
       activeModelIds: state.modelLibrary.activeModelIds
     });
@@ -215,7 +216,7 @@ export class StorageService {
   deleteModelDownload(modelId: string): PersistedState {
     const state = this.getState();
     state.modelLibrary = this.normalizeModelLibrary({
-      catalog: modelCatalog,
+      catalog: state.modelLibrary.catalog,
       downloads: state.modelLibrary.downloads.filter((download) => download.modelId !== modelId),
       activeModelIds: state.modelLibrary.activeModelIds
     });
@@ -581,7 +582,13 @@ export class StorageService {
     const defaultIds = new Set(defaultLlmProviders.map((provider) => provider.id));
     const usableProviders = providers.filter((provider) => !isRemovedLlmProvider(provider));
     const byId = new Map(usableProviders.filter((provider) => isNonEmptyString(provider.id)).map((provider) => [provider.id!, provider]));
-    const normalizedDefaults = defaultLlmProviders.map((defaultProvider) => normalizeLlmProvider(defaultProvider, byId.get(defaultProvider.id)));
+    const normalizedDefaults = defaultLlmProviders.map((defaultProvider) => {
+      const existing = byId.get(defaultProvider.id);
+      if (defaultProvider.id === "lmstudio" && existing && isLegacyDisabledLmStudioProvider(existing)) {
+        return clone(defaultProvider);
+      }
+      return normalizeLlmProvider(defaultProvider, existing);
+    });
     const customProviders = usableProviders
       .filter((provider) => isNonEmptyString(provider.id) && !defaultIds.has(provider.id))
       .map((provider) => normalizeLlmProvider(undefined, provider));
@@ -590,20 +597,22 @@ export class StorageService {
   }
 
   private normalizeModelLibrary(modelLibrary: ModelLibrarySnapshot | undefined): ModelLibrarySnapshot {
-    const catalogIds = new Set(modelCatalog.map((item) => item.id));
+    const catalog = normalizedModelCatalog(modelLibrary?.catalog);
+    const catalogById = new Map(catalog.map((item) => [item.id, item]));
+    const catalogIds = new Set(catalogById.keys());
     const activeModelIds: ModelLibrarySnapshot["activeModelIds"] = {};
     const activeVoiceModelId = modelLibrary?.activeModelIds?.voice;
     const activeLanguageModelId = modelLibrary?.activeModelIds?.language;
 
-    if (activeVoiceModelId && catalogIds.has(activeVoiceModelId)) {
+    if (activeVoiceModelId && catalogById.get(activeVoiceModelId)?.kind === "voice") {
       activeModelIds.voice = activeVoiceModelId;
     }
-    if (activeLanguageModelId && catalogIds.has(activeLanguageModelId)) {
+    if (activeLanguageModelId && catalogById.get(activeLanguageModelId)?.kind === "language") {
       activeModelIds.language = activeLanguageModelId;
     }
 
     return {
-      catalog: modelCatalog,
+      catalog,
       downloads: (modelLibrary?.downloads ?? [])
         .filter((download) => catalogIds.has(download.modelId))
         .map((download) => ({
@@ -756,12 +765,81 @@ function normalizeLlmProvider(
   };
 }
 
+function isLegacyDisabledLmStudioProvider(provider: Partial<LlmProviderConfig>): boolean {
+  return (
+    provider.id === "lmstudio" &&
+    provider.type === "lmstudio" &&
+    (provider.name === undefined || provider.name === "LM Studio") &&
+    (provider.baseUrl === undefined || provider.baseUrl === "http://127.0.0.1:1234/v1") &&
+    (provider.defaultModel === undefined || provider.defaultModel === "local-model") &&
+    provider.enabled === false &&
+    (provider.apiKey === undefined || provider.apiKey === "")
+  );
+}
+
 function isRemovedLlmProvider(provider: Partial<LlmProviderConfig>): boolean {
   return (
     removedLlmProviderIds.has(String(provider.id ?? "").toLowerCase()) ||
     removedLlmProviderTypes.has(String(provider.type ?? "").toLowerCase()) ||
     removedLlmProviderNames.has(String(provider.name ?? "").toLowerCase())
   );
+}
+
+function normalizedModelCatalog(catalog: Array<Partial<ModelCatalogItem>> | undefined): ModelCatalogItem[] {
+  const normalized = [...modelCatalog];
+  const seenIds = new Set(normalized.map((item) => item.id));
+
+  for (const item of catalog ?? []) {
+    const discovered = normalizeDiscoveredModelCatalogItem(item);
+    if (!discovered || seenIds.has(discovered.id)) continue;
+    seenIds.add(discovered.id);
+    normalized.push(discovered);
+  }
+
+  return normalized;
+}
+
+function normalizeDiscoveredModelCatalogItem(item: Partial<ModelCatalogItem>): ModelCatalogItem | null {
+  if (!isNonEmptyString(item.id) || item.kind !== "language" || !isDiscoveryProvider(item.provider)) return null;
+  const discovery = item.discovery;
+  if (!discovery || !isNonEmptyString(discovery.providerId)) return null;
+  const model = item.defaultProviderConfig?.model;
+  if (!isNonEmptyString(model)) return null;
+
+  return {
+    id: item.id,
+    name: isNonEmptyString(item.name) ? item.name : model,
+    kind: "language",
+    provider: item.provider,
+    description: isNonEmptyString(item.description) ? item.description : `${providerDisplayName(item.provider)} local language model.`,
+    isCloud: false,
+    isOffline: true,
+    tags: normalizeTags(item.tags, ["llm", "local", item.provider, "discovered"]),
+    downloadStrategy: "none",
+    discovery: {
+      providerId: discovery.providerId,
+      lastSeenAt: isNonEmptyString(discovery.lastSeenAt) ? discovery.lastSeenAt : undefined,
+      reachable: Boolean(discovery.reachable),
+      message: isNonEmptyString(discovery.message) ? discovery.message : undefined
+    },
+    defaultProviderConfig: {
+      llmProviderType: item.provider,
+      model
+    }
+  };
+}
+
+function isDiscoveryProvider(provider: unknown): provider is "ollama" | "lmstudio" {
+  return provider === "ollama" || provider === "lmstudio";
+}
+
+function normalizeTags(tags: unknown, fallback: string[]): string[] {
+  const normalized = Array.isArray(tags) ? tags.filter((tag): tag is string => isNonEmptyString(tag)) : [];
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+function providerDisplayName(provider: "ollama" | "lmstudio"): string {
+  return provider === "ollama" ? "Ollama" : "LM Studio";
 }
 
 function normalizeExamples(examples: unknown): ModeConfig["examples"] {

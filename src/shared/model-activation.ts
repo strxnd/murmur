@@ -14,6 +14,7 @@ const providerLabels: Record<ModelProvider, string> = {
   whisper_cpp: "whisper.cpp",
   nvidia: "NVIDIA",
   ollama: "Ollama",
+  lmstudio: "LM Studio",
   openai: "OpenAI",
   anthropic: "Anthropic",
   google: "Google"
@@ -138,6 +139,7 @@ function sttProviderName(item: ModelCatalogItem): string {
 
 function llmProviderName(item: ModelCatalogItem): string {
   if (item.defaultProviderConfig?.llmProviderType === "ollama") return "Ollama";
+  if (item.defaultProviderConfig?.llmProviderType === "lmstudio") return "LM Studio";
   return `${providerLabel(item.provider)} language`;
 }
 

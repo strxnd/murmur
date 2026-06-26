@@ -21,7 +21,7 @@ export const llmProviderTypeSchema = z.enum([
   "custom_openai_compatible"
 ]);
 export const modelKindSchema = z.enum(["voice", "language"]);
-export const modelProviderSchema = z.enum(["whisper_cpp", "nvidia", "ollama", "openai", "anthropic", "google"]);
+export const modelProviderSchema = z.enum(["whisper_cpp", "nvidia", "ollama", "lmstudio", "openai", "anthropic", "google"]);
 export const modelDownloadStrategySchema = z.enum(["direct_file", "archive", "ollama_pull", "none"]);
 export const modelDownloadStatusSchema = z.enum(["not_downloaded", "downloading", "downloaded", "error"]);
 export const sttRuntimeIdSchema = z.enum(["whisper.cpp", "sherpa-onnx"]);
@@ -94,6 +94,14 @@ export const modelCatalogItemSchema = z.object({
   filename: optionalStringSchema,
   extractDir: optionalStringSchema,
   ollamaModel: optionalStringSchema,
+  discovery: z
+    .object({
+      providerId: z.string().min(1),
+      lastSeenAt: optionalStringSchema,
+      reachable: z.boolean(),
+      message: optionalStringSchema
+    })
+    .optional(),
   defaultProviderConfig: z
     .object({
       sttProviderType: transcriptionProviderTypeSchema.optional(),

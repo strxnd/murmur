@@ -1,5 +1,6 @@
 import type { LlmProviderConfig, ProcessedResult } from "../../shared/types";
 import { fetchWithTimeout, joinUrl, parseJsonOrText } from "./http";
+import { llmProviderAuthHeaders } from "./provider-auth";
 
 interface LlmOptions {
   provider: LlmProviderConfig;
@@ -33,7 +34,7 @@ export class LlmService {
     }
 
     const path = provider.type === "ollama" ? "/api/tags" : provider.type === "google" ? "" : "/models";
-    const response = await fetchWithTimeout(joinUrl(provider.baseUrl, path), { headers: this.headers(provider) }, 8000);
+    const response = await fetchWithTimeout(joinUrl(provider.baseUrl, path), { headers: llmProviderAuthHeaders(provider) }, 8000);
     if (response.status === 401 || response.status === 403) return { ok: false, message: "Authentication failed." };
     return { ok: response.ok || response.status < 500, message: `Provider responded with HTTP ${response.status}.` };
   }
@@ -62,7 +63,7 @@ export class LlmService {
       joinUrl(options.provider.baseUrl || "https://api.openai.com/v1", "/chat/completions"),
       {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...this.headers(options.provider) },
+        headers: { "Content-Type": "application/json", ...llmProviderAuthHeaders(options.provider) },
         body: JSON.stringify({
           model: options.provider.defaultModel || "gpt-4.1-mini",
           temperature: 0.2,
@@ -130,11 +131,5 @@ export class LlmService {
     const data = await parseJsonOrText(response);
     const text = data?.candidates?.[0]?.content?.parts?.map((part: any) => part.text).join("").trim() ?? "";
     return { text, providerId: options.provider.id, model };
-  }
-
-  private headers(provider: LlmProviderConfig): HeadersInit {
-    if (!provider.apiKey) return {};
-    if (provider.type === "anthropic") return { "x-api-key": provider.apiKey };
-    return { Authorization: `Bearer ${provider.apiKey}` };
   }
 }

@@ -1033,6 +1033,7 @@ export class AppController {
     const modelId = modelLibrary.activeModelIds[kind];
     const item = modelId ? modelLibrary.catalog.find((candidate) => candidate.id === modelId && candidate.kind === kind) : undefined;
     if (!item) return undefined;
+    if (item.discovery && !item.discovery.reachable) return undefined;
     if (kind === "voice") {
       const runtimeId = sttRuntimeIdForModel(item);
       if (runtimeId && this.runtimeService.getAvailability(runtimeId).status !== "available") return undefined;

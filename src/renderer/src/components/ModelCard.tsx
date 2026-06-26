@@ -30,7 +30,7 @@ export function ModelCard({
   const progress = status === "downloading" ? progressLabel(download) : statusLabel(status);
   const canDownload = item.downloadStrategy !== "none" && status !== "downloading" && status !== "downloaded";
   const canDelete = item.downloadStrategy !== "none" && status === "downloaded";
-  const canActivate = canActivateModel(item) && (item.downloadStrategy === "none" || status === "downloaded");
+  const canActivate = canActivateModel(item) && (!item.discovery || item.discovery.reachable) && (item.downloadStrategy === "none" || status === "downloaded");
   const cardParent = useAutoAnimateRef<HTMLElement>();
 
   return (
@@ -94,6 +94,7 @@ function providerLabel(provider: ModelCatalogItem["provider"]): string {
     whisper_cpp: "whisper.cpp",
     nvidia: "NVIDIA",
     ollama: "Ollama",
+    lmstudio: "LM Studio",
     openai: "OpenAI",
     anthropic: "Anthropic",
     google: "Google"

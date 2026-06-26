@@ -24,7 +24,6 @@ import type {
   SttRuntimeInstallState
 } from "../../../shared/types";
 import { canActivateModel, isModelProviderUsable, providerLabel } from "../../../shared/model-activation";
-import { modelListCatalogIds } from "../../../shared/model-catalog";
 import {
   buildProviderSetupDraft,
   currentProviderSetupApiKey,
@@ -52,6 +51,8 @@ const providers: Array<{ value: "all" | ModelProvider; label: string }> = [
   { value: "all", label: "All providers" },
   { value: "whisper_cpp", label: "whisper.cpp" },
   { value: "nvidia", label: "NVIDIA" },
+  { value: "ollama", label: "Ollama" },
+  { value: "lmstudio", label: "LM Studio" },
   { value: "openai", label: "OpenAI" },
   { value: "anthropic", label: "Anthropic" },
   { value: "google", label: "Google" }
@@ -84,7 +85,6 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
     () => new Map(state.modelLibrary.downloads.map((download) => [download.modelId, download])),
     [state.modelLibrary.downloads]
   );
-  const modelListIds = useMemo(() => new Set<string>(modelListCatalogIds), []);
 
   useEffect(() => {
     void getModelLibrary();
@@ -94,19 +94,18 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
     const needle = query.trim().toLowerCase();
     return state.modelLibrary.catalog.filter((item) => {
       const download = downloadsById.get(item.id);
-      if (!modelListIds.has(item.id)) return false;
       if (provider !== "all" && item.provider !== provider) return false;
       if (filter === "voice" && item.kind !== "voice") return false;
       if (filter === "language" && item.kind !== "language") return false;
       if (filter === "offline" && !item.isOffline) return false;
       if (filter === "favorites" && !download?.favorite) return false;
-      if (filter === "downloaded" && download?.status !== "downloaded") return false;
+      if (filter === "downloaded" && !isModelDownloadedOrAvailable(item, download)) return false;
       if (!needle) return true;
-      return [item.name, providerLabel(item.provider), item.description, ...item.tags]
+      return [item.name, providerLabel(item.provider), item.description, item.discovery?.message, ...item.tags]
         .filter(Boolean)
         .some((value) => value!.toLowerCase().includes(needle));
     });
-  }, [downloadsById, filter, modelListIds, provider, query, state.modelLibrary.catalog]);
+  }, [downloadsById, filter, provider, query, state.modelLibrary.catalog]);
 
   useEffect(() => {
     setOpenModelId((current) => (current && models.some((model) => model.id === current) ? current : null));
@@ -266,7 +265,10 @@ function ModelPopover({
   const runtimeBusy = runtime?.status === "downloading" || runtime?.status === "installing";
   const canCancelRuntimeDownload = runtime?.status === "downloading";
   const canActivate =
-    canActivateModel(item) && isModelProviderUsable(item, state) && (item.downloadStrategy === "none" || status === "downloaded");
+    canActivateModel(item) &&
+    isModelProviderUsable(item, state) &&
+    isModelCurrentlyAvailable(item) &&
+    (item.downloadStrategy === "none" || status === "downloaded");
   const setupTarget = resolveProviderSetupTarget(item);
   const [providerSetupOpen, setProviderSetupOpen] = useState(false);
   const popoverParent = useAutoAnimateRef<HTMLDivElement>();
@@ -315,6 +317,9 @@ function ModelPopover({
 
       {download?.error && <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">{download.error}</p>}
       {runtime && <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">{runtime.message}</p>}
+      {item.discovery?.message && (
+        <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">{item.discovery.message}</p>
+      )}
 
       {status === "downloading" && <ProgressBar value={progressValue(download)} label={`Downloading ${item.name}`} />}
       {runtimeBusy && <ProgressBar value={runtimeProgressValue(runtime)} label={`${runtime.label} runtime progress`} />}
@@ -373,7 +378,10 @@ function ModelPopover({
             <Check size={18} /> {active ? "Active" : "Activate"}
           </Button>
         )}
-        {item.downloadStrategy === "none" && !canActivate && setupTarget && (
+        {item.discovery && !item.discovery.reachable && (
+          <span className="inline-flex min-h-9 items-center gap-2 text-sm text-muted-foreground">Model unavailable</span>
+        )}
+        {item.downloadStrategy === "none" && !canActivate && !item.discovery && setupTarget && (
           <Dialog.Root open={providerSetupOpen} onOpenChange={setProviderSetupOpen}>
             <Dialog.Trigger render={<Button variant="primary" />}>
               <KeyRound size={18} /> Set up provider
@@ -390,7 +398,7 @@ function ModelPopover({
             />
           </Dialog.Root>
         )}
-        {item.downloadStrategy === "none" && !canActivate && !setupTarget && (
+        {item.downloadStrategy === "none" && !canActivate && !item.discovery && !setupTarget && (
           <span className="inline-flex min-h-9 items-center gap-2 text-sm text-muted-foreground">Provider setup required</span>
         )}
         {status === "downloaded" && !canActivate && (
@@ -590,6 +598,10 @@ function ModelGlyph({ item, active = false }: { item: ModelCatalogItem; active?:
 }
 
 function StatusBadge({ item, download }: { item: ModelCatalogItem; download?: ModelDownloadState }): JSX.Element {
+  if (item.discovery) {
+    return <Badge tone={item.discovery.reachable ? "success" : "warning"}>{item.discovery.reachable ? "Available" : "Unavailable"}</Badge>;
+  }
+
   if (item.downloadStrategy === "none") {
     return <Badge tone={item.isCloud ? "cloud" : "local"}>{providerModelLabel(item)}</Badge>;
   }
@@ -615,6 +627,7 @@ function RuntimeBadge({ item, runtime }: { item: ModelCatalogItem; runtime?: Stt
 }
 
 function providerModelLabel(item: ModelCatalogItem): string {
+  if (item.discovery) return item.discovery.reachable ? "Available local model" : "Unavailable local model";
   return item.isCloud ? "API-based model" : "Local";
 }
 
@@ -628,6 +641,16 @@ function modelGlyphStyle(provider: ModelProvider): CSSProperties {
     nvidia: {
       "--model-glyph-bg": "#76b900",
       "--model-glyph-border": "#76b900",
+      "--model-glyph-icon": "#ffffff"
+    } as CSSProperties,
+    ollama: {
+      "--model-glyph-bg": "#f7f7f2",
+      "--model-glyph-border": "#d8d8cf",
+      "--model-glyph-icon": "#111111"
+    } as CSSProperties,
+    lmstudio: {
+      "--model-glyph-bg": "#101828",
+      "--model-glyph-border": "#26364f",
       "--model-glyph-icon": "#ffffff"
     } as CSSProperties,
     openai: {
@@ -657,7 +680,16 @@ function kindLabel(kind: ModelCatalogItem["kind"]): string {
 function isActiveModel(state: AppStateSnapshot, item: ModelCatalogItem, download?: ModelDownloadState): boolean {
   if (state.modelLibrary.activeModelIds[item.kind] !== item.id) return false;
   if (!isModelProviderUsable(item, state)) return false;
+  if (!isModelCurrentlyAvailable(item)) return false;
   return item.downloadStrategy === "none" || download?.status === "downloaded";
+}
+
+function isModelCurrentlyAvailable(item: ModelCatalogItem): boolean {
+  return !item.discovery || item.discovery.reachable;
+}
+
+function isModelDownloadedOrAvailable(item: ModelCatalogItem, download?: ModelDownloadState): boolean {
+  return download?.status === "downloaded" || Boolean(item.discovery?.reachable);
 }
 
 function runtimeInstallForModel(state: AppStateSnapshot, item: ModelCatalogItem): SttRuntimeInstallState | undefined {

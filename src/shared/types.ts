@@ -27,6 +27,7 @@ export type ModelProvider =
   | "whisper_cpp"
   | "nvidia"
   | "ollama"
+  | "lmstudio"
   | "openai"
   | "anthropic"
   | "google";
@@ -134,6 +135,12 @@ export interface ModelCatalogItem {
   filename?: string;
   extractDir?: string;
   ollamaModel?: string;
+  discovery?: {
+    providerId: string;
+    lastSeenAt?: string;
+    reachable: boolean;
+    message?: string;
+  };
   defaultProviderConfig?: {
     sttProviderType?: TranscriptionProviderType;
     llmProviderType?: LlmProviderType;

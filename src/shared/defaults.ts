@@ -175,7 +175,7 @@ export const defaultLlmProviders: LlmProviderConfig[] = [
     baseUrl: "http://127.0.0.1:1234/v1",
     isCloud: false,
     defaultModel: "local-model",
-    enabled: false
+    enabled: true
   },
   {
     id: "openai-llm",

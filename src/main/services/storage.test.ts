@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { defaultLlmProviders, defaultModes, defaultSettings } from "../../shared/defaults";
-import type { DictationHistoryItem } from "../../shared/types";
+import type { DictationHistoryItem, ModelCatalogItem } from "../../shared/types";
 import { resolveAppPaths, type AppPaths } from "./app-paths";
 import { StorageService } from "./storage";
 
@@ -142,6 +142,23 @@ describe("StorageService", () => {
       type: "custom_openai_compatible",
       baseUrl: "https://example.test/v1"
     });
+  });
+
+  it("enables an untouched legacy LM Studio provider during migration", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        llmProviders: defaultLlmProviders.map((provider) =>
+          provider.id === "lmstudio" ? { ...provider, enabled: false } : provider
+        )
+      })
+    );
+
+    const storage = jsonStorage(paths);
+
+    expect(storage.getState().llmProviders.find((provider) => provider.id === "lmstudio")?.enabled).toBe(true);
   });
 
   it("seeds former presets as built-in modes during migration", () => {
@@ -428,6 +445,34 @@ describe("StorageService", () => {
     expect(existsSync(audioPath)).toBe(false);
     expect(existsSync(modelPath)).toBe(true);
   });
+
+  it("preserves discovered local model catalog entries, favorites, and active ids", () => {
+    const paths = testPaths();
+    const storage = jsonStorage(paths);
+    const discovered = discoveredModel("lmstudio:test-model");
+
+    storage.setModelLibrary({
+      catalog: [discovered],
+      downloads: [
+        {
+          modelId: discovered.id,
+          status: "not_downloaded",
+          progressBytes: 0,
+          favorite: true
+        }
+      ],
+      activeModelIds: { language: discovered.id }
+    });
+
+    const modelLibrary = storage.getState().modelLibrary;
+
+    expect(modelLibrary.catalog.find((item) => item.id === discovered.id)).toMatchObject({
+      provider: "lmstudio",
+      discovery: { providerId: "lmstudio", reachable: true }
+    });
+    expect(modelLibrary.downloads.find((download) => download.modelId === discovered.id)?.favorite).toBe(true);
+    expect(modelLibrary.activeModelIds.language).toBe(discovered.id);
+  });
 });
 
 function jsonStorage(paths: AppPaths): StorageService {
@@ -449,6 +494,30 @@ function historyItem(patch: Partial<DictationHistoryItem> = {}): DictationHistor
     llmProviderCloud: false,
     createdAt: "2026-01-01T00:00:00.000Z",
     ...patch
+  };
+}
+
+function discoveredModel(id: string): ModelCatalogItem {
+  return {
+    id,
+    name: "test-model",
+    kind: "language",
+    provider: "lmstudio",
+    description: "Discovered test model.",
+    isCloud: false,
+    isOffline: true,
+    tags: ["llm", "local", "lmstudio", "discovered"],
+    downloadStrategy: "none",
+    discovery: {
+      providerId: "lmstudio",
+      lastSeenAt: "2026-06-26T00:00:00.000Z",
+      reachable: true,
+      message: "Available from LM Studio."
+    },
+    defaultProviderConfig: {
+      llmProviderType: "lmstudio",
+      model: "test-model"
+    }
   };
 }
 

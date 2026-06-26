@@ -1,4 +1,4 @@
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -203,6 +203,153 @@ describe("ModelLibraryService", () => {
     expect(download?.localPath).toBeUndefined();
     expect(snapshot.activeModelIds.voice).toBeUndefined();
   });
+
+  it("discovers Ollama models and remembers them when the provider is unavailable", async () => {
+    const paths = testPaths();
+    const storage = new StorageService(paths);
+    const server = await jsonRouteServer({
+      "/api/tags": { models: [{ model: "llama3.1:8b" }, { name: "mistral:latest" }] }
+    });
+    storage.setLlmProviders(
+      storage.getState().llmProviders.map((provider) =>
+        provider.id === "ollama" ? { ...provider, baseUrl: server.url, enabled: true } : provider
+      )
+    );
+    const service = new ModelLibraryService(paths, storage, () => undefined, fakeRuntimeService("available"));
+
+    const onlineSnapshot = await service.getLibrary();
+    const discovered = onlineSnapshot.catalog.find((item) => item.id === "ollama:llama3.1:8b");
+
+    expect(discovered).toMatchObject({
+      kind: "language",
+      provider: "ollama",
+      discovery: { providerId: "ollama", reachable: true },
+      defaultProviderConfig: { llmProviderType: "ollama", model: "llama3.1:8b" }
+    });
+
+    await closeServer(server.server);
+    const offlineSnapshot = await service.getLibrary();
+    const remembered = offlineSnapshot.catalog.find((item) => item.id === "ollama:llama3.1:8b");
+
+    expect(remembered?.discovery?.reachable).toBe(false);
+    expect(remembered?.discovery?.message).toContain("Ollama is not reachable");
+  });
+
+  it("discovers LM Studio models from the native model API", async () => {
+    const { service, storage } = setup("available");
+    const server = await jsonRouteServer({
+      "/api/v0/models": { data: [{ id: "local/native-model", type: "llm" }, { id: "local/embed", type: "embedding" }] }
+    });
+    storage.setLlmProviders(
+      storage.getState().llmProviders.map((provider) =>
+        provider.id === "lmstudio" ? { ...provider, baseUrl: `${server.url}/v1`, enabled: true } : provider
+      )
+    );
+
+    try {
+      const snapshot = await service.getLibrary();
+
+      expect(snapshot.catalog.find((item) => item.id === "lmstudio:local/native-model")).toMatchObject({
+        provider: "lmstudio",
+        discovery: { providerId: "lmstudio", reachable: true },
+        defaultProviderConfig: { llmProviderType: "lmstudio", model: "local/native-model" }
+      });
+      expect(snapshot.catalog.some((item) => item.id === "lmstudio:local/embed")).toBe(false);
+    } finally {
+      await closeServer(server.server);
+    }
+  });
+
+  it("falls back to the LM Studio OpenAI-compatible models endpoint", async () => {
+    const { service, storage } = setup("available");
+    const server = await jsonRouteServer({
+      "/api/v0/models": { status: 404, body: { error: "not found" } },
+      "/v1/models": { data: [{ id: "fallback-model" }] }
+    });
+    storage.setLlmProviders(
+      storage.getState().llmProviders.map((provider) =>
+        provider.id === "lmstudio" ? { ...provider, baseUrl: `${server.url}/v1`, enabled: true } : provider
+      )
+    );
+
+    try {
+      const snapshot = await service.getLibrary();
+
+      expect(snapshot.catalog.find((item) => item.id === "lmstudio:fallback-model")).toMatchObject({
+        provider: "lmstudio",
+        discovery: { providerId: "lmstudio", reachable: true }
+      });
+    } finally {
+      await closeServer(server.server);
+    }
+  });
+
+  it("sends LM Studio provider auth headers while discovering models", async () => {
+    const { service, storage } = setup("available");
+    let nativeAuth: string | undefined;
+    let compatibleAuth: string | undefined;
+    const server = await jsonRouteServer({
+      "/api/v0/models": (request) => {
+        nativeAuth = request.headers.authorization;
+        return request.headers.authorization === "Bearer lmstudio-secret"
+          ? { status: 404, body: { error: "not found" } }
+          : { status: 401, body: { error: "unauthorized" } };
+      },
+      "/v1/models": (request) => {
+        compatibleAuth = request.headers.authorization;
+        return request.headers.authorization === "Bearer lmstudio-secret"
+          ? { data: [{ id: "authenticated-model" }] }
+          : { status: 401, body: { error: "unauthorized" } };
+      }
+    });
+    storage.setLlmProviders(
+      storage.getState().llmProviders.map((provider) =>
+        provider.id === "lmstudio"
+          ? { ...provider, baseUrl: `${server.url}/v1`, enabled: true, apiKey: "lmstudio-secret" }
+          : provider
+      )
+    );
+
+    try {
+      const snapshot = await service.getLibrary();
+
+      expect(nativeAuth).toBe("Bearer lmstudio-secret");
+      expect(compatibleAuth).toBe("Bearer lmstudio-secret");
+      expect(snapshot.catalog.find((item) => item.id === "lmstudio:authenticated-model")).toMatchObject({
+        provider: "lmstudio",
+        discovery: { providerId: "lmstudio", reachable: true }
+      });
+    } finally {
+      await closeServer(server.server);
+    }
+  });
+
+  it("activates reachable discovered models and blocks unavailable remembered models", async () => {
+    const { service, storage } = setup("available");
+    const server = await jsonRouteServer({
+      "/api/v0/models": { data: [{ id: "available-model", type: "llm" }] }
+    });
+    storage.setLlmProviders(
+      storage.getState().llmProviders.map((provider) =>
+        provider.id === "lmstudio" ? { ...provider, baseUrl: `${server.url}/v1`, enabled: true } : provider
+      )
+    );
+
+    try {
+      await service.getLibrary();
+      const activeSnapshot = await service.activateModel("lmstudio:available-model");
+
+      expect(activeSnapshot.activeModelIds.language).toBe("lmstudio:available-model");
+    } finally {
+      await closeServer(server.server);
+    }
+
+    await service.getLibrary();
+    storage.setActiveModel("language", undefined);
+    const unavailableSnapshot = await service.activateModel("lmstudio:available-model");
+
+    expect(unavailableSnapshot.activeModelIds.language).toBeUndefined();
+  });
 });
 
 function setup(status: SttRuntimeAvailability["status"]) {
@@ -326,6 +473,39 @@ function slowModelServer(chunks: string[], delayMs: number): Promise<{ server: S
       resolve({ server, url: `http://127.0.0.1:${address.port}/model.bin` });
     });
   });
+}
+
+type JsonRouteResponse = { status: number; body: unknown };
+type JsonRouteHandler = (request: IncomingMessage) => Record<string, unknown> | JsonRouteResponse;
+type JsonRoute = Record<string, unknown> | JsonRouteResponse | JsonRouteHandler;
+
+function jsonRouteServer(routes: Record<string, JsonRoute>): Promise<{ server: Server; url: string }> {
+  return new Promise((resolve) => {
+    const server = createServer((request, response) => {
+      const path = request.url ?? "";
+      if (!Object.prototype.hasOwnProperty.call(routes, path)) {
+        response.writeHead(404, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "not found" }));
+        return;
+      }
+
+      const route = routes[path];
+      const result = typeof route === "function" ? route(request) : route;
+      const status = isRouteResponse(result) ? result.status : 200;
+      const body = isRouteResponse(result) ? result.body : result;
+      response.writeHead(status, { "content-type": "application/json" });
+      response.end(JSON.stringify(body));
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Could not start test server.");
+      resolve({ server, url: `http://127.0.0.1:${address.port}` });
+    });
+  });
+}
+
+function isRouteResponse(value: unknown): value is JsonRouteResponse {
+  return Boolean(value && typeof value === "object" && "status" in value && "body" in value);
 }
 
 function closeServer(server: Server): Promise<void> {

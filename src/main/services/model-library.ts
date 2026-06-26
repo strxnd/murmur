@@ -3,8 +3,17 @@ import { createWriteStream, existsSync, mkdirSync, rmSync, renameSync } from "no
 import { dirname, join } from "node:path";
 import { canActivateModel, isModelProviderUsable } from "../../shared/model-activation";
 import { modelCatalog } from "../../shared/model-catalog";
-import type { ModelCatalogItem, ModelDownloadState, ModelKind, ModelLibrarySnapshot, SttRuntimeId } from "../../shared/types";
+import type {
+  LlmProviderConfig,
+  ModelCatalogItem,
+  ModelDownloadState,
+  ModelKind,
+  ModelLibrarySnapshot,
+  SttRuntimeId
+} from "../../shared/types";
 import type { AppPaths } from "./app-paths";
+import { joinUrl } from "./http";
+import { llmProviderAuthHeaders } from "./provider-auth";
 import { StorageService } from "./storage";
 import { SttRuntimeService } from "./stt-runtime";
 
@@ -32,6 +41,7 @@ export class ModelLibraryService {
 
   async getLibrary(): Promise<ModelLibrarySnapshot> {
     this.refreshCachedModelDownloadStates();
+    await this.refreshDiscoveredLocalModels();
     await this.refreshOllamaDownloadStates();
     return this.snapshot();
   }
@@ -145,7 +155,7 @@ export class ModelLibraryService {
   snapshot(): ModelLibrarySnapshot {
     const state = this.storage.getState();
     return {
-      catalog: modelCatalog,
+      catalog: state.modelLibrary.catalog,
       downloads: state.modelLibrary.downloads,
       activeModelIds: state.modelLibrary.activeModelIds
     };
@@ -484,6 +494,73 @@ export class ModelLibraryService {
     }
   }
 
+  private async refreshDiscoveredLocalModels(): Promise<void> {
+    const state = this.storage.getState();
+    const providers = state.llmProviders.filter(isBuiltInDiscoverableLlmProvider);
+    let catalog = state.modelLibrary.catalog;
+
+    for (const provider of providers) {
+      if (!provider.enabled) {
+        catalog = updateDiscoveredProviderAvailability(catalog, provider, false, `${provider.name} is disabled.`);
+        continue;
+      }
+
+      const result = await this.discoverLlmProviderModels(provider);
+      if (result.ok) {
+        catalog = mergeDiscoveredProviderModels(catalog, provider, result.models, new Date().toISOString());
+      } else {
+        catalog = updateDiscoveredProviderAvailability(catalog, provider, false, result.message);
+      }
+    }
+
+    if (!sameValue(catalog, state.modelLibrary.catalog)) {
+      this.storage.setModelLibrary({
+        ...this.storage.getState().modelLibrary,
+        catalog
+      });
+    }
+  }
+
+  private async discoverLlmProviderModels(
+    provider: LlmProviderConfig
+  ): Promise<{ ok: true; models: string[] } | { ok: false; message: string }> {
+    if (provider.type === "ollama") return this.discoverOllamaModels(provider);
+    return this.discoverLmStudioModels(provider);
+  }
+
+  private async discoverOllamaModels(provider: LlmProviderConfig): Promise<{ ok: true; models: string[] } | { ok: false; message: string }> {
+    const baseUrl = provider.baseUrl || ollamaBaseUrl;
+    try {
+      const response = await fetchWithTimeout(joinUrl(baseUrl, "/api/tags"), {}, 2500);
+      if (!response.ok) return { ok: false, message: `${provider.name} responded with HTTP ${response.status}.` };
+      return { ok: true, models: modelNamesFromPayload(await response.json()) };
+    } catch (error) {
+      return { ok: false, message: localProviderUnavailableMessage(provider, baseUrl, error) };
+    }
+  }
+
+  private async discoverLmStudioModels(
+    provider: LlmProviderConfig
+  ): Promise<{ ok: true; models: string[] } | { ok: false; message: string }> {
+    const baseUrl = provider.baseUrl || "http://127.0.0.1:1234/v1";
+    const headers = llmProviderAuthHeaders(provider);
+    const nativeUrl = joinUrl(lmStudioNativeBaseUrl(baseUrl), "/api/v0/models");
+    const native = await fetchModelNames(nativeUrl, headers);
+    if (native.ok && native.models.length > 0) return { ok: true, models: native.models };
+    const nativeError = native.ok ? undefined : native.error;
+
+    const compatibleUrl = joinUrl(baseUrl, "/models");
+    const compatible = await fetchModelNames(compatibleUrl, headers);
+    if (compatible.ok) return { ok: true, models: compatible.models };
+    const compatibleError = compatible.ok ? undefined : compatible.error;
+    if (native.ok) return { ok: true, models: [] };
+
+    return {
+      ok: false,
+      message: localProviderUnavailableMessage(provider, baseUrl, compatibleError ?? nativeError)
+    };
+  }
+
   private async deleteOllamaModel(model: string): Promise<void> {
     const response = await fetchWithTimeout(
       `${ollamaBaseUrl}/api/delete`,
@@ -517,7 +594,7 @@ export class ModelLibraryService {
   }
 
   private findCatalogItem(modelId: string): ModelCatalogItem | undefined {
-    return modelCatalog.find((item) => item.id === modelId);
+    return this.storage.getState().modelLibrary.catalog.find((item) => item.id === modelId);
   }
 
   private getDownloadState(modelId: string): ModelDownloadState | undefined {
@@ -534,6 +611,7 @@ export class ModelLibraryService {
     if (!canActivateModel(item)) return false;
     const state = this.storage.getState();
     if (!isModelProviderUsable(item, state)) return false;
+    if (item.discovery && !item.discovery.reachable) return false;
     if (!this.isRequiredRuntimeAvailable(item)) return false;
     if (item.downloadStrategy === "none") return true;
     if (item.downloadStrategy === "direct_file" || item.downloadStrategy === "archive") {
@@ -583,6 +661,182 @@ function sttRuntimeIdForModel(item: ModelCatalogItem): SttRuntimeId | null {
   if (type === "whisper_cpp") return "whisper.cpp";
   if (type === "sherpa_onnx") return "sherpa-onnx";
   return null;
+}
+
+function isDiscoverableLlmProvider(provider: LlmProviderConfig): provider is LlmProviderConfig & { type: "ollama" | "lmstudio" } {
+  return provider.type === "ollama" || provider.type === "lmstudio";
+}
+
+function isBuiltInDiscoverableLlmProvider(provider: LlmProviderConfig): provider is LlmProviderConfig & { type: "ollama" | "lmstudio" } {
+  return provider.id === provider.type && isDiscoverableLlmProvider(provider);
+}
+
+function mergeDiscoveredProviderModels(
+  catalog: ModelCatalogItem[],
+  provider: LlmProviderConfig & { type: "ollama" | "lmstudio" },
+  models: string[],
+  now: string
+): ModelCatalogItem[] {
+  const uniqueModels = uniqueModelNames(models);
+  const discoveredById = new Map(uniqueModels.map((model) => [discoveredModelId(provider.type, model), discoveredModelItem(provider, model, now)]));
+  const seenIds = new Set<string>();
+  const merged = catalog.map((item) => {
+    if (!isDiscoveredFromProvider(item, provider)) return item;
+
+    const replacement = discoveredById.get(item.id);
+    if (replacement) {
+      seenIds.add(item.id);
+      return replacement;
+    }
+
+    return {
+      ...item,
+      discovery: {
+        ...item.discovery!,
+        reachable: false,
+        message: `${item.name} was not reported by ${provider.name} on the latest refresh.`
+      }
+    };
+  });
+
+  for (const [id, item] of discoveredById) {
+    if (!seenIds.has(id) && !merged.some((candidate) => candidate.id === id)) {
+      merged.push(item);
+    }
+  }
+
+  return merged;
+}
+
+function updateDiscoveredProviderAvailability(
+  catalog: ModelCatalogItem[],
+  provider: LlmProviderConfig,
+  reachable: boolean,
+  message: string
+): ModelCatalogItem[] {
+  return catalog.map((item) => {
+    if (!isDiscoveredFromProvider(item, provider)) return item;
+    return {
+      ...item,
+      discovery: {
+        ...item.discovery!,
+        reachable,
+        message
+      }
+    };
+  });
+}
+
+function isDiscoveredFromProvider(item: ModelCatalogItem, provider: Pick<LlmProviderConfig, "id" | "type">): boolean {
+  return item.discovery?.providerId === provider.id && item.provider === provider.type;
+}
+
+function discoveredModelItem(
+  provider: LlmProviderConfig & { type: "ollama" | "lmstudio" },
+  model: string,
+  now: string
+): ModelCatalogItem {
+  return {
+    id: discoveredModelId(provider.type, model),
+    name: model,
+    kind: "language",
+    provider: provider.type,
+    description: `${provider.name} local language model discovered from the running provider.`,
+    isCloud: false,
+    isOffline: true,
+    tags: ["llm", "local", provider.type, "discovered"],
+    downloadStrategy: "none",
+    discovery: {
+      providerId: provider.id,
+      lastSeenAt: now,
+      reachable: true,
+      message: `Available from ${provider.name}.`
+    },
+    defaultProviderConfig: {
+      llmProviderType: provider.type,
+      model
+    }
+  };
+}
+
+function discoveredModelId(provider: "ollama" | "lmstudio", model: string): string {
+  return `${provider}:${model}`;
+}
+
+async function fetchModelNames(
+  url: string,
+  headers: HeadersInit = {}
+): Promise<{ ok: true; models: string[] } | { ok: false; error: unknown }> {
+  try {
+    const response = await fetchWithTimeout(url, { headers }, 2500);
+    if (!response.ok) return { ok: false, error: new Error(`HTTP ${response.status}`) };
+    return { ok: true, models: modelNamesFromPayload(await response.json()) };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+
+function modelNamesFromPayload(payload: unknown): string[] {
+  const candidates = modelListCandidates(payload);
+  return uniqueModelNames(candidates.map(modelNameFromEntry).filter((value): value is string => Boolean(value)));
+}
+
+function modelListCandidates(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== "object") return [];
+  const record = payload as { data?: unknown; models?: unknown };
+  if (Array.isArray(record.data)) return record.data;
+  if (Array.isArray(record.models)) return record.models;
+  return [];
+}
+
+function modelNameFromEntry(entry: unknown): string | undefined {
+  if (typeof entry === "string") return nonEmpty(entry);
+  if (!entry || typeof entry !== "object") return undefined;
+
+  const record = entry as { id?: unknown; model?: unknown; name?: unknown; type?: unknown };
+  if (typeof record.type === "string" && record.type.length > 0 && record.type !== "llm") return undefined;
+  return nonEmpty(record.id) ?? nonEmpty(record.model) ?? nonEmpty(record.name);
+}
+
+function uniqueModelNames(models: string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const model of models) {
+    const trimmed = model.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    unique.push(trimmed);
+  }
+  return unique;
+}
+
+function lmStudioNativeBaseUrl(baseUrl: string): string {
+  try {
+    const url = new URL(baseUrl);
+    url.pathname = url.pathname.replace(/\/v1\/?$/, "") || "/";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return baseUrl.replace(/\/v1\/?$/, "").replace(/\/$/, "");
+  }
+}
+
+function localProviderUnavailableMessage(provider: Pick<LlmProviderConfig, "name">, baseUrl: string, error: unknown): string {
+  const errorText = message(error);
+  if (!errorText || errorText.includes("fetch failed") || errorText.includes("aborted")) {
+    return `${provider.name} is not reachable at ${baseUrl}.`;
+  }
+  return `${provider.name} is not reachable at ${baseUrl}: ${errorText}`;
+}
+
+function nonEmpty(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, signal?: AbortSignal): Promise<Response> {
