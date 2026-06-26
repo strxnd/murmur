@@ -53,11 +53,15 @@ The `build` block in `package.json` sets:
 
 - `appId: dev.murmur.app`
 - `afterPack: scripts/after-pack.cjs`
+- Linux distributable targets: `AppImage`, `deb`, and `rpm`
+- Linux package maintainer: `Kumar Aarav <kumaraarav@kumaraarav.dev>`
 - packaged files from `out/**` and `package.json`
 - extra resource `resources/bin/linux-fast-paste` to `bin/linux-fast-paste`
 - extra resource `.cache/bundled-runtimes/runtimes` to `runtimes`
 
 `pack` and `dist` require prepared runtimes for the target platform. Run `mise run runtimes:prepare` first; staging fails before `electron-builder` if either runtime executable is missing.
+
+Building the `rpm` target also requires the host system to provide `rpmbuild`.
 
 ## Linux afterPack Launcher
 

@@ -8,7 +8,9 @@ interface WavRecorder {
 
 const levelNoiseFloor = 0.012;
 const levelSpeechCeiling = 0.12;
-const levelPublishIntervalMs = 50;
+const levelPublishIntervalMs = 32;
+const levelPublishHeartbeatMs = 180;
+const levelPublishMinDelta = 0.012;
 
 export function useRecordingBridge(enabled: boolean): void {
   const recorderRef = useRef<WavRecorder | null>(null);
@@ -94,6 +96,7 @@ async function startWavRecorder(stream: MediaStream, sessionId: string): Promise
   const chunks: Float32Array[] = [];
   let smoothedLevel = 0;
   let lastLevelPublishedAt = 0;
+  let lastPublishedLevel = 0;
   processor.onaudioprocess = (event) => {
     const input = event.inputBuffer;
     const output = new Float32Array(input.length);
@@ -110,9 +113,13 @@ async function startWavRecorder(stream: MediaStream, sessionId: string): Promise
     smoothedLevel += (targetLevel - smoothedLevel) * smoothing;
 
     const now = performance.now();
-    if (now - lastLevelPublishedAt >= levelPublishIntervalMs) {
+    const elapsedSincePublish = now - lastLevelPublishedAt;
+    const nextPublishedLevel = Math.round(smoothedLevel * 1000) / 1000;
+    const levelDelta = Math.abs(nextPublishedLevel - lastPublishedLevel);
+    if (elapsedSincePublish >= levelPublishIntervalMs && (levelDelta >= levelPublishMinDelta || elapsedSincePublish >= levelPublishHeartbeatMs)) {
       lastLevelPublishedAt = now;
-      murmurClient.publishRecordingLevel({ sessionId, level: smoothedLevel });
+      lastPublishedLevel = nextPublishedLevel;
+      murmurClient.publishRecordingLevel({ sessionId, level: nextPublishedLevel });
     }
   };
 

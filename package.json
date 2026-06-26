@@ -25,6 +25,14 @@
   "build": {
     "appId": "dev.murmur.app",
     "afterPack": "scripts/after-pack.cjs",
+    "linux": {
+      "maintainer": "Kumar Aarav <kumaraarav@kumaraarav.dev>",
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm"
+      ]
+    },
     "files": [
       "out/**",
       "package.json"
