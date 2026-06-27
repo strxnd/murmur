@@ -2,6 +2,12 @@
   "name": "murmur",
   "version": "0.1.0",
   "description": "System-wide AI dictation for Linux Wayland.",
+  "author": {
+    "name": "Kumar Aarav",
+    "email": "kumaraarav@kumaraarav.dev"
+  },
+  "license": "GPL-3.0",
+  "desktopName": "murmur",
   "main": "out/main/index.cjs",
   "private": true,
   "engines": {
@@ -10,6 +16,8 @@
   "scripts": {
     "dev": "env -u ELECTRON_RUN_AS_NODE electron-vite dev",
     "build": "tsc --noEmit && electron-vite build",
+    "clean": "node scripts/clean.mjs",
+    "clean:all": "node scripts/clean.mjs --all",
     "preview": "env -u ELECTRON_RUN_AS_NODE electron-vite preview",
     "lint": "tsc --noEmit",
     "test": "vitest run",
@@ -23,10 +31,15 @@
     "dist": "npm run build && npm run linux-helper:build && npm run runtimes:manifest-check && npm run runtimes:stage && electron-builder"
   },
   "build": {
-    "appId": "dev.murmur.app",
+    "appId": "dev.kumaraarav.murmur",
     "afterPack": "scripts/after-pack.cjs",
+    "productName": "Murmur",
     "linux": {
+      "category": "Utility",
+      "syncDesktopName": true,
       "maintainer": "Kumar Aarav <kumaraarav@kumaraarav.dev>",
+      "synopsis": "System-wide AI dictation",
+      "description": "System-wide AI dictation",
       "target": [
         "AppImage",
         "deb",
@@ -55,34 +68,34 @@
     ]
   },
   "dependencies": {
-    "@base-ui/react": "^1.5.0",
-    "@fontsource/instrument-serif": "^5.2.8",
-    "@formkit/auto-animate": "^0.9.0",
     "@homebridge/dbus-native": "^0.7.6",
-    "@hookform/resolvers": "^5.4.0",
-    "clsx": "^2.1.1",
     "electron-updater": "^6.6.2",
-    "lucide-react": "^0.561.0",
-    "react": "^19.2.1",
-    "react-dom": "^19.2.1",
-    "react-hook-form": "^7.78.0",
-    "tailwind-merge": "^3.6.0",
-    "zod": "^4.1.13",
-    "zustand": "^5.0.14"
+    "zod": "^4.1.13"
   },
   "devDependencies": {
+    "@base-ui/react": "^1.5.0",
     "@electron-toolkit/preload": "^3.0.2",
+    "@fontsource/instrument-serif": "^5.2.8",
+    "@formkit/auto-animate": "^0.9.0",
+    "@hookform/resolvers": "^5.4.0",
     "@tailwindcss/vite": "^4.3.0",
     "@types/node": "^25.0.1",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
+    "clsx": "^2.1.1",
     "electron": "^39.2.7",
     "electron-builder": "^26.15.3",
     "electron-vite": "^4.0.0",
+    "lucide-react": "^0.561.0",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "react-hook-form": "^7.78.0",
     "tailwindcss": "^4.3.0",
+    "tailwind-merge": "^3.6.0",
     "typescript": "^5.9.3",
     "vite": "^7.2.7",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.8",
+    "zustand": "^5.0.14"
   }
 }

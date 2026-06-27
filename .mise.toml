@@ -13,6 +13,14 @@ run = "npm run dev"
 description = "Typecheck and build production output."
 run = "npm run build"
 
+[tasks.clean]
+description = "Remove generated build and packaging output."
+run = "npm run clean"
+
+[tasks."clean:all"]
+description = "Remove generated output and prepared local runtime artifacts."
+run = "npm run clean:all"
+
 [tasks.preview]
 description = "Preview the built Electron app."
 run = "npm run preview"

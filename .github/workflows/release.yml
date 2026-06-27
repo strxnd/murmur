@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  draft-linux-release:
+    name: Draft Linux release
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential cmake rpm
+
+      - name: Install mise toolchain
+        uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate release tag
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          package_version="$(node -p "require('./package.json').version")"
+
+          if [ "$tag" = "$version" ]; then
+            echo "::error title=Invalid release tag::Release tags must use the v-prefixed form, for example v${package_version}."
+            exit 1
+          fi
+
+          if [ "$package_version" != "$version" ]; then
+            echo "::error title=Version mismatch::Tag ${tag} does not match package.json version ${package_version}."
+            exit 1
+          fi
+
+          notes_file="docs/releases/${tag}.md"
+          if [ ! -s "$notes_file" ]; then
+            echo "::error title=Missing release notes::Create ${notes_file} with meaningful release notes before pushing ${tag}."
+            exit 1
+          fi
+
+      - name: Typecheck
+        run: mise run lint
+
+      - name: Test
+        run: mise run test
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=moderate
+
+      - name: Prepare STT runtimes
+        run: |
+          mise run runtimes:prepare
+          mise run runtimes:doctor
+
+      - name: Build Linux artifacts
+        run: mise run dist
+
+      - name: Generate and verify checksums
+        run: |
+          node scripts/generate-linux-release-checksums.mjs
+          (cd dist && sha256sum -c SHA256SUMS-linux.txt)
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          notes_file="docs/releases/${tag}.md"
+          artifacts=(
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
+            dist/latest-linux.yml
+            dist/SHA256SUMS-linux.txt
+          )
+
+          gh release create "$tag" "${artifacts[@]}" \
+            --draft \
+            --title "Murmur ${tag#v}" \
+            --notes-file "$notes_file"

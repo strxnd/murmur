@@ -31,6 +31,8 @@ The mise tasks wrap the existing npm scripts in `package.json`; npm remains the 
 | `mise run install` | Install dependencies from `package-lock.json`. |
 | `mise run dev` | Start the Electron/Vite development app. |
 | `mise run build` | Run TypeScript checking and produce production Electron/Vite output in `out/`. |
+| `mise run clean` | Remove generated build and packaging output. |
+| `mise run clean:all` | Remove generated output and prepared local runtime artifacts. |
 | `mise run test` | Run the Vitest test suite. |
 | `mise run lint` | Run TypeScript type checking. |
 | `mise run preview` | Preview the built Electron app. |

@@ -71,6 +71,7 @@ resources/bin/linux-fast-paste
 # Local Codex artifacts
 .codex/audits/
 .codex/harvests/
+.codex/handoffs/
 
 # Local editor state
 .vscode/*

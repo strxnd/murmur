@@ -22,6 +22,8 @@ This starts Electron through Electron Vite. In development, `AppController.loadR
 | Command | Description |
 | --- | --- |
 | `mise run build` | Typecheck and build production output. |
+| `mise run clean` | Remove generated build and packaging output. |
+| `mise run clean:all` | Remove generated output and prepared local runtime artifacts. |
 | `mise run test` | Run Vitest tests. |
 | `mise run lint` | Run TypeScript checking only. |
 | `mise run preview` | Preview the built Electron app. |
@@ -45,3 +47,5 @@ Do not edit generated output directly:
 - `resources/bin/linux-fast-paste`
 
 Runtime and helper artifacts are generated as part of specific development or release workflows.
+
+Use `mise run clean` to remove build and package output while preserving prepared runtime directories. Use `mise run clean:all` when you also want to remove prepared local runtime artifacts and rebuild them with `mise run runtimes:prepare`.
