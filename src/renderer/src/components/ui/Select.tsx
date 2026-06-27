@@ -16,6 +16,7 @@ interface SelectProps<TValue extends string = string> {
   placeholder?: ReactNode;
   disabled?: boolean;
   name?: string;
+  "aria-label"?: string;
   className?: string;
   popupClassName?: string;
 }
@@ -27,6 +28,7 @@ export function Select<TValue extends string = string>({
   placeholder = "Select",
   disabled,
   name,
+  "aria-label": ariaLabel,
   className,
   popupClassName
 }: SelectProps<TValue>): ReactNode {
@@ -39,6 +41,7 @@ export function Select<TValue extends string = string>({
       name={name}
     >
       <BaseSelect.Trigger
+        aria-label={ariaLabel}
         className={cn(
           "flex min-h-9 w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-2.5 py-2 text-left text-sm text-foreground outline-none transition-colors focus-visible:border-foreground/70 focus-visible:ring-2 focus-visible:ring-foreground/20 data-[placeholder]:text-subtle data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50",
           className

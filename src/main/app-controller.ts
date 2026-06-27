@@ -1449,7 +1449,7 @@ export class AppController {
   }
 }
 
-function computeDurationMs(startedAt: string | undefined, stoppedAt: string): number | undefined {
+export function computeDurationMs(startedAt: string | undefined, stoppedAt: string): number | undefined {
   if (!startedAt) return undefined;
   const start = new Date(startedAt).getTime();
   const stop = new Date(stoppedAt).getTime();
@@ -1465,7 +1465,7 @@ function unavailableContext(message: string): ContextSnapshot {
   };
 }
 
-function countWords(text: string): number {
+export function countWords(text: string): number {
   return text
     .trim()
     .split(/\s+/)
@@ -1476,7 +1476,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function rendererQueryFromSuffix(suffix: string): Record<string, string> | undefined {
+export function rendererQueryFromSuffix(suffix: string): Record<string, string> | undefined {
   if (!suffix) return undefined;
   const params = new URLSearchParams(suffix.startsWith("?") ? suffix.slice(1) : suffix);
   const query: Record<string, string> = {};
@@ -1484,7 +1484,7 @@ function rendererQueryFromSuffix(suffix: string): Record<string, string> | undef
   return Object.keys(query).length > 0 ? query : undefined;
 }
 
-function wrapIndex(index: number, length: number): number {
+export function wrapIndex(index: number, length: number): number {
   if (length <= 0) return 0;
   return ((index % length) + length) % length;
 }

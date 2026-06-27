@@ -326,7 +326,7 @@ function ModeEditor({
         <div className="flex min-w-0 items-center gap-3">
           <ModeGlyph iconKey={mode.iconKey} active />
           <div className="min-w-0">
-            <h2 className="m-0 truncate text-base font-semibold text-foreground">{mode.name || "Mode"}</h2>
+            <Dialog.Title className="m-0 truncate text-base font-semibold text-foreground">{mode.name || "Mode"}</Dialog.Title>
             <p className="m-0 truncate text-xs text-muted-foreground">{modeKindLabel(mode.kind)}</p>
           </div>
         </div>
@@ -345,7 +345,12 @@ function ModeEditor({
 
       <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
         <Field label="Name" error={form.formState.errors.modes?.[index]?.name?.message}>
-          <Input {...form.register(`modes.${index}.name`)} readOnly={isBuiltInMode} className={cn(isBuiltInMode && "opacity-60")} />
+          <Input
+            aria-label="Mode name"
+            {...form.register(`modes.${index}.name`)}
+            readOnly={isBuiltInMode}
+            className={cn(isBuiltInMode && "opacity-60")}
+          />
         </Field>
         <Field label="Language">
           <Controller
@@ -353,7 +358,15 @@ function ModeEditor({
             name={`modes.${index}.language`}
             render={({ field }) => {
               const value = normalizeLanguageValue(field.value);
-              return <Select items={getLanguageItems(value)} value={value} onValueChange={field.onChange} disabled={isBuiltInMode} />;
+              return (
+                <Select
+                  aria-label="Mode language"
+                  items={getLanguageItems(value)}
+                  value={value}
+                  onValueChange={field.onChange}
+                  disabled={isBuiltInMode}
+                />
+              );
             }}
           />
         </Field>
@@ -399,6 +412,7 @@ function ModeEditor({
 
       <Field label="Instructions">
         <Textarea
+          aria-label="Mode instructions"
           className={cn("min-h-36", isBuiltInMode && "opacity-60")}
           {...form.register(`modes.${index}.instructionPrompt`)}
           readOnly={isBuiltInMode}
@@ -443,12 +457,14 @@ function ExamplesEditor({
       {examples.map((_example, exampleIndex) => (
         <div key={exampleIndex} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.5rem] gap-2 max-[760px]:grid-cols-1">
           <Input
+            aria-label={`Example ${exampleIndex + 1} input`}
             placeholder="Input"
             {...form.register(`modes.${selectedIndex}.examples.${exampleIndex}.input`)}
             readOnly={readOnly}
             className={cn(readOnly && "opacity-60")}
           />
           <Input
+            aria-label={`Example ${exampleIndex + 1} output`}
             placeholder="Output"
             {...form.register(`modes.${selectedIndex}.examples.${exampleIndex}.output`)}
             readOnly={readOnly}

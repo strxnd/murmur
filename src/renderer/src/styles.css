@@ -240,6 +240,11 @@ pre {
   scrollbar-color: color-mix(in srgb, var(--foreground) 28%, transparent) transparent;
 }
 
+.mode-selector-list:focus-visible {
+  border-radius: 14px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--foreground) 24%, transparent);
+}
+
 .mode-selector-list::-webkit-scrollbar {
   width: 8px;
 }
@@ -281,6 +286,7 @@ pre {
   border-radius: 12px;
   background: transparent;
   color: var(--foreground);
+  cursor: pointer;
   outline: none;
 }
 
@@ -296,7 +302,7 @@ pre {
   color: var(--foreground);
 }
 
-.mode-selector-row:disabled {
+.mode-selector-row[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.55;
 }
@@ -613,6 +619,17 @@ pre {
     linear-gradient(90deg, color-mix(in srgb, var(--foreground) 3%, transparent) 1px, transparent 1px) 0 0 / 56px 56px,
     var(--background);
   color: var(--foreground);
+}
+
+.mode-selector-error {
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.35;
+  padding: 8px 10px;
 }
 
 ::selection {
