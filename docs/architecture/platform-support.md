@@ -38,4 +38,3 @@ Text automation backends include the native helper, `wtype`, `xdotool`, `ydotool
 Managed local STT runtime archives are cataloged for:
 
 - `linux-x64`
-- `linux-arm64`

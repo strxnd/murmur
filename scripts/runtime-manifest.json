@@ -1,5 +1,5 @@
 {
-  "platforms": ["linux-x64", "linux-arm64"],
+  "platforms": ["linux-x64"],
   "runtimes": {
     "whisper.cpp": {
       "version": "v1.8.6",
@@ -13,10 +13,6 @@
         "linux-x64": {
           "name": "sherpa-onnx-v1.13.2-linux-x64-shared-no-tts.tar.bz2",
           "sha256": "a1fb5d71811e85fe1fd5856540c6d19614681e222810e266d3b33038f724be75"
-        },
-        "linux-arm64": {
-          "name": "sherpa-onnx-v1.13.2-linux-aarch64-shared-cpu.tar.bz2",
-          "sha256": "b54178420e9e6ff6c7f308b5f1cde827215b38393356ee0bd2b7595c648b330b"
         }
       }
     }

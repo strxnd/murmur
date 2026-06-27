@@ -72,7 +72,6 @@ Building the `rpm` target also requires the host system to provide `rpmbuild`.
 Runtime binaries are prepared manually with the runtime scripts before packaging. Supported runtime platform keys are:
 
 - `linux-x64`
-- `linux-arm64`
 
 For the current platform, run:
 

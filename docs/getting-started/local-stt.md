@@ -9,10 +9,9 @@ Packaged apps include the native runtime binaries for the target platform. The l
 
 ## Supported Runtime Platforms
 
-Bundled runtime archives are cataloged for:
+Bundled runtime archives are currently cataloged for:
 
 - `linux-x64`
-- `linux-arm64`
 
 ## User Cache Layout
 

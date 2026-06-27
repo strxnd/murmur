@@ -135,11 +135,12 @@ describe("SttRuntimeService", () => {
 
     expect(availability.status).toBe("missing");
     expect(availability.message).toContain("MURMUR_WHISPER_CPP_SERVER");
+    expect(availability.message).toContain("mise run runtimes:prepare");
     expect(availability.message).toContain("vendor/runtimes/linux-x64/whisper.cpp");
 
     const state = service.getInstallState("whisper.cpp");
     expect(state.status).toBe("not_installed");
-    expect(state.canDownload).toBe(true);
+    expect(state.canDownload).toBe(false);
     expect(state.canRepair).toBe(false);
   });
 
@@ -178,6 +179,8 @@ describe("SttRuntimeService", () => {
     const root = tempRoot();
     const runtimeDir = join(root, "cache", "runtimes", "stt");
     const cacheRoot = join(runtimeDir, "linux-x64", "whisper.cpp", "v1.8.6");
+    const catalog = structuredClone(sttRuntimeCatalog);
+    catalog["whisper.cpp"].platforms["linux-x64"].url = "https://example.test/runtime.tar.gz";
     touch(join(cacheRoot, "whisper-server"));
     writeFileSync(join(cacheRoot, "runtime.json"), "{not json");
 
@@ -186,7 +189,8 @@ describe("SttRuntimeService", () => {
       arch: "x64",
       projectRoot: root,
       runtimeDir,
-      env: {}
+      env: {},
+      catalog
     });
 
     const state = service.getInstallState("whisper.cpp");

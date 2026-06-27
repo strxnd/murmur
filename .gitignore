@@ -68,6 +68,10 @@ vendor/runtimes/
 .plans/
 resources/bin/linux-fast-paste
 
+# Local Codex artifacts
+.codex/audits/
+.codex/harvests/
+
 # Local editor state
 .vscode/*
 !.vscode/settings.json

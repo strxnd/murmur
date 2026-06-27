@@ -2,7 +2,7 @@ import type { SttRuntimeId } from "./types";
 
 export interface SttRuntimeAsset {
   assetName: string;
-  url: string;
+  url?: string;
   sizeBytes: number;
   sha256: string;
 }
@@ -18,9 +18,7 @@ export interface SttRuntimeCatalogEntry {
   platforms: Record<string, SttRuntimeAsset>;
 }
 
-export const supportedSttRuntimePlatformKeys = ["linux-x64", "linux-arm64"] as const;
-
-const releaseBaseUrl = "https://github.com/strxnd/murmur/releases/download/stt-runtimes-v0.1.0";
+export const supportedSttRuntimePlatformKeys = ["linux-x64"] as const;
 
 export const sttRuntimeCatalog: Record<SttRuntimeId, SttRuntimeCatalogEntry> = {
   "whisper.cpp": {
@@ -34,13 +32,8 @@ export const sttRuntimeCatalog: Record<SttRuntimeId, SttRuntimeCatalogEntry> = {
     platforms: {
       "linux-x64": runtimeAsset(
         "murmur-stt-runtime-whisper.cpp-v1.8.6-linux-x64.tar.gz",
-        3723028,
-        "30cb4f0b37b76412cefaa39a25ecd17e1f21f9a3bbc9c7e6266031b3f39f0613"
-      ),
-      "linux-arm64": runtimeAsset(
-        "murmur-stt-runtime-whisper.cpp-v1.8.6-linux-arm64.tar.gz",
-        4500000,
-        "ab3bb704c5bc579342270c18c0cd82edd424dc7ebfbc00acb90860f9fca18f2a"
+        3720870,
+        "d59417162bbf89aaecbf6c348a385da67dd71fcdbb6cf62066a53ae49ea685b1"
       )
     }
   },
@@ -55,13 +48,8 @@ export const sttRuntimeCatalog: Record<SttRuntimeId, SttRuntimeCatalogEntry> = {
     platforms: {
       "linux-x64": runtimeAsset(
         "murmur-stt-runtime-sherpa-onnx-v1.13.2-linux-x64.tar.gz",
-        25574458,
-        "9575a3a692ea7e01be05027bc9cd55d47d44e1fd2983df712f1e3d942d649db8"
-      ),
-      "linux-arm64": runtimeAsset(
-        "murmur-stt-runtime-sherpa-onnx-v1.13.2-linux-arm64.tar.gz",
-        65000000,
-        "8097743e3aa2398e58873db734c3c071da6ac11595f9be28fe24fb5e9fd80506"
+        25574920,
+        "563f226035c3905279ac01bf123f7b4f0faa1baa96cae7f2fece96f9e73530b1"
       )
     }
   }
@@ -77,7 +65,6 @@ function runtimeAsset(assetName: string, sizeBytes: number, sha256: string): Stt
   return {
     assetName,
     sizeBytes,
-    sha256,
-    url: `${releaseBaseUrl}/${assetName}`
+    sha256
   };
 }

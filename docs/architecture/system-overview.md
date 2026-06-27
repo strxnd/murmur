@@ -87,5 +87,5 @@ The main process is the only process that touches Node APIs, native runtime proc
 
 - Add new provider types in shared types, defaults, and the STT or LLM services.
 - Add new model catalog entries in [`src/shared/model-catalog.ts`](../../src/shared/model-catalog.ts).
-- Add runtime archive metadata in [`src/shared/stt-runtime-catalog.ts`](../../src/shared/stt-runtime-catalog.ts).
+- Add bundled runtime metadata in [`src/shared/stt-runtime-catalog.ts`](../../src/shared/stt-runtime-catalog.ts).
 - Add desktop automation backends behind [`TextAutomationBackend`](../../src/main/services/text-automation.ts).

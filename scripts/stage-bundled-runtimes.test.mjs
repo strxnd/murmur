@@ -15,14 +15,13 @@ afterEach(() => {
 });
 
 describe("stage-bundled-runtimes", () => {
-  it("stages the requested linux arm64 target from explicit platform and arch", () => {
+  it("rejects the unpublished linux arm64 target from explicit platform and arch", () => {
     const { vendorRoot, stagingRoot } = setupRuntimeFixtures();
 
-    runStage(["--platform", "linux", "--arch", "arm64"], vendorRoot, stagingRoot);
+    expect(() => runStage(["--platform", "linux", "--arch", "arm64"], vendorRoot, stagingRoot)).toThrow();
 
-    expect(existsSync(join(stagingRoot, "linux-arm64", "whisper.cpp", "whisper-server"))).toBe(true);
-    expect(existsSync(join(stagingRoot, "linux-arm64", "sherpa-onnx", "bin", "sherpa-onnx-offline"))).toBe(true);
     expect(existsSync(join(stagingRoot, "linux-x64"))).toBe(false);
+    expect(existsSync(join(stagingRoot, "linux-arm64"))).toBe(false);
   });
 
   it("stages the requested linux x64 platform key", () => {
@@ -41,7 +40,7 @@ function setupRuntimeFixtures() {
   const vendorRoot = join(root, "vendor", "runtimes");
   const stagingRoot = join(root, "stage", "runtimes");
 
-  for (const platformKey of ["linux-x64", "linux-arm64"]) {
+  for (const platformKey of ["linux-x64"]) {
     touch(join(vendorRoot, platformKey, "whisper.cpp", "whisper-server"));
     touch(join(vendorRoot, platformKey, "sherpa-onnx", "bin", "sherpa-onnx-offline"));
   }

@@ -1,6 +1,6 @@
 # Runtime Builds
 
-Local STT runtime build inputs are defined in [`scripts/runtime-manifest.json`](../../scripts/runtime-manifest.json). Downloadable Murmur runtime archive metadata is pinned in [`src/shared/stt-runtime-catalog.ts`](../../src/shared/stt-runtime-catalog.ts).
+Local STT runtime build inputs are defined in [`scripts/runtime-manifest.json`](../../scripts/runtime-manifest.json). Murmur runtime archive metadata for local packaging is pinned in [`src/shared/stt-runtime-catalog.ts`](../../src/shared/stt-runtime-catalog.ts).
 
 ## Sources
 
@@ -13,7 +13,6 @@ Local STT runtime build inputs are defined in [`scripts/runtime-manifest.json`](
 Sherpa ONNX source assets:
 
 - `linux-x64`: `sherpa-onnx-v1.13.2-linux-x64-shared-no-tts.tar.bz2`
-- `linux-arm64`: `sherpa-onnx-v1.13.2-linux-aarch64-shared-cpu.tar.bz2`
 
 ## Whisper Patch
 
@@ -45,22 +44,15 @@ mise run runtimes:manifest-check
 
 `runtimes:stage` copies exactly one prepared platform from `vendor/runtimes/<platform-key>/` into `.cache/bundled-runtimes/runtimes/<platform-key>/` for `electron-builder` to place under `<process.resourcesPath>/runtimes/`.
 
-For cross-target packaging, pass the requested target explicitly:
+For explicit-target packaging, pass the requested target:
 
 ```sh
-npm run runtimes:stage -- --platform linux --arch arm64
 npm run runtimes:stage -- --platform linux-x64
 ```
 
-`runtimes:package` writes archives to `dist/runtimes/` and prints size and SHA-256 values. Those values must match `src/shared/stt-runtime-catalog.ts` for `runtimes:manifest-check` to pass.
+`runtimes:package` writes local packaging archives to `dist/runtimes/` and prints size and SHA-256 values. Those values must match `src/shared/stt-runtime-catalog.ts` for `runtimes:manifest-check` to pass.
 
-Before publishing a release that advertises runtime downloads, run:
-
-```sh
-npm run runtimes:manifest-check:release
-```
-
-The release check verifies that every cataloged runtime asset URL is reachable. Local build and CI checks intentionally stay offline and only validate catalog shape and pinned metadata.
+Murmur GitHub releases should publish the Electron app artifacts from `mise run dist`, not standalone STT runtime archives. Packaged app artifacts include the staged runtime files under `<process.resourcesPath>/runtimes/`.
 
 ## Manual Smoke Tests
 
@@ -116,7 +108,7 @@ Missing executable:
 - Confirm `mise run runtimes:doctor` reports both runtimes available.
 - Check that the executable is under `vendor/runtimes/<platform-key>/<runtime>/`.
 - For app packaging, run `mise run runtimes:stage` and confirm both runtimes exist under `.cache/bundled-runtimes/runtimes/<platform-key>/`.
-- For development runtime downloads or archive releases, confirm `mise run runtimes:manifest-check` passes locally and `npm run runtimes:manifest-check:release` passes before publishing.
+- Confirm `mise run runtimes:manifest-check` passes before packaging app artifacts.
 
 Unsupported platform:
 

@@ -18,7 +18,6 @@
     "runtimes:stage": "node scripts/stage-bundled-runtimes.mjs",
     "runtimes:doctor": "node scripts/check-runtimes.mjs",
     "runtimes:manifest-check": "node scripts/check-runtime-manifest.mjs",
-    "runtimes:manifest-check:release": "node scripts/check-runtime-manifest.mjs --release",
     "linux-helper:build": "node scripts/build-linux-fast-paste.mjs",
     "pack": "npm run build && npm run linux-helper:build && npm run runtimes:manifest-check && npm run runtimes:stage && electron-builder --dir",
     "dist": "npm run build && npm run linux-helper:build && npm run runtimes:manifest-check && npm run runtimes:stage && electron-builder"

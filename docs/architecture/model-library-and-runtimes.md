@@ -47,13 +47,13 @@ For each runtime, Murmur checks:
 4. `vendor/runtimes/<platform-key>/<runtime-dir>/`.
 5. Legacy `vendor/runtimes/<runtime-dir>/`.
 
-Cache installs must include a matching `runtime.json` receipt and a supported executable. Corrupt or mismatched cache installs are reported as repairable.
+Cache installs must include a matching `runtime.json` receipt and a supported executable. Corrupt or mismatched cache installs are reported as repairable only when a downloadable runtime archive URL is configured.
 
 Packaged apps include `whisper.cpp` and `sherpa-onnx` under `process.resourcesPath/runtimes/<platform-key>/`. In packaged mode, runtime download and repair actions are disabled; users can reinstall Murmur or set the runtime environment override if bundled resources are missing.
 
 ## Runtime Install Flow
 
-In development, `SttRuntimeService.downloadRuntime()` downloads a pinned archive from `stt-runtime-catalog.ts`, streams progress, verifies SHA-256, extracts to a staging directory, finds the expected executable, chmods executables, writes `runtime.json`, and atomically replaces the final cache directory.
+In development, prepare runtimes with `mise run runtimes:prepare`. If a future catalog entry includes a runtime archive URL, `SttRuntimeService.downloadRuntime()` can download that pinned archive, stream progress, verify SHA-256, extract to a staging directory, find the expected executable, chmod executables, write `runtime.json`, and atomically replace the final cache directory.
 
 Before replacing a runtime, the controller stops any running runtime process for that runtime id.
 

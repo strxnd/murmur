@@ -62,7 +62,7 @@ function resolvePlatformKey(target) {
   }
 
   throw new Error(
-    `Unsupported runtime target ${arch ? `${platform}-${arch}` : platform}. Use current, a platform key, or --platform linux --arch x64|arm64. Supported: ${supportedSttRuntimePlatformKeys.join(", ")}`
+    `Unsupported runtime target ${arch ? `${platform}-${arch}` : platform}. Use current, a platform key, or --platform linux --arch ${supportedLinuxArchHints()}. Supported: ${supportedSttRuntimePlatformKeys.join(", ")}`
   );
 }
 
@@ -91,6 +91,13 @@ function normalizeArch(value) {
   if (value === "amd64") return "x64";
   if (value === "aarch64") return "arm64";
   return value;
+}
+
+function supportedLinuxArchHints() {
+  return supportedSttRuntimePlatformKeys
+    .filter((key) => key.startsWith("linux-"))
+    .map((key) => key.slice("linux-".length))
+    .join("|");
 }
 
 async function loadCatalog(path) {

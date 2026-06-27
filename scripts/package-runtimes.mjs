@@ -28,7 +28,20 @@ for (const platformKey of platformKeys) {
 
     const targetPath = join(outputDir, asset.assetName);
     rmSync(targetPath, { force: true });
-    await run("tar", ["-czf", targetPath, "-C", sourceDir, "."]);
+    await run("tar", [
+      "--sort=name",
+      "--mtime=@0",
+      "--owner=0",
+      "--group=0",
+      "--numeric-owner",
+      "-I",
+      "gzip -n",
+      "-cf",
+      targetPath,
+      "-C",
+      sourceDir,
+      "."
+    ]);
     const sha256 = await sha256File(targetPath);
     const sizeBytes = statSync(targetPath).size;
     results.push({
