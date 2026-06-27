@@ -48,6 +48,7 @@ describe("resolveAppPaths", () => {
     const paths = resolveAppPaths(fakeApp(root), {});
 
     expect(paths.configPath).toBe(join(root, "home", ".config", "murmur", "murmur-config.json"));
+    expect(paths.providerSecretsPath).toBe(join(root, "home", ".config", "murmur", "murmur-provider-secrets.json"));
     expect(paths.historyDbPath).toBe(join(root, "home", ".local", "share", "murmur", "murmur-history.sqlite"));
     expect(paths.historyJsonPath).toBe(join(root, "home", ".local", "share", "murmur", "murmur-history.json"));
     expect(paths.audioDir).toBe(join(root, "home", ".local", "share", "murmur", "audio"));

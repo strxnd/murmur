@@ -1,9 +1,12 @@
 import type {
   BrowserWindow as ElectronBrowserWindow,
+  IpcMainEvent,
+  IpcMainInvokeEvent,
   MenuItemConstructorOptions,
   Notification as ElectronNotification,
   Tray as ElectronTray
 } from "electron";
+import type { z } from "zod";
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type {
@@ -24,7 +27,23 @@ import type {
   TranscriptionProviderConfig,
   VocabularyEntry
 } from "../shared/types";
-import { recordingErrorPayloadSchema, recordingLevelPayloadSchema } from "../shared/schemas";
+import {
+  autoModeRulesSetPayloadSchema,
+  completeRecordingPayloadSchema,
+  ipcIdPayloadSchema,
+  ipcTextPayloadSchema,
+  llmProviderConfigSchema,
+  llmProvidersSetPayloadSchema,
+  modesSetPayloadSchema,
+  modeSelectorMovePayloadSchema,
+  recordingErrorPayloadSchema,
+  recordingLevelPayloadSchema,
+  settingsUpdatePayloadSchema,
+  sttProvidersSetPayloadSchema,
+  sttRuntimeIdSchema,
+  transcriptionProviderConfigSchema,
+  vocabularySetPayloadSchema
+} from "../shared/schemas";
 import { defaultSession } from "../shared/defaults";
 import {
   isLlmProviderUsable,
@@ -32,7 +51,7 @@ import {
   llmProviderFromModel,
   transcriptionProviderFromModel
 } from "../shared/model-activation";
-import { buildProcessingPrompt, buildVocabularyPrompt } from "../shared/prompts";
+import { buildProcessingPrompt, buildVocabularyPrompt, contextForLlmPrompt } from "../shared/prompts";
 import { resolveModeByContext } from "./services/auto-mode";
 import { createId } from "./services/ids";
 import { registerElectronShortcutActions, registerModeSelectorNavigationShortcuts } from "./services/electron-global-shortcuts";
@@ -41,6 +60,8 @@ import { LlmService } from "./services/llm";
 import { ModelLibraryService } from "./services/model-library";
 import { PasteService } from "./services/paste";
 import { StorageService } from "./services/storage";
+import { createSafeStorageProviderSecretCodec } from "./services/provider-secrets";
+import { isTrustedRendererUrl, resolveRendererSource, type RendererSource } from "./services/renderer-security";
 import { getSttUsability, sttRuntimeIdForModel, SttSetupService } from "./services/stt-setup";
 import { TranscriptionService } from "./services/stt";
 import { SttRuntimeService } from "./services/stt-runtime";
@@ -62,6 +83,7 @@ import {
   nativeImage,
   nativeTheme,
   Notification,
+  safeStorage,
   screen,
   Tray
 } from "./electron-api";
@@ -88,6 +110,7 @@ export class AppController {
   private portalHotkeys = new XdgGlobalShortcutService();
   private nativeHotkeys = new NativeDesktopGlobalShortcutService();
   private paths: AppPaths;
+  private rendererSource: RendererSource;
   private stt: TranscriptionService;
   private llm = new LlmService();
   private modelLibrary: ModelLibraryService;
@@ -115,7 +138,12 @@ export class AppController {
 
   constructor() {
     this.paths = resolveAppPaths(app);
-    this.storage = new StorageService(this.paths);
+    this.rendererSource = resolveRendererSource({
+      isPackaged: app.isPackaged,
+      envRendererUrl: process.env.ELECTRON_RENDERER_URL,
+      rendererFilePath: join(__dirname, "../renderer/index.html")
+    });
+    this.storage = new StorageService(this.paths, undefined, createSafeStorageProviderSecretCodec(safeStorage));
     this.runtimeService = new SttRuntimeService({
       runtimeDir: this.paths.runtimeDir,
       downloadsEnabled: !app.isPackaged,
@@ -180,12 +208,14 @@ export class AppController {
       webPreferences: {
         preload: join(__dirname, "../preload/index.cjs"),
         contextIsolation: true,
+        sandbox: true,
         nodeIntegration: false,
         backgroundThrottling: false
       }
     });
     this.mainWindow = window;
 
+    this.configureTrustedRendererWindow(window, "main");
     void this.loadRenderer(window);
     this.attachWindowDiagnostics(window, "main");
 
@@ -231,12 +261,14 @@ export class AppController {
       webPreferences: {
         preload: join(__dirname, "../preload/index.cjs"),
         contextIsolation: true,
+        sandbox: true,
         nodeIntegration: false,
         backgroundThrottling: false
       }
     });
     this.pillWindow = window;
 
+    this.configureTrustedRendererWindow(window, "pill");
     void this.loadRenderer(window, "?pill=1");
     this.attachWindowDiagnostics(window, "pill");
     this.configurePillWindow();
@@ -269,12 +301,14 @@ export class AppController {
       webPreferences: {
         preload: join(__dirname, "../preload/index.cjs"),
         contextIsolation: true,
+        sandbox: true,
         nodeIntegration: false,
         backgroundThrottling: false
       }
     });
     this.modeSelectorWindow = window;
 
+    this.configureTrustedRendererWindow(window, "mode-selector");
     void this.loadRenderer(window, "?mode-selector=1");
     this.attachWindowDiagnostics(window, "mode-selector");
     this.configureModeSelectorWindow();
@@ -388,16 +422,16 @@ export class AppController {
   }
 
   private async loadRenderer(window: ElectronBrowserWindow, suffix = ""): Promise<void> {
-    if (process.env.ELECTRON_RENDERER_URL) {
-      await window.loadURL(`${process.env.ELECTRON_RENDERER_URL}${suffix}`);
+    if (this.rendererSource.kind === "dev" && this.rendererSource.url) {
+      await window.loadURL(rendererUrlWithSuffix(this.rendererSource.url, suffix));
     } else {
       const query = rendererQueryFromSuffix(suffix);
-      await window.loadFile(join(__dirname, "../renderer/index.html"), query ? { query } : undefined);
+      await window.loadFile(this.rendererSource.filePath, query ? { query } : undefined);
     }
   }
 
   private attachWindowDiagnostics(window: ElectronBrowserWindow, label: string): void {
-    if (Boolean(process.env.ELECTRON_RENDERER_URL)) {
+    if (this.rendererSource.kind === "dev") {
       window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
         console.log(`[renderer:${label}:${level}] ${message} (${sourceId}:${line})`);
       });
@@ -410,153 +444,242 @@ export class AppController {
     });
   }
 
+  private configureTrustedRendererWindow(window: ElectronBrowserWindow, label: string): void {
+    window.webContents.setWindowOpenHandler(({ url }) => {
+      console.warn(`[renderer:${label}:window-open-blocked] ${url}`);
+      return { action: "deny" };
+    });
+    window.webContents.on("will-attach-webview", (event) => {
+      event.preventDefault();
+    });
+    window.webContents.on("will-navigate", (event, url) => {
+      if (isTrustedRendererUrl(this.rendererSource, url)) return;
+      event.preventDefault();
+      console.warn(`[renderer:${label}:navigation-blocked] ${url}`);
+    });
+    const frameNavigationEvents = window.webContents as unknown as {
+      on(
+        channel: "will-frame-navigate",
+        listener: (event: { preventDefault(): void }, url: string, isInPlace: boolean, isMainFrame: boolean) => void
+      ): void;
+    };
+    frameNavigationEvents.on("will-frame-navigate", (event, url, _isInPlace, isMainFrame) => {
+      if (!isMainFrame || isTrustedRendererUrl(this.rendererSource, url)) return;
+      event.preventDefault();
+      console.warn(`[renderer:${label}:frame-navigation-blocked] ${url}`);
+    });
+  }
+
   private registerIpc(): void {
-    ipcMain.handle("app:get-state", () => this.getSnapshot());
-    ipcMain.handle("app:get-pill-state", () => this.getPillSnapshot());
-    ipcMain.handle("app:get-mode-selector-state", () => this.getModeSelectorSnapshot());
-    ipcMain.handle("settings:update", async (_event, patch: Partial<AppSettings>) => {
+    const handle = (
+      channel: string,
+      listener: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
+    ): void => {
+      ipcMain.handle(channel, (event, ...args) => {
+        this.assertTrustedIpcSender(event, channel);
+        return listener(event, ...args);
+      });
+    };
+    const on = (channel: string, listener: (event: IpcMainEvent, ...args: unknown[]) => void): void => {
+      ipcMain.on(channel, (event, ...args) => {
+        this.assertTrustedIpcSender(event, channel);
+        listener(event, ...args);
+      });
+    };
+
+    handle("app:get-state", () => this.getSnapshot());
+    handle("app:get-pill-state", () => this.getPillSnapshot());
+    handle("app:get-mode-selector-state", () => this.getModeSelectorSnapshot());
+    handle("settings:update", async (_event, payload) => {
+      const patch = parseIpcPayload(settingsUpdatePayloadSchema, payload, "settings:update") as Partial<AppSettings>;
       const state = this.storage.updateSettings(patch);
       this.applySettings(state.settings);
       await this.registerHotkeys();
       this.broadcastState();
       return this.getSnapshot();
     });
-    ipcMain.handle("hotkeys:capture-start", async () => {
+    handle("hotkeys:capture-start", async () => {
       await this.beginHotkeyCapture();
       this.broadcastState();
       return { ok: true };
     });
-    ipcMain.handle("hotkeys:capture-end", async () => {
+    handle("hotkeys:capture-end", async () => {
       await this.endHotkeyCapture();
       return { ok: true };
     });
-    ipcMain.handle("modes:set", (_event, modes: ModeConfig[]) => {
+    handle("modes:set", (_event, payload) => {
+      const modes = parseIpcPayload(modesSetPayloadSchema, payload, "modes:set") as ModeConfig[];
       this.storage.setModes(modes);
       this.broadcastState();
       return this.getSnapshot();
     });
-    ipcMain.handle("mode:activate", (_event, modeId: string) => {
+    handle("mode:activate", (_event, payload) => {
+      const modeId = parseIpcPayload(ipcIdPayloadSchema, payload, "mode:activate");
       this.storage.updateSettings({ activeModeId: modeId });
       this.session = { ...this.session, modeId };
       this.broadcastState();
       return this.getSnapshot();
     });
-    ipcMain.handle("providers:set-stt", (_event, providers: TranscriptionProviderConfig[]) => {
+    handle("providers:set-stt", (_event, payload) => {
+      const providers = parseIpcPayload(sttProvidersSetPayloadSchema, payload, "providers:set-stt") as TranscriptionProviderConfig[];
       this.storage.setTranscriptionProviders(providers);
       this.broadcastState();
       return this.getSnapshot();
     });
-    ipcMain.handle("providers:set-llm", (_event, providers: LlmProviderConfig[]) => {
+    handle("providers:set-llm", (_event, payload) => {
+      const providers = parseIpcPayload(llmProvidersSetPayloadSchema, payload, "providers:set-llm") as LlmProviderConfig[];
       this.storage.setLlmProviders(providers);
       this.broadcastState();
       return this.getSnapshot();
     });
-    ipcMain.handle("provider:validate-stt", (_event, provider: TranscriptionProviderConfig) => this.stt.validate(provider));
-    ipcMain.handle("provider:validate-llm", (_event, provider: LlmProviderConfig) => this.llm.validate(provider));
-    ipcMain.handle("rules:set-auto-mode", (_event, rules) => {
+    handle("provider:validate-stt", (_event, payload) => {
+      const provider = parseIpcPayload(transcriptionProviderConfigSchema, payload, "provider:validate-stt") as TranscriptionProviderConfig;
+      return this.stt.validate(this.storage.resolveTranscriptionProviderSecret(provider));
+    });
+    handle("provider:validate-llm", (_event, payload) => {
+      const provider = parseIpcPayload(llmProviderConfigSchema, payload, "provider:validate-llm") as LlmProviderConfig;
+      return this.llm.validate(this.storage.resolveLlmProviderSecret(provider));
+    });
+    handle("rules:set-auto-mode", (_event, payload) => {
+      const rules = parseIpcPayload(autoModeRulesSetPayloadSchema, payload, "rules:set-auto-mode");
       this.storage.setAutoModeRules(rules);
       this.broadcastState();
       return this.getSnapshot();
     });
-    ipcMain.handle("vocabulary:set", (_event, vocabulary: VocabularyEntry[]) => {
+    handle("vocabulary:set", (_event, payload) => {
+      const vocabulary = parseIpcPayload(vocabularySetPayloadSchema, payload, "vocabulary:set") as VocabularyEntry[];
       this.storage.setVocabulary(vocabulary);
       this.broadcastState();
       return this.getSnapshot();
     });
-    ipcMain.handle("models:get-library", () => this.modelLibrary.getLibrary());
-    ipcMain.handle("models:download", async (_event, modelId: string) => {
+    handle("models:get-library", () => this.modelLibrary.getLibrary());
+    handle("models:download", async (_event, payload) => {
+      const modelId = parseIpcPayload(ipcIdPayloadSchema, payload, "models:download");
       const snapshot = await this.modelLibrary.downloadModel(modelId);
       this.broadcastState();
       return snapshot;
     });
-    ipcMain.handle("models:cancel-download", async (_event, modelId: string) => {
+    handle("models:cancel-download", async (_event, payload) => {
+      const modelId = parseIpcPayload(ipcIdPayloadSchema, payload, "models:cancel-download");
       const snapshot = await this.modelLibrary.cancelModelDownload(modelId);
       this.broadcastState();
       return snapshot;
     });
-    ipcMain.handle("models:activate", async (_event, modelId: string) => {
+    handle("models:activate", async (_event, payload) => {
+      const modelId = parseIpcPayload(ipcIdPayloadSchema, payload, "models:activate");
       const snapshot = await this.modelLibrary.activateModel(modelId);
       this.broadcastState();
       return snapshot;
     });
-    ipcMain.handle("models:delete", async (_event, modelId: string) => {
+    handle("models:delete", async (_event, payload) => {
+      const modelId = parseIpcPayload(ipcIdPayloadSchema, payload, "models:delete");
       const snapshot = await this.modelLibrary.deleteDownloadedModel(modelId);
       this.broadcastState();
       return snapshot;
     });
-    ipcMain.handle("models:toggle-favorite", async (_event, modelId: string) => {
+    handle("models:toggle-favorite", async (_event, payload) => {
+      const modelId = parseIpcPayload(ipcIdPayloadSchema, payload, "models:toggle-favorite");
       const snapshot = await this.modelLibrary.toggleFavorite(modelId);
       this.broadcastState();
       return snapshot;
     });
-    ipcMain.handle("stt-setup:get", () => this.sttSetup.getSnapshot());
-    ipcMain.handle("stt-runtime:download", async (_event, runtimeId: SttRuntimeId) => {
+    handle("stt-setup:get", () => this.sttSetup.getSnapshot());
+    handle("stt-runtime:download", async (_event, payload) => {
+      const runtimeId = parseIpcPayload(sttRuntimeIdSchema, payload, "stt-runtime:download") as SttRuntimeId;
       await this.runtimeService.downloadRuntime(runtimeId);
       this.broadcastState();
       return this.sttSetup.getSnapshot();
     });
-    ipcMain.handle("stt-runtime:repair", async (_event, runtimeId: SttRuntimeId) => {
+    handle("stt-runtime:repair", async (_event, payload) => {
+      const runtimeId = parseIpcPayload(sttRuntimeIdSchema, payload, "stt-runtime:repair") as SttRuntimeId;
       await this.runtimeService.repairRuntime(runtimeId);
       this.broadcastState();
       return this.sttSetup.getSnapshot();
     });
-    ipcMain.handle("stt-runtime:cancel-download", async (_event, runtimeId: SttRuntimeId) => {
+    handle("stt-runtime:cancel-download", async (_event, payload) => {
+      const runtimeId = parseIpcPayload(sttRuntimeIdSchema, payload, "stt-runtime:cancel-download") as SttRuntimeId;
       await this.runtimeService.cancelRuntimeDownload(runtimeId);
       this.broadcastState();
       return this.sttSetup.getSnapshot();
     });
-    ipcMain.handle("stt-setup:setup-bundled", async (_event, modelId: string) => {
+    handle("stt-setup:setup-bundled", async (_event, payload) => {
+      const modelId = parseIpcPayload(ipcIdPayloadSchema, payload, "stt-setup:setup-bundled");
       this.stt.stopRuntime();
       await this.sttSetup.setupBundledStt(modelId);
       this.broadcastState();
       return this.getSnapshot();
     });
-    ipcMain.handle("stt-setup:skip", () => {
+    handle("stt-setup:skip", () => {
       this.sttSetup.skipSttSetup();
       this.broadcastState();
       return this.getSnapshot();
     });
-    ipcMain.handle("dictation:start", () => this.startRecording("manual"));
-    ipcMain.handle("dictation:stop", () => this.stopRecording());
-    ipcMain.handle("dictation:cancel", () => this.cancelRecording());
-    ipcMain.handle("dictation:complete-recording", (_event, payload: { sessionId: string; audio: ArrayBuffer; mimeType: string }) =>
-      this.completeRecording(payload)
+    handle("dictation:start", () => this.startRecording("manual"));
+    handle("dictation:stop", () => this.stopRecording());
+    handle("dictation:cancel", () => this.cancelRecording());
+    handle("dictation:complete-recording", (_event, payload) =>
+      this.completeRecording(parseIpcPayload(completeRecordingPayloadSchema, payload, "dictation:complete-recording"))
     );
-    ipcMain.handle("dictation:recording-error", (_event, payload: unknown) => this.handleRecordingError(payload));
-    ipcMain.on("recording:level", (_event, payload: unknown) => this.forwardRecordingLevel(payload));
-    ipcMain.handle("onboarding:test-paste", async (_event, text: string) => {
+    handle("dictation:recording-error", (_event, payload) =>
+      this.handleRecordingError(parseIpcPayload(recordingErrorPayloadSchema, payload, "dictation:recording-error"))
+    );
+    on("recording:level", (_event, payload) => this.forwardRecordingLevel(payload));
+    handle("onboarding:test-paste", async (_event, payload) => {
+      const text = parseIpcPayload(ipcTextPayloadSchema, payload, "onboarding:test-paste");
       const result = await this.paste.insertText(text);
       this.broadcastState();
       return result;
     });
-    ipcMain.handle("history:copy", (_event, text: string) => {
+    handle("history:copy", (_event, payload) => {
+      const text = parseIpcPayload(ipcTextPayloadSchema, payload, "history:copy");
       clipboard.writeText(text);
       return { ok: true };
     });
-    ipcMain.handle("history:repaste", (_event, text: string) => this.paste.insertText(text));
-    ipcMain.handle("history:delete", (_event, id: string) => {
+    handle("history:repaste", (_event, payload) => this.paste.insertText(parseIpcPayload(ipcTextPayloadSchema, payload, "history:repaste")));
+    handle("history:delete", (_event, payload) => {
+      const id = parseIpcPayload(ipcIdPayloadSchema, payload, "history:delete");
       this.storage.deleteHistory(id);
       this.broadcastState();
       return this.getSnapshot();
     });
-    ipcMain.handle("history:clear", () => {
+    handle("history:clear", () => {
       this.storage.clearHistory();
       this.broadcastState();
       return this.getSnapshot();
     });
-    ipcMain.handle("history:reprocess", (_event, id: string) => this.reprocessHistory(id));
-    ipcMain.handle("data:clear-local", async () => {
+    handle("history:reprocess", (_event, payload) => this.reprocessHistory(parseIpcPayload(ipcIdPayloadSchema, payload, "history:reprocess")));
+    handle("data:clear-local", async () => {
       this.storage.clearLocalData();
       await this.registerHotkeys();
       this.broadcastState();
       return this.getSnapshot();
     });
-    ipcMain.handle("mode-selector:hide", () => {
+    handle("mode-selector:hide", () => {
       this.hideModeSelectorWindow();
       return { ok: true };
     });
-    ipcMain.handle("mode-selector:select-mode", (_event, modeId: string) => this.selectModeFromSelector(modeId));
-    ipcMain.handle("mode-selector:move-selection", (_event, delta: number) => this.moveModeSelectorSelection(delta));
+    handle("mode-selector:select-mode", (_event, payload) =>
+      this.selectModeFromSelector(parseIpcPayload(ipcIdPayloadSchema, payload, "mode-selector:select-mode"))
+    );
+    handle("mode-selector:move-selection", (_event, payload) =>
+      this.moveModeSelectorSelection(parseIpcPayload(modeSelectorMovePayloadSchema, payload, "mode-selector:move-selection"))
+    );
+  }
+
+  private assertTrustedIpcSender(event: IpcMainInvokeEvent | IpcMainEvent, channel: string): void {
+    const senderId = event.sender.id;
+    const owned = [this.mainWindow, this.pillWindow, this.modeSelectorWindow].some(
+      (window) => window && !window.isDestroyed() && window.webContents.id === senderId
+    );
+
+    if (!owned) {
+      throw new IpcAuthorizationError(channel);
+    }
+
+    const frameUrl = event.senderFrame?.url || event.sender.getURL();
+    if (!isTrustedRendererUrl(this.rendererSource, frameUrl)) {
+      throw new IpcAuthorizationError(channel);
+    }
   }
 
   private applySettings(settings: AppSettings): void {
@@ -956,10 +1079,11 @@ export class AppController {
 
     persisted = this.storage.getState();
     const mode = persisted.modes.find((candidate) => candidate.id === this.session.modeId) ?? persisted.modes[0];
-    const sttProvider = this.selectTranscriptionProvider(persisted);
-    if (!sttProvider) {
+    const selectedSttProvider = this.selectTranscriptionProvider(persisted);
+    if (!selectedSttProvider) {
       return this.failSession("No enabled transcription provider is configured.");
     }
+    const sttProvider = this.storage.resolveTranscriptionProviderSecret(selectedSttProvider);
 
     const audio = new Uint8Array(payload.audio);
     const vocabularyPrompt = buildVocabularyPrompt(persisted.vocabulary);
@@ -982,13 +1106,15 @@ export class AppController {
       });
 
       let processedText = transcription.text;
-      let llmProvider = mode.aiEnabled ? this.selectLlmProvider(persisted) : undefined;
+      const selectedLlmProvider = mode.aiEnabled ? this.selectLlmProvider(persisted) : undefined;
+      let llmProvider = selectedLlmProvider ? this.storage.resolveLlmProviderSecret(selectedLlmProvider) : undefined;
       let llmModel: string | undefined;
 
       if (mode.aiEnabled && llmProvider) {
         this.session = { ...this.session, status: "processing" };
         this.broadcastState();
-        const prompt = buildProcessingPrompt({ mode, context, rawTranscript: transcription.text, vocabularyPrompt });
+        const promptContext = this.contextForLlm(llmProvider, persisted.settings, context);
+        const prompt = buildProcessingPrompt({ mode, context: promptContext, rawTranscript: transcription.text, vocabularyPrompt });
         try {
           const processed = await this.llm.process({
             provider: llmProvider,
@@ -1090,8 +1216,9 @@ export class AppController {
     if (!item) return this.getSnapshot();
 
     const mode = state.modes.find((candidate) => candidate.id === state.settings.activeModeId) ?? state.modes[0];
-    const provider = this.selectLlmProvider(state);
-    if (!mode.aiEnabled || !provider) return this.getSnapshot();
+    const selectedProvider = this.selectLlmProvider(state);
+    if (!mode.aiEnabled || !selectedProvider) return this.getSnapshot();
+    const provider = this.storage.resolveLlmProviderSecret(selectedProvider);
 
     const context: ContextSnapshot = {
       appName: item.appName,
@@ -1103,7 +1230,12 @@ export class AppController {
       diagnostics: ["Reprocessed from history."]
     };
     const vocabularyPrompt = buildVocabularyPrompt(state.vocabulary);
-    const prompt = buildProcessingPrompt({ mode, context, rawTranscript: item.rawTranscript, vocabularyPrompt });
+    const prompt = buildProcessingPrompt({
+      mode,
+      context: this.contextForLlm(provider, state.settings, context),
+      rawTranscript: item.rawTranscript,
+      vocabularyPrompt
+    });
     const processed = await this.llm.process({ provider, prompt });
     this.storage.updateHistoryItem(id, {
       processedOutput: processed.text,
@@ -1116,6 +1248,13 @@ export class AppController {
     });
     this.broadcastState();
     return this.getSnapshot();
+  }
+
+  private contextForLlm(provider: LlmProviderConfig, settings: AppSettings, context: ContextSnapshot): ContextSnapshot {
+    return contextForLlmPrompt(context, {
+      providerIsCloud: provider.isCloud,
+      shareContextWithCloudLlm: settings.shareContextWithCloudLlm
+    });
   }
 
   private failSession(message: string): AppStateSnapshot {
@@ -1457,6 +1596,28 @@ function computeDurationMs(startedAt: string | undefined, stoppedAt: string): nu
   return Math.max(0, stop - start);
 }
 
+function parseIpcPayload<T>(schema: z.ZodType<T>, payload: unknown, channel: string): T {
+  const result = schema.safeParse(payload);
+  if (!result.success) {
+    throw new IpcValidationError(channel);
+  }
+  return result.data;
+}
+
+class IpcValidationError extends Error {
+  constructor(channel: string) {
+    super(`Invalid IPC payload for ${channel}.`);
+    this.name = "IpcValidationError";
+  }
+}
+
+class IpcAuthorizationError extends Error {
+  constructor(channel: string) {
+    super(`Unauthorized IPC sender for ${channel}.`);
+    this.name = "IpcAuthorizationError";
+  }
+}
+
 function unavailableContext(message: string): ContextSnapshot {
   return {
     capturedAt: new Date().toISOString(),
@@ -1482,6 +1643,14 @@ function rendererQueryFromSuffix(suffix: string): Record<string, string> | undef
   const query: Record<string, string> = {};
   for (const [key, value] of params) query[key] = value;
   return Object.keys(query).length > 0 ? query : undefined;
+}
+
+function rendererUrlWithSuffix(baseUrl: string, suffix: string): string {
+  if (!suffix) return baseUrl;
+  const url = new URL(baseUrl);
+  const params = new URLSearchParams(suffix.startsWith("?") ? suffix.slice(1) : suffix);
+  for (const [key, value] of params) url.searchParams.set(key, value);
+  return url.toString();
 }
 
 function wrapIndex(index: number, length: number): number {

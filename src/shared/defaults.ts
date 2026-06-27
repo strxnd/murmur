@@ -13,6 +13,7 @@ import { modelCatalog } from "./model-catalog";
 export const defaultSettings: AppSettings = {
   theme: "dark",
   textRetentionDays: 90,
+  shareContextWithCloudLlm: false,
   selectedTextCapture: "clipboard_restore",
   pasteMethod: "clipboard_restore",
   activeModeId: "default",

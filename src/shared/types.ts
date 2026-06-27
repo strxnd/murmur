@@ -223,6 +223,7 @@ export interface VocabularyEntry {
 export interface AppSettings {
   theme: "system" | "light" | "dark";
   textRetentionDays: number;
+  shareContextWithCloudLlm: boolean;
   selectedTextCapture: "disabled" | "clipboard_restore";
   pasteMethod: "clipboard_restore" | "clipboard_only";
   activeModeId: string;

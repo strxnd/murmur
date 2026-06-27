@@ -91,8 +91,14 @@ describe("ModelLibraryService", () => {
     const snapshot = await service.activateModel(item.id);
 
     expect(snapshot.activeModelIds.language).toBe(item.id);
-    expect(storage.getState().transcriptionProviders.find((provider) => provider.id === "openai-stt")?.apiKey).toBe("sk-test");
-    expect(storage.getState().llmProviders.find((provider) => provider.id === "openai-llm")?.apiKey).toBe("sk-test");
+    const sttProvider = storage.getState().transcriptionProviders.find((provider) => provider.id === "openai-stt");
+    const llmProvider = storage.getState().llmProviders.find((provider) => provider.id === "openai-llm");
+    expect(sttProvider?.apiKey).toBeUndefined();
+    expect(llmProvider?.apiKey).toBeUndefined();
+    expect(sttProvider?.apiKeySecretId).toBeTruthy();
+    expect(llmProvider?.apiKeySecretId).toBeTruthy();
+    expect(sttProvider ? storage.resolveTranscriptionProviderSecret(sttProvider).apiKey : undefined).toBe("sk-test");
+    expect(llmProvider ? storage.resolveLlmProviderSecret(llmProvider).apiKey : undefined).toBe("sk-test");
   });
 
   it("delete clears the active model", async () => {

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import {
@@ -30,7 +30,8 @@ import type {
   TranscriptionProviderConfig,
   VocabularyEntry
 } from "../../shared/types";
-import type { AppPaths } from "./app-paths";
+import { ensureOwnerOnlyDirectory, ensureOwnerOnlyFile, ownerOnlyFileMode, type AppPaths } from "./app-paths";
+import { ProviderSecretStore, secretIdForProvider, type ProviderSecretCodec, type ProviderSecretKind } from "./provider-secrets";
 
 interface PersistedConfigState {
   settings: AppSettings;
@@ -78,6 +79,7 @@ const recordingPillPositions = new Set<RecordingPillPosition>(["bottom_left", "b
 const appSettingKeys = [
   "theme",
   "textRetentionDays",
+  "shareContextWithCloudLlm",
   "selectedTextCapture",
   "pasteMethod",
   "activeModeId",
@@ -112,18 +114,22 @@ const customModeDefaults: ModeConfig = {
 export class StorageService {
   private db: any | null = null;
   private backendDiagnostic = "";
+  private providerSecrets: ProviderSecretStore;
   backend: "sqlite" | "json" = "json";
 
   constructor(
     private paths: AppPaths,
-    private loadSqlite: () => { DatabaseSync: new (path: string) => any } = () => require("node:sqlite")
+    private loadSqlite: () => { DatabaseSync: new (path: string) => any } = () => require("node:sqlite"),
+    providerSecretCodec?: ProviderSecretCodec
   ) {
-    mkdirSync(paths.configDir, { recursive: true });
-    mkdirSync(paths.dataDir, { recursive: true });
-    mkdirSync(paths.cacheDir, { recursive: true });
-    mkdirSync(paths.tempDir, { recursive: true });
-    mkdirSync(paths.audioDir, { recursive: true });
+    this.providerSecrets = new ProviderSecretStore(paths.providerSecretsPath, providerSecretCodec);
+    ensureOwnerOnlyDirectory(paths.configDir);
+    ensureOwnerOnlyDirectory(paths.dataDir);
+    ensureOwnerOnlyDirectory(paths.cacheDir);
+    ensureOwnerOnlyDirectory(paths.tempDir);
+    ensureOwnerOnlyDirectory(paths.audioDir);
     this.open();
+    this.migrateProviderSecrets();
   }
 
   getDiagnostics(): string[] {
@@ -137,8 +143,8 @@ export class StorageService {
     return {
       settings,
       modes,
-      transcriptionProviders: this.normalizeTranscriptionProviders(state.transcriptionProviders),
-      llmProviders: this.normalizeLlmProviders(state.llmProviders),
+      transcriptionProviders: this.redactTranscriptionProviderSecrets(this.normalizeTranscriptionProviders(state.transcriptionProviders)),
+      llmProviders: this.redactLlmProviderSecrets(this.normalizeLlmProviders(state.llmProviders)),
       autoModeRules: this.normalizeAutoModeRules(state.autoModeRules ?? defaultAutoModeRules, modes),
       vocabulary: state.vocabulary ?? [],
       history: state.history ?? [],
@@ -169,16 +175,32 @@ export class StorageService {
 
   setTranscriptionProviders(providers: TranscriptionProviderConfig[]): PersistedState {
     const state = this.getState();
-    state.transcriptionProviders = this.normalizeTranscriptionProviders(providers);
+    state.transcriptionProviders = this.redactTranscriptionProviderSecrets(this.normalizeTranscriptionProviders(providers));
+    this.providerSecrets.pruneKind(
+      "stt",
+      new Set(state.transcriptionProviders.map((provider) => provider.apiKeySecretId ?? secretIdForProvider("stt", provider.id)))
+    );
     this.writeState(state);
     return state;
   }
 
   setLlmProviders(providers: LlmProviderConfig[]): PersistedState {
     const state = this.getState();
-    state.llmProviders = this.normalizeLlmProviders(providers);
+    state.llmProviders = this.redactLlmProviderSecrets(this.normalizeLlmProviders(providers));
+    this.providerSecrets.pruneKind(
+      "llm",
+      new Set(state.llmProviders.map((provider) => provider.apiKeySecretId ?? secretIdForProvider("llm", provider.id)))
+    );
     this.writeState(state);
     return state;
+  }
+
+  resolveTranscriptionProviderSecret(provider: TranscriptionProviderConfig): TranscriptionProviderConfig {
+    return this.resolveProviderSecret("stt", provider);
+  }
+
+  resolveLlmProviderSecret(provider: LlmProviderConfig): LlmProviderConfig {
+    return this.resolveProviderSecret("llm", provider);
   }
 
   setAutoModeRules(rules: AutoModeRule[]): PersistedState {
@@ -275,10 +297,11 @@ export class StorageService {
     const state: PersistedState = this.defaults();
     this.closeDatabase();
     rmSync(this.paths.configPath, { force: true });
+    this.providerSecrets.clear();
     rmSync(this.paths.historyDbPath, { force: true });
     rmSync(this.paths.historyJsonPath, { force: true });
     rmSync(this.paths.audioDir, { recursive: true, force: true });
-    mkdirSync(this.paths.audioDir, { recursive: true });
+    ensureOwnerOnlyDirectory(this.paths.audioDir);
     this.open();
     this.writeState(state);
     return state;
@@ -289,6 +312,7 @@ export class StorageService {
     try {
       const { DatabaseSync } = this.loadSqlite();
       this.db = new DatabaseSync(this.paths.historyDbPath);
+      ensureOwnerOnlyFile(this.paths.historyDbPath);
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS dictations (
           id TEXT PRIMARY KEY,
@@ -371,8 +395,9 @@ export class StorageService {
   }
 
   private writeConfig(state: PersistedConfigState): void {
-    mkdirSync(dirname(this.paths.configPath), { recursive: true });
-    writeFileSync(this.paths.configPath, JSON.stringify(state, null, 2));
+    ensureOwnerOnlyDirectory(dirname(this.paths.configPath));
+    writeFileSync(this.paths.configPath, JSON.stringify(state, null, 2), { mode: ownerOnlyFileMode });
+    ensureOwnerOnlyFile(this.paths.configPath);
   }
 
   private writeHistory(history: DictationHistoryItem[]): void {
@@ -415,8 +440,62 @@ export class StorageService {
   }
 
   private writeHistoryJson(history: DictationHistoryItem[]): void {
-    mkdirSync(dirname(this.paths.historyJsonPath), { recursive: true });
-    writeFileSync(this.paths.historyJsonPath, JSON.stringify(history, null, 2));
+    ensureOwnerOnlyDirectory(dirname(this.paths.historyJsonPath));
+    writeFileSync(this.paths.historyJsonPath, JSON.stringify(history, null, 2), { mode: ownerOnlyFileMode });
+    ensureOwnerOnlyFile(this.paths.historyJsonPath);
+  }
+
+  private migrateProviderSecrets(): void {
+    const config = this.readConfig();
+    const modes = this.normalizeModes(config.modes);
+    const nextConfig: PersistedConfigState = {
+      settings: this.normalizeSettings(config.settings, modes),
+      modes,
+      transcriptionProviders: this.redactTranscriptionProviderSecrets(this.normalizeTranscriptionProviders(config.transcriptionProviders)),
+      llmProviders: this.redactLlmProviderSecrets(this.normalizeLlmProviders(config.llmProviders)),
+      autoModeRules: this.normalizeAutoModeRules(config.autoModeRules ?? defaultAutoModeRules, modes),
+      vocabulary: config.vocabulary ?? [],
+      modelLibrary: this.normalizeModelLibrary(config.modelLibrary),
+      releaseNotes: this.normalizeReleaseNotes(config.releaseNotes)
+    };
+
+    if (config.transcriptionProviders || config.llmProviders) {
+      this.writeConfig(nextConfig);
+    }
+  }
+
+  private redactTranscriptionProviderSecrets(providers: TranscriptionProviderConfig[]): TranscriptionProviderConfig[] {
+    return providers.map((provider) => this.redactProviderSecret("stt", provider));
+  }
+
+  private redactLlmProviderSecrets(providers: LlmProviderConfig[]): LlmProviderConfig[] {
+    return providers.map((provider) => this.redactProviderSecret("llm", provider));
+  }
+
+  private redactProviderSecret<T extends TranscriptionProviderConfig | LlmProviderConfig>(kind: ProviderSecretKind, provider: T): T {
+    const secretId = provider.apiKeySecretId ?? secretIdForProvider(kind, provider.id);
+    const apiKey = typeof provider.apiKey === "string" ? provider.apiKey.trim() : undefined;
+
+    if (apiKey) {
+      this.providerSecrets.set(secretId, apiKey);
+      const redacted = { ...provider, apiKeySecretId: secretId };
+      delete redacted.apiKey;
+      return redacted;
+    }
+
+    if (provider.apiKey === "" && !provider.apiKeySecretId) {
+      this.providerSecrets.delete(secretId);
+    }
+
+    const redacted = { ...provider };
+    delete redacted.apiKey;
+    return redacted;
+  }
+
+  private resolveProviderSecret<T extends TranscriptionProviderConfig | LlmProviderConfig>(kind: ProviderSecretKind, provider: T): T {
+    if (provider.apiKey?.trim()) return provider;
+    const apiKey = this.providerSecrets.get(provider.apiKeySecretId ?? secretIdForProvider(kind, provider.id));
+    return apiKey ? { ...provider, apiKey } : provider;
   }
 
   private closeDatabase(): void {
