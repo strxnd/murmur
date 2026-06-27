@@ -111,6 +111,22 @@ export function cloudCredentialApiKey(providerId: CloudCredentialProviderId, val
   );
 }
 
+export function cloudCredentialConfigured(providerId: CloudCredentialProviderId, values: ProvidersFormValues): boolean {
+  const definition = cloudCredentialProvider(providerId);
+  return Boolean(
+    firstNonEmpty(
+      ...definition.sttProviderIds.flatMap((id) => {
+        const provider = values.transcriptionProviders.find((candidate) => candidate.id === id);
+        return [provider?.apiKey, provider?.apiKeySecretId];
+      }),
+      ...definition.llmProviderIds.flatMap((id) => {
+        const provider = values.llmProviders.find((candidate) => candidate.id === id);
+        return [provider?.apiKey, provider?.apiKeySecretId];
+      })
+    )
+  );
+}
+
 export function applyCloudCredentialApiKey(
   values: ProvidersFormValues,
   providerId: CloudCredentialProviderId,
@@ -142,7 +158,8 @@ export function cloudCredentialValidationProviders(
   llmProviders: LlmProviderConfig[];
 } {
   const definition = cloudCredentialProvider(providerId);
-  const ensuredValues = applyCloudCredentialApiKey(values, providerId, cloudCredentialApiKey(providerId, values));
+  const apiKey = cloudCredentialApiKey(providerId, values);
+  const ensuredValues = apiKey.trim().length > 0 ? applyCloudCredentialApiKey(values, providerId, apiKey) : cloneProvidersFormValues(values);
 
   return {
     transcriptionProviders: definition.sttProviderIds
@@ -367,6 +384,7 @@ function upsertTranscriptionCredential(
     ...(defaultProvider ?? existing!),
     ...existing,
     apiKey,
+    apiKeySecretId: enabled ? existing?.apiKeySecretId : undefined,
     enabled
   };
 
@@ -391,6 +409,7 @@ function upsertLlmCredential(
     ...(defaultProvider ?? existing!),
     ...existing,
     apiKey,
+    apiKeySecretId: enabled ? existing?.apiKeySecretId : undefined,
     enabled
   };
 

@@ -57,6 +57,19 @@ export function buildProcessingPrompt(options: {
     .join("\n\n");
 }
 
+export function contextForLlmPrompt(
+  context: ContextSnapshot,
+  options: { providerIsCloud: boolean; shareContextWithCloudLlm: boolean }
+): ContextSnapshot {
+  if (!options.providerIsCloud || options.shareContextWithCloudLlm) return context;
+
+  return {
+    capturedAt: context.capturedAt,
+    sourceQuality: "unavailable",
+    diagnostics: [...context.diagnostics, "Cloud LLM context sharing is disabled."]
+  };
+}
+
 function clip(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max)}...` : value;
 }

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -187,6 +187,94 @@ describe("StorageService", () => {
     const storage = jsonStorage(paths);
 
     expect(storage.getState().llmProviders.find((provider) => provider.id === "lmstudio")?.enabled).toBe(true);
+  });
+
+  it("stores provider API keys outside config snapshots", () => {
+    const paths = testPaths();
+    const storage = jsonStorage(paths);
+
+    storage.setLlmProviders(
+      storage.getState().llmProviders.map((provider) =>
+        provider.id === "openai-llm" ? { ...provider, enabled: true, apiKey: "sk-secret" } : provider
+      )
+    );
+
+    const provider = storage.getState().llmProviders.find((candidate) => candidate.id === "openai-llm");
+    const configText = readFileSync(paths.configPath, "utf8");
+
+    expect(provider?.apiKey).toBeUndefined();
+    expect(provider?.apiKeySecretId).toBeTruthy();
+    expect(configText).not.toContain("sk-secret");
+    expect(provider ? storage.resolveLlmProviderSecret(provider).apiKey : undefined).toBe("sk-secret");
+  });
+
+  it("replaces stored provider API keys without dropping the existing secret reference", () => {
+    const paths = testPaths();
+    const storage = jsonStorage(paths);
+
+    storage.setLlmProviders(
+      storage.getState().llmProviders.map((provider) =>
+        provider.id === "openai-llm" ? { ...provider, enabled: true, apiKey: "sk-first" } : provider
+      )
+    );
+    const firstProvider = storage.getState().llmProviders.find((candidate) => candidate.id === "openai-llm");
+    if (!firstProvider) throw new Error("Missing OpenAI LLM provider.");
+
+    storage.setLlmProviders(
+      storage.getState().llmProviders.map((provider) =>
+        provider.id === "openai-llm" ? { ...provider, apiKey: "sk-second" } : provider
+      )
+    );
+    const secondProvider = storage.getState().llmProviders.find((candidate) => candidate.id === "openai-llm");
+
+    expect(secondProvider?.apiKeySecretId).toBe(firstProvider.apiKeySecretId);
+    expect(secondProvider ? storage.resolveLlmProviderSecret(secondProvider).apiKey : undefined).toBe("sk-second");
+  });
+
+  it("migrates legacy plaintext provider API keys out of the config file", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        llmProviders: defaultLlmProviders.map((provider) =>
+          provider.id === "openai-llm" ? { ...provider, enabled: true, apiKey: "sk-legacy" } : provider
+        )
+      })
+    );
+
+    const storage = jsonStorage(paths);
+    const provider = storage.getState().llmProviders.find((candidate) => candidate.id === "openai-llm");
+    const configText = readFileSync(paths.configPath, "utf8");
+
+    expect(provider?.apiKey).toBeUndefined();
+    expect(provider?.apiKeySecretId).toBeTruthy();
+    expect(configText).not.toContain("sk-legacy");
+    expect(provider ? storage.resolveLlmProviderSecret(provider).apiKey : undefined).toBe("sk-legacy");
+  });
+
+  it("writes sensitive files with owner-only permissions under a permissive umask", () => {
+    const previousUmask = process.umask(0);
+    try {
+      const paths = testPaths();
+      const storage = jsonStorage(paths);
+
+      storage.setLlmProviders(
+        storage.getState().llmProviders.map((provider) =>
+          provider.id === "openai-llm" ? { ...provider, enabled: true, apiKey: "sk-mode" } : provider
+        )
+      );
+      storage.addHistory(historyItem({ id: "permissions" }));
+
+      expect(modeOf(paths.configDir)).toBe(0o700);
+      expect(modeOf(paths.dataDir)).toBe(0o700);
+      expect(modeOf(paths.audioDir)).toBe(0o700);
+      expect(modeOf(paths.configPath)).toBe(0o600);
+      expect(modeOf(paths.providerSecretsPath)).toBe(0o600);
+      expect(modeOf(paths.historyJsonPath)).toBe(0o600);
+    } finally {
+      process.umask(previousUmask);
+    }
   });
 
   it("seeds former presets as built-in modes during migration", () => {
@@ -570,4 +658,8 @@ function tempRoot(): string {
   const dir = mkdtempSync(join(tmpdir(), "murmur-test-"));
   tempDirs.push(dir);
   return dir;
+}
+
+function modeOf(path: string): number {
+  return statSync(path).mode & 0o777;
 }

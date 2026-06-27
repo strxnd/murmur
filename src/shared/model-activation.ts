@@ -8,6 +8,7 @@ import type {
 interface CloudCredentialGate {
   isCloud: boolean;
   apiKey?: string;
+  apiKeySecretId?: string;
 }
 
 const providerLabels: Record<ModelProvider, string> = {
@@ -34,7 +35,7 @@ export function modelName(item: ModelCatalogItem): string | undefined {
 }
 
 export function hasUsableCloudCredentials(provider: CloudCredentialGate): boolean {
-  return !provider.isCloud || hasNonEmptyString(provider.apiKey);
+  return !provider.isCloud || hasNonEmptyString(provider.apiKey) || hasNonEmptyString(provider.apiKeySecretId);
 }
 
 export function isTranscriptionProviderUsable(provider: TranscriptionProviderConfig): boolean {

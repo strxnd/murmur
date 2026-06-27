@@ -59,6 +59,7 @@ describe("provider usability", () => {
     expect(isTranscriptionProviderUsable({ ...provider!, enabled: true, apiKey: "" })).toBe(false);
     expect(isTranscriptionProviderUsable({ ...provider!, enabled: true, apiKey: "   " })).toBe(false);
     expect(isTranscriptionProviderUsable({ ...provider!, enabled: true, apiKey: "sk-test" })).toBe(true);
+    expect(isTranscriptionProviderUsable({ ...provider!, enabled: true, apiKeySecretId: "provider-secret:stt:test" })).toBe(true);
   });
 
   it("requires cloud LLM providers to be enabled and credentialed", () => {
@@ -68,6 +69,7 @@ describe("provider usability", () => {
     expect(isLlmProviderUsable({ ...provider!, enabled: false, apiKey: "sk-test" })).toBe(false);
     expect(isLlmProviderUsable({ ...provider!, enabled: true, apiKey: "" })).toBe(false);
     expect(isLlmProviderUsable({ ...provider!, enabled: true, apiKey: "sk-test" })).toBe(true);
+    expect(isLlmProviderUsable({ ...provider!, enabled: true, apiKeySecretId: "provider-secret:llm:test" })).toBe(true);
   });
 
   it("gates API-backed model providers on credentials", () => {

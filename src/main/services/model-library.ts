@@ -499,7 +499,8 @@ export class ModelLibraryService {
     const providers = state.llmProviders.filter(isBuiltInDiscoverableLlmProvider);
     let catalog = state.modelLibrary.catalog;
 
-    for (const provider of providers) {
+    for (const storedProvider of providers) {
+      const provider = this.storage.resolveLlmProviderSecret(storedProvider) as LlmProviderConfig & { type: "ollama" | "lmstudio" };
       if (!provider.enabled) {
         catalog = updateDiscoveredProviderAvailability(catalog, provider, false, `${provider.name} is disabled.`);
         continue;

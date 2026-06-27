@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { isAbsolute, join } from "node:path";
 import type {
@@ -11,6 +11,7 @@ import type {
   TranscriptionResult
 } from "../../shared/types";
 import type { AppPaths } from "./app-paths";
+import { ensureOwnerOnlyDirectory, ensureOwnerOnlyFile, ownerOnlyFileMode } from "./app-paths";
 import { fetchWithTimeout, extractTextFromTranscriptionResponse, joinUrl, parseJsonOrText } from "./http";
 import { SttRuntimeService, type ResolvedSttRuntime } from "./stt-runtime";
 
@@ -327,9 +328,10 @@ export class TranscriptionService {
   }
 
   private writeTempAudio(audio: Uint8Array, extension: string): string {
-    mkdirSync(this.paths.tempDir, { recursive: true });
+    ensureOwnerOnlyDirectory(this.paths.tempDir);
     const path = join(this.paths.tempDir, `dictation-${Date.now()}-${randomUUID()}.${extension}`);
-    writeFileSync(path, audio);
+    writeFileSync(path, audio, { mode: ownerOnlyFileMode });
+    ensureOwnerOnlyFile(path);
     return path;
   }
 

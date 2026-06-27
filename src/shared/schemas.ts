@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+export const maxIpcTextCharacters = 200_000;
+export const maxRecordingAudioBytes = 150 * 1024 * 1024;
+
 export const dictationModeKindSchema = z.enum(["built_in", "custom"]);
 export const modeIconKeySchema = z.enum(["mic", "message-square", "mail", "notebook-pen", "sliders-horizontal"]);
 export const sttStreamingModeSchema = z.enum(["none", "completed_audio_sse", "live_realtime"]);
@@ -196,6 +199,7 @@ export const appSettingsSchema = z
   .object({
     theme: z.enum(["system", "light", "dark"]),
     textRetentionDays: z.number().min(0),
+    shareContextWithCloudLlm: z.boolean(),
     selectedTextCapture: z.enum(["disabled", "clipboard_restore"]),
     pasteMethod: z.enum(["clipboard_restore", "clipboard_only"]),
     activeModeId: z.string().min(1),
@@ -395,15 +399,25 @@ export const providerValidationResultSchema = z
   })
   .passthrough();
 
+export const settingsUpdatePayloadSchema = appSettingsSchema.partial().strict();
+export const modesSetPayloadSchema = z.array(modeConfigSchema);
+export const sttProvidersSetPayloadSchema = z.array(transcriptionProviderConfigSchema);
+export const llmProvidersSetPayloadSchema = z.array(llmProviderConfigSchema);
+export const autoModeRulesSetPayloadSchema = z.array(autoModeRuleSchema);
+export const vocabularySetPayloadSchema = z.array(vocabularyEntrySchema);
+export const ipcIdPayloadSchema = z.string().min(1).max(512);
+export const ipcTextPayloadSchema = z.string().max(maxIpcTextCharacters);
+export const modeSelectorMovePayloadSchema = z.number().int().min(-1).max(1);
+
 export const completeRecordingPayloadSchema = z.object({
   sessionId: z.string().min(1),
-  audio: z.instanceof(ArrayBuffer),
+  audio: z.instanceof(ArrayBuffer).refine((audio) => audio.byteLength <= maxRecordingAudioBytes, "Recording is too large."),
   mimeType: z.string().min(1)
 });
 
 export const recordingErrorPayloadSchema = z.object({
   sessionId: z.string().min(1),
-  message: z.string().min(1)
+  message: z.string().min(1).max(2000)
 });
 
 export const recordingLevelPayloadSchema = z.object({

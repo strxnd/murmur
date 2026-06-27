@@ -5,6 +5,7 @@ import {
   applyLlmProviderType,
   applyTranscriptionProviderType,
   cloudCredentialApiKey,
+  cloudCredentialConfigured,
   cloudCredentialValidationProviders,
   createCustomLlmProvider,
   createCustomTranscriptionProvider,
@@ -184,6 +185,24 @@ describe("provider form helpers", () => {
       enabled: false
     });
     expect(cloudCredentialApiKey("openai", cleared)).toBe("");
+    expect(cleared.transcriptionProviders.find((provider) => provider.id === "openai-stt")?.apiKeySecretId).toBeUndefined();
+    expect(cleared.llmProviders.find((provider) => provider.id === "openai-llm")?.apiKeySecretId).toBeUndefined();
+  });
+
+  it("treats stored secret references as configured credentials without exposing a key", () => {
+    const values = {
+      transcriptionProviders: defaultTranscriptionProviders.map((provider) =>
+        provider.id === "openai-stt" ? { ...provider, enabled: true, apiKeySecretId: "provider-secret:stt:test" } : provider
+      ),
+      llmProviders: defaultLlmProviders
+    };
+
+    expect(cloudCredentialApiKey("openai", values)).toBe("");
+    expect(cloudCredentialConfigured("openai", values)).toBe(true);
+    expect(cloudCredentialValidationProviders("openai", values).transcriptionProviders[0]).toMatchObject({
+      id: "openai-stt",
+      apiKeySecretId: "provider-secret:stt:test"
+    });
   });
 
   it("upserts missing default cloud provider records", () => {
