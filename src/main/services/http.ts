@@ -1,8 +1,27 @@
+export interface ResponseBodyReadOptions {
+  totalTimeoutMs?: number;
+  idleTimeoutMs?: number;
+  label?: string;
+  maxBytes?: number;
+}
+
+const defaultBodyTimeoutMs = 15000;
+
 export async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 15000): Promise<Response> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  unrefTimer(timeout);
   try {
     return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (timedOut) {
+      throw new Error(`Request timed out after ${timeoutMs}ms.`);
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
@@ -14,13 +33,92 @@ export function joinUrl(baseUrl: string, path: string | undefined): string {
   return `${cleanBase}${cleanPath}`;
 }
 
-export async function parseJsonOrText(response: Response): Promise<any> {
-  const text = await response.text();
+export async function parseJsonOrText(response: Response, options: ResponseBodyReadOptions = {}): Promise<any> {
+  const text = await readResponseText(response, options);
   if (!text) return {};
   try {
     return JSON.parse(text);
   } catch {
     return text;
+  }
+}
+
+export async function readResponseText(response: Response, options: ResponseBodyReadOptions = {}): Promise<string> {
+  const decoder = new TextDecoder();
+  let text = "";
+  await readResponseBody(
+    response,
+    (chunk) => {
+      text += decoder.decode(chunk, { stream: true });
+    },
+    options
+  );
+  text += decoder.decode();
+  return text;
+}
+
+export async function readResponseBody(
+  response: Response,
+  onChunk: (chunk: Uint8Array) => void,
+  options: ResponseBodyReadOptions = {}
+): Promise<void> {
+  const reader = response.body?.getReader();
+  if (!reader) return;
+
+  const totalTimeoutMs = options.totalTimeoutMs ?? defaultBodyTimeoutMs;
+  const idleTimeoutMs = options.idleTimeoutMs ?? totalTimeoutMs;
+  const label = options.label ?? "HTTP";
+  const startedAt = Date.now();
+  let bytesRead = 0;
+
+  try {
+    while (true) {
+      const elapsedMs = Date.now() - startedAt;
+      const remainingMs = totalTimeoutMs - elapsedMs;
+      if (remainingMs <= 0) {
+        throw new Error(`${label} response body timed out after ${totalTimeoutMs}ms.`);
+      }
+
+      const result = await readChunkWithTimeout(reader, Math.min(idleTimeoutMs, remainingMs), `${label} response body stalled for ${idleTimeoutMs}ms.`);
+      if (result.done) break;
+      if (!result.value) continue;
+
+      bytesRead += result.value.byteLength;
+      if (options.maxBytes !== undefined && bytesRead > options.maxBytes) {
+        throw new Error(`${label} response body exceeded ${options.maxBytes} bytes.`);
+      }
+      onChunk(result.value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function readChunkWithTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number,
+  message: string
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise<ReadableStreamReadResult<Uint8Array>>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+        unrefTimer(timeout);
+      })
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
+  if (typeof timer === "object" && "unref" in timer && typeof timer.unref === "function") {
+    timer.unref();
   }
 }
 

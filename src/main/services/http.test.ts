@@ -1,0 +1,56 @@
+import { createServer, type Server, type ServerResponse } from "node:http";
+import type { Socket } from "node:net";
+import { afterEach, describe, expect, it } from "vitest";
+import { fetchWithTimeout, readResponseText } from "./http";
+
+const servers: Array<() => Promise<void>> = [];
+
+afterEach(async () => {
+  await Promise.all(servers.splice(0).map((close) => close()));
+});
+
+describe("HTTP response body timeouts", () => {
+  it("rejects when a response body stalls after headers", async () => {
+    const { url } = await startServer((response) => {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.write('{"partial":');
+    });
+
+    const response = await fetchWithTimeout(url, {}, 500);
+
+    await expect(readResponseText(response, { totalTimeoutMs: 50, idleTimeoutMs: 20, label: "test" })).rejects.toThrow(
+      /test response body/
+    );
+  });
+});
+
+function startServer(handler: (response: ServerResponse) => void): Promise<{ url: string }> {
+  return new Promise((resolve, reject) => {
+    const sockets = new Set<Socket>();
+    const server = createServer((_request, response) => handler(response));
+    server.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+    });
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("Server did not bind to a TCP port."));
+        return;
+      }
+      servers.push(() => closeServer(server, sockets));
+      resolve({ url: `http://127.0.0.1:${address.port}` });
+    });
+  });
+}
+
+function closeServer(server: Server, sockets: Set<Socket>): Promise<void> {
+  for (const socket of sockets) socket.destroy();
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}

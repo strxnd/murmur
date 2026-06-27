@@ -1,4 +1,4 @@
-import { Clock3, Library, Mic, Square, Wrench } from "lucide-react";
+import { CircleAlert, Clock3, Library, Mic, Square, Wrench } from "lucide-react";
 import { useMemo, type JSX } from "react";
 import type { AppStateSnapshot, DictationHistoryItem } from "../../../shared/types";
 import { StatCard } from "../components/StatCard";
@@ -26,6 +26,7 @@ export function HomeView({
   return (
     <View title="Home" actions={<SessionActions state={state} />}>
       {shouldShowSttSetupCallout(state) && <SttSetupCallout onOpenModels={onOpenModels} onOpenOnboarding={onOpenOnboarding} />}
+      {state.session.error && <SessionNotice status={state.session.status} message={state.session.error} />}
 
       <section className="grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[640px]:grid-cols-1">
         <StatCard label="Average speed" value={metrics.averageSpeed} detail="spoken words per recorded minute" />
@@ -92,6 +93,22 @@ function SessionActions({ state }: { state: AppStateSnapshot }): JSX.Element {
         {isRecording ? "Stop" : "Record"}
       </Button>
     </Toolbar>
+  );
+}
+
+function SessionNotice({ status, message }: { status: AppStateSnapshot["session"]["status"]; message: string }): JSX.Element {
+  const isError = status === "error";
+  return (
+    <div
+      role={isError ? "alert" : "status"}
+      className="flex items-start gap-3 rounded-md border border-border bg-surface px-4 py-3 text-sm text-foreground"
+    >
+      <CircleAlert size={18} className={isError ? "mt-0.5 shrink-0 text-danger" : "mt-0.5 shrink-0 text-muted-foreground"} />
+      <div className="min-w-0">
+        <div className="font-medium">{isError ? "Dictation needs attention" : "Dictation notice"}</div>
+        <p className="m-0 mt-1 break-words text-muted-foreground">{message}</p>
+      </div>
+    </div>
   );
 }
 
