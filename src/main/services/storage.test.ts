@@ -1,7 +1,7 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultLlmProviders, defaultModes, defaultSettings } from "../../shared/defaults";
 import type { DictationHistoryItem, ModelCatalogItem } from "../../shared/types";
 import { resolveAppPaths, type AppPaths } from "./app-paths";
@@ -582,12 +582,16 @@ describe("StorageService", () => {
     const paths = testPaths();
     const storage = jsonStorage(paths);
     storage.updateSettings({ theme: "light" });
-    chmodSync(paths.configDir, 0o500);
+    const now = 1234567890;
+    const tempPath = join(paths.configDir, `.murmur-config.json.${process.pid}.${now}.tmp`);
+    mkdirSync(tempPath);
+    vi.spyOn(Date, "now").mockReturnValue(now);
 
     try {
       expect(() => storage.updateSettings({ theme: "dark" })).toThrow();
     } finally {
-      chmodSync(paths.configDir, 0o700);
+      vi.restoreAllMocks();
+      rmSync(tempPath, { recursive: true, force: true });
     }
 
     const config = JSON.parse(readFileSync(paths.configPath, "utf8")) as { settings: { theme: string } };
