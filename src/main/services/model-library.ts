@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, rmSync, renameSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { closeSync, createWriteStream, existsSync, mkdirSync, openSync, readSync, rmSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { canActivateModel, isModelProviderUsable } from "../../shared/model-activation";
 import { modelCatalog } from "../../shared/model-catalog";
@@ -19,6 +20,10 @@ import { SttRuntimeService } from "./stt-runtime";
 
 const ollamaBaseUrl = "http://127.0.0.1:11434";
 const ollamaNotRunning = "Ollama is not running at http://127.0.0.1:11434.";
+const defaultDownloadHeaderTimeoutMs = 15000;
+const defaultDownloadBodyTimeoutMs = 30000;
+const defaultProgressEmitIntervalMs = 500;
+const progressEmitMinBytes = 1024 * 1024;
 
 type ProgressEmitter = (state: ModelDownloadState) => void;
 
@@ -27,15 +32,40 @@ interface ModelDownloadOperation {
   promise: Promise<ModelLibrarySnapshot>;
 }
 
+interface DownloadProgressSnapshot {
+  lastEmittedAt: number;
+  lastProgressBytes: number;
+}
+
+interface DownloadToFileResult {
+  progressBytes: number;
+  totalBytes?: number;
+  sha256: string;
+}
+
+export interface ModelLibraryServiceOptions {
+  downloadHeaderTimeoutMs?: number;
+  downloadBodyTimeoutMs?: number;
+  progressEmitIntervalMs?: number;
+}
+
 export class ModelLibraryService {
   private activeDownloads = new Map<string, ModelDownloadOperation>();
+  private progressSnapshots = new Map<string, DownloadProgressSnapshot>();
+  private downloadHeaderTimeoutMs: number;
+  private downloadBodyTimeoutMs: number;
+  private progressEmitIntervalMs: number;
 
   constructor(
     private paths: AppPaths,
     private storage: StorageService,
     private emitProgress: ProgressEmitter,
-    private runtimeService = new SttRuntimeService()
+    private runtimeService = new SttRuntimeService(),
+    options: ModelLibraryServiceOptions = {}
   ) {
+    this.downloadHeaderTimeoutMs = options.downloadHeaderTimeoutMs ?? defaultDownloadHeaderTimeoutMs;
+    this.downloadBodyTimeoutMs = options.downloadBodyTimeoutMs ?? defaultDownloadBodyTimeoutMs;
+    this.progressEmitIntervalMs = options.progressEmitIntervalMs ?? defaultProgressEmitIntervalMs;
     this.refreshCachedModelDownloadStates();
   }
 
@@ -179,39 +209,10 @@ export class ModelLibraryService {
     });
 
     try {
-      const response = await fetchWithTimeout(item.downloadUrl, {}, 15000, signal);
-      if (!response.ok) {
-        throw new Error(`Download failed with HTTP ${response.status}: ${await response.text()}`);
-      }
-
-      const totalBytes = Number(response.headers.get("content-length")) || item.sizeBytes;
-      const writer = createWriteStream(partPath);
-      let progressBytes = 0;
-
-      if (!response.body) throw new Error("Download response did not include a stream.");
-      const reader = response.body.getReader();
-      try {
-        while (true) {
-          if (signal.aborted) throw abortError();
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (!value) continue;
-          progressBytes += value.byteLength;
-          await writeChunk(writer, value);
-          this.persistAndEmit({
-            modelId: item.id,
-            status: "downloading",
-            progressBytes,
-            totalBytes,
-            localPath: targetPath,
-            favorite: Boolean(this.getDownloadState(item.id)?.favorite)
-          });
-        }
-      } finally {
-        await closeWriter(writer);
-      }
+      const { progressBytes, totalBytes, sha256 } = await this.downloadToFile(item, partPath, targetPath, signal);
 
       if (signal.aborted) throw abortError();
+      verifyModelSha256(item, sha256);
       renameSync(partPath, targetPath);
       this.persistAndEmit({
         modelId: item.id,
@@ -262,9 +263,12 @@ export class ModelLibraryService {
     });
 
     try {
-      const progressBytes = await this.downloadToFile(item, partPath, targetPath, signal);
+      const { progressBytes, sha256 } = await this.downloadToFile(item, partPath, targetPath, signal);
       if (signal.aborted) throw abortError();
+      verifyModelSha256(item, sha256);
       renameSync(partPath, archivePath);
+      await assertSafeTarBz2Archive(archivePath, signal);
+      if (signal.aborted) throw abortError();
       if (existsSync(targetPath)) rmSync(targetPath, { recursive: true, force: true });
       extractionStarted = true;
       await extractTarBz2(archivePath, modelRoot, signal);
@@ -304,29 +308,40 @@ export class ModelLibraryService {
     }
   }
 
-  private async downloadToFile(item: ModelCatalogItem, partPath: string, targetPath: string, signal: AbortSignal): Promise<number> {
-    if (!item.downloadUrl) return 0;
+  private async downloadToFile(
+    item: ModelCatalogItem,
+    partPath: string,
+    targetPath: string,
+    signal: AbortSignal
+  ): Promise<DownloadToFileResult> {
+    if (!item.downloadUrl) return { progressBytes: 0, sha256: createHash("sha256").digest("hex") };
 
-    const response = await fetchWithTimeout(item.downloadUrl, {}, 15000, signal);
+    const response = await fetchWithTimeout(item.downloadUrl, {}, this.downloadHeaderTimeoutMs, signal);
     if (!response.ok) {
       throw new Error(`Download failed with HTTP ${response.status}: ${await response.text()}`);
     }
 
     const totalBytes = Number(response.headers.get("content-length")) || item.sizeBytes;
     const writer = createWriteStream(partPath);
+    const hash = createHash("sha256");
     let progressBytes = 0;
+    let streamDone = false;
 
     if (!response.body) throw new Error("Download response did not include a stream.");
     const reader = response.body.getReader();
     try {
       while (true) {
         if (signal.aborted) throw abortError();
-        const { done, value } = await reader.read();
-        if (done) break;
+        const { done, value } = await readStreamChunk(reader, this.downloadBodyTimeoutMs, signal);
+        if (done) {
+          streamDone = true;
+          break;
+        }
         if (!value) continue;
         progressBytes += value.byteLength;
+        hash.update(value);
         await writeChunk(writer, value);
-        this.persistAndEmit({
+        this.maybePersistAndEmitProgress({
           modelId: item.id,
           status: "downloading",
           progressBytes,
@@ -336,10 +351,11 @@ export class ModelLibraryService {
         });
       }
     } finally {
+      if (!streamDone) await reader.cancel().catch(() => undefined);
       await closeWriter(writer);
     }
 
-    return progressBytes;
+    return { progressBytes, totalBytes, sha256: hash.digest("hex") };
   }
 
   private async pullOllamaModel(item: ModelCatalogItem, signal: AbortSignal): Promise<void> {
@@ -364,7 +380,7 @@ export class ModelLibraryService {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model, stream: true })
         },
-        15000,
+        this.downloadHeaderTimeoutMs,
         signal
       );
       if (!response.ok) throw new Error(`Ollama pull failed with HTTP ${response.status}: ${await response.text()}`);
@@ -407,7 +423,7 @@ export class ModelLibraryService {
 
     while (true) {
       if (signal.aborted) throw abortError();
-      const { done, value } = await reader.read();
+      const { done, value } = await readStreamChunk(reader, this.downloadBodyTimeoutMs, signal);
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
@@ -419,7 +435,7 @@ export class ModelLibraryService {
         if (!trimmed) continue;
         const event = JSON.parse(trimmed) as { status?: string; completed?: number; total?: number; error?: string };
         if (event.error) throw new Error(event.error);
-        this.persistAndEmit({
+        this.maybePersistAndEmitProgress({
           modelId: item.id,
           status: event.status === "success" ? "downloaded" : "downloading",
           progressBytes: event.completed ?? this.getDownloadState(item.id)?.progressBytes ?? 0,
@@ -464,6 +480,21 @@ export class ModelLibraryService {
       const exists = existsSync(expectedPath);
 
       if (exists && existing?.status !== "downloaded") {
+        if (!this.isExistingModelArtifactValid(item, expectedPath)) {
+          this.persistDownload({
+            modelId: item.id,
+            status: "error",
+            progressBytes: 0,
+            totalBytes: item.sizeBytes,
+            localPath: expectedPath,
+            error: `Cached model failed SHA-256 verification for ${item.filename ?? item.id}.`,
+            favorite: Boolean(existing?.favorite)
+          });
+          if (this.storage.getState().modelLibrary.activeModelIds[item.kind] === item.id) {
+            this.storage.setActiveModel(item.kind, undefined);
+          }
+          continue;
+        }
         this.persistDownload({
           modelId: item.id,
           status: "downloaded",
@@ -491,6 +522,15 @@ export class ModelLibraryService {
           favorite: Boolean(existing.favorite)
         });
       }
+    }
+  }
+
+  private isExistingModelArtifactValid(item: ModelCatalogItem, expectedPath: string): boolean {
+    if (item.downloadStrategy !== "direct_file" || !item.sha256) return true;
+    try {
+      return sha256FileSync(expectedPath) === item.sha256;
+    } catch {
+      return false;
     }
   }
 
@@ -635,6 +675,24 @@ export class ModelLibraryService {
   private persistAndEmit(state: ModelDownloadState): void {
     this.persistDownload(state);
     this.emitProgress(state);
+    if (state.status !== "downloading") this.progressSnapshots.delete(state.modelId);
+  }
+
+  private maybePersistAndEmitProgress(state: ModelDownloadState): void {
+    const previous = this.progressSnapshots.get(state.modelId);
+    const now = Date.now();
+    const byteDelta = previous ? state.progressBytes - previous.lastProgressBytes : state.progressBytes;
+    const timeDelta = previous ? now - previous.lastEmittedAt : Number.POSITIVE_INFINITY;
+    const firstPositiveProgress = previous?.lastProgressBytes === 0 && state.progressBytes > 0;
+    const reachedEnd = state.totalBytes !== undefined && state.progressBytes >= state.totalBytes;
+
+    if (!previous || firstPositiveProgress || byteDelta >= progressEmitMinBytes || timeDelta >= this.progressEmitIntervalMs || reachedEnd) {
+      this.progressSnapshots.set(state.modelId, {
+        lastEmittedAt: now,
+        lastProgressBytes: state.progressBytes
+      });
+      this.persistAndEmit(state);
+    }
   }
 
   private persistDownload(state: ModelDownloadState): void {
@@ -841,15 +899,23 @@ function sameValue(left: unknown, right: unknown): boolean {
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, signal?: AbortSignal): Promise<Response> {
   const controller = new AbortController();
+  let timedOut = false;
   const abort = (): void => controller.abort();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   signal?.addEventListener("abort", abort, { once: true });
   try {
     if (signal?.aborted) throw abortError();
     return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (signal?.aborted) throw abortError();
+    if (timedOut) throw new Error(`Request timed out while waiting for response headers after ${timeoutMs}ms.`);
+    throw error;
   } finally {
-    // Keep the abort bridge alive after headers so cancelling also aborts response body reads.
     clearTimeout(timeout);
+    signal?.removeEventListener("abort", abort);
   }
 }
 
@@ -866,6 +932,39 @@ function writeChunk(writer: NodeJS.WritableStream, value: Uint8Array): Promise<v
   });
 }
 
+function readStreamChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError());
+      return;
+    }
+
+    let settled = false;
+    let timeout: NodeJS.Timeout;
+    const finish = (callback: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
+      callback();
+    };
+    const abort = (): void => finish(() => reject(abortError()));
+    timeout = setTimeout(() => {
+      finish(() => reject(new Error(`Download stalled while reading the response body for ${timeoutMs}ms.`)));
+    }, timeoutMs);
+
+    signal?.addEventListener("abort", abort, { once: true });
+    reader.read().then(
+      (result) => finish(() => resolve(result)),
+      (error: unknown) => finish(() => reject(error))
+    );
+  });
+}
+
 function closeWriter(writer: NodeJS.WritableStream): Promise<void> {
   return new Promise((resolve, reject) => {
     writer.end((error?: Error | null) => {
@@ -873,6 +972,87 @@ function closeWriter(writer: NodeJS.WritableStream): Promise<void> {
       else resolve();
     });
   });
+}
+
+function verifyModelSha256(item: ModelCatalogItem, actualSha256: string): void {
+  if (!item.sha256) return;
+  if (actualSha256 !== item.sha256) {
+    throw new Error(`SHA-256 mismatch for ${item.filename ?? item.id}. Expected ${item.sha256}, got ${actualSha256}.`);
+  }
+}
+
+function sha256FileSync(path: string): string {
+  const fd = openSync(path, "r");
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  try {
+    while (true) {
+      const bytesRead = readSync(fd, buffer, 0, buffer.byteLength, null);
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    closeSync(fd);
+  }
+  return hash.digest("hex");
+}
+
+function assertSafeTarBz2Archive(archivePath: string, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("tar", ["-tjf", archivePath], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", abort);
+      if (error) {
+        reject(error);
+        return;
+      }
+      const unsafeEntry = stdout
+        .split("\n")
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .find(isUnsafeArchiveEntry);
+      if (unsafeEntry) {
+        reject(new Error(`Archive contains an unsafe path: ${unsafeEntry}`));
+      } else {
+        resolve();
+      }
+    };
+    const abort = (): void => {
+      child.kill();
+      finish(abortError());
+    };
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => finish(isAbortError(error) ? abortError() : error));
+    child.on("close", (code) => {
+      if (code === 0) finish();
+      else finish(new Error(`tar archive listing failed with exit code ${code}: ${stderr.trim()}`));
+    });
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
+function isUnsafeArchiveEntry(entry: string): boolean {
+  const normalized = entry.replace(/\\/g, "/");
+  if (!normalized || normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized) || normalized.includes("\0")) return true;
+  return normalized.split("/").some((part) => part === "..");
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException ? error.name === "AbortError" : error instanceof Error && error.name === "AbortError";
 }
 
 function extractTarBz2(archivePath: string, targetDir: string, signal?: AbortSignal): Promise<void> {

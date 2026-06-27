@@ -15,12 +15,13 @@
     "test": "vitest run",
     "runtimes:prepare": "node scripts/prepare-runtimes.mjs --platform current",
     "runtimes:package": "node scripts/package-runtimes.mjs --platform current",
-    "runtimes:stage": "node scripts/stage-bundled-runtimes.mjs --platform current",
+    "runtimes:stage": "node scripts/stage-bundled-runtimes.mjs",
     "runtimes:doctor": "node scripts/check-runtimes.mjs",
     "runtimes:manifest-check": "node scripts/check-runtime-manifest.mjs",
+    "runtimes:manifest-check:release": "node scripts/check-runtime-manifest.mjs --release",
     "linux-helper:build": "node scripts/build-linux-fast-paste.mjs",
-    "pack": "npm run build && npm run runtimes:manifest-check && npm run runtimes:stage && electron-builder --dir",
-    "dist": "npm run build && npm run runtimes:manifest-check && npm run runtimes:stage && electron-builder"
+    "pack": "npm run build && npm run linux-helper:build && npm run runtimes:manifest-check && npm run runtimes:stage && electron-builder --dir",
+    "dist": "npm run build && npm run linux-helper:build && npm run runtimes:manifest-check && npm run runtimes:stage && electron-builder"
   },
   "build": {
     "appId": "dev.murmur.app",
@@ -62,7 +63,6 @@
     "@hookform/resolvers": "^5.4.0",
     "clsx": "^2.1.1",
     "electron-updater": "^6.6.2",
-    "geist": "^1.7.2",
     "lucide-react": "^0.561.0",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",

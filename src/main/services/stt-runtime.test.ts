@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -243,6 +244,79 @@ describe("SttRuntimeService", () => {
     expect(service.getInstallState("whisper.cpp").status).toBe("error");
   });
 
+  it("times out stalled runtime response bodies after headers", async () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const catalog = structuredClone(sttRuntimeCatalog);
+    catalog["whisper.cpp"].platforms["linux-x64"] = {
+      assetName: "runtime.tar.gz",
+      url: "https://example.test/runtime.tar.gz",
+      sizeBytes: 64,
+      sha256: "0".repeat(64)
+    };
+
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      runtimeDir,
+      env: {},
+      catalog,
+      downloadBodyTimeoutMs: 20,
+      fetch: async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start() {
+              // Leave the body open after headers.
+            }
+          }),
+          { status: 200, headers: { "content-length": "64" } }
+        ),
+      extractArchive: async () => undefined
+    });
+
+    const state = await service.downloadRuntime("whisper.cpp");
+
+    expect(state.status).toBe("error");
+    expect(state.error).toContain("response body");
+    expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "runtime.tar.gz.part"))).toBe(false);
+    expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "v1.8.6"))).toBe(false);
+  });
+
+  it("rejects unsafe runtime archive paths before extraction", async () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const archive = unsafeTarGz();
+    const catalog = structuredClone(sttRuntimeCatalog);
+    catalog["whisper.cpp"].platforms["linux-x64"] = {
+      assetName: "runtime.tar.gz",
+      url: "https://example.test/runtime.tar.gz",
+      sizeBytes: archive.byteLength,
+      sha256: sha256(archive)
+    };
+    let extractCalls = 0;
+
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      runtimeDir,
+      env: {},
+      catalog,
+      fetch: async () => new Response(arrayBufferFromBuffer(archive), { status: 200, headers: { "content-length": String(archive.byteLength) } }),
+      extractArchive: async () => {
+        extractCalls += 1;
+      }
+    });
+
+    const state = await service.downloadRuntime("whisper.cpp");
+
+    expect(state.status).toBe("error");
+    expect(state.error).toContain("unsafe path");
+    expect(extractCalls).toBe(0);
+    expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "v1.8.6"))).toBe(false);
+  });
+
   it("does not fetch or emit progress when download and repair are disabled", async () => {
     let fetchCalls = 0;
     let progressEvents = 0;
@@ -273,13 +347,13 @@ describe("SttRuntimeService", () => {
   it("passes cancellation to runtime archive extraction", async () => {
     const root = tempRoot();
     const runtimeDir = join(root, "cache", "runtimes", "stt");
-    const bytes = "bytes";
+    const archive = safeTarGz();
     const catalog = structuredClone(sttRuntimeCatalog);
     catalog["whisper.cpp"].platforms["linux-x64"] = {
       assetName: "runtime.tar.gz",
       url: "https://example.test/runtime.tar.gz",
-      sizeBytes: bytes.length,
-      sha256: sha256(bytes)
+      sizeBytes: archive.byteLength,
+      sha256: sha256(archive)
     };
 
     let extractSignal: AbortSignal | undefined;
@@ -295,7 +369,7 @@ describe("SttRuntimeService", () => {
       runtimeDir,
       env: {},
       catalog,
-      fetch: async () => new Response(bytes, { status: 200, headers: { "content-length": String(bytes.length) } }),
+      fetch: async () => new Response(arrayBufferFromBuffer(archive), { status: 200, headers: { "content-length": String(archive.byteLength) } }),
       extractArchive: async (_archivePath, _targetDir, signal) => {
         extractSignal = signal;
         extractionStarted();
@@ -371,8 +445,42 @@ function writeRuntimeReceipt(root: string, id: string, platformKey: string, vers
   );
 }
 
-function sha256(value: string): string {
+function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function unsafeTarGz(): Buffer {
+  const root = tempRoot();
+  const sourceDir = join(root, "archive-src");
+  const archivePath = join(root, "unsafe.tar.gz");
+  mkdirSync(sourceDir, { recursive: true });
+  writeFileSync(join(sourceDir, "payload.txt"), "payload");
+  const result = spawnSync("tar", ["-czf", archivePath, "--transform=s|payload.txt|../payload.txt|", "-C", sourceDir, "payload.txt"], {
+    encoding: "utf8"
+  });
+  if (result.status !== 0) {
+    throw new Error(`Could not create unsafe tar fixture: ${result.stderr}`);
+  }
+  return readFileSync(archivePath);
+}
+
+function safeTarGz(): Buffer {
+  const root = tempRoot();
+  const sourceDir = join(root, "archive-src");
+  const archivePath = join(root, "safe.tar.gz");
+  mkdirSync(sourceDir, { recursive: true });
+  writeFileSync(join(sourceDir, "payload.txt"), "payload");
+  const result = spawnSync("tar", ["-czf", archivePath, "-C", sourceDir, "payload.txt"], {
+    encoding: "utf8"
+  });
+  if (result.status !== 0) {
+    throw new Error(`Could not create safe tar fixture: ${result.stderr}`);
+  }
+  return readFileSync(archivePath);
+}
+
+function arrayBufferFromBuffer(buffer: Buffer): ArrayBuffer {
+  return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
 }
 
 function createAbortError(): Error {

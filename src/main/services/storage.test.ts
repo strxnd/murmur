@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -446,14 +446,64 @@ describe("StorageService", () => {
     const secondAudio = join(paths.audioDir, "second.wav");
     writeFileSync(firstAudio, "first");
     writeFileSync(secondAudio, "second");
-    storage.addHistory(historyItem({ id: "first", audioPath: firstAudio, createdAt: "2026-01-02T00:00:00.000Z" }));
-    storage.addHistory(historyItem({ id: "second", audioPath: secondAudio, createdAt: "2026-01-01T00:00:00.000Z" }));
+    storage.addHistory(historyItem({ id: "first", audioPath: firstAudio, createdAt: recentIso(1) }));
+    storage.addHistory(historyItem({ id: "second", audioPath: secondAudio, createdAt: recentIso(2) }));
 
     storage.deleteHistory("first");
     storage.clearHistory();
 
     expect(existsSync(firstAudio)).toBe(false);
     expect(existsSync(secondAudio)).toBe(false);
+  });
+
+  it("prunes history beyond text retention days and removes linked audio", () => {
+    const paths = testPaths();
+    const storage = jsonStorage(paths);
+    const oldAudio = join(paths.audioDir, "old.wav");
+    const recentAudio = join(paths.audioDir, "recent.wav");
+    writeFileSync(oldAudio, "old");
+    writeFileSync(recentAudio, "recent");
+
+    storage.updateSettings({ textRetentionDays: 1 });
+    storage.addHistory(historyItem({ id: "old", audioPath: oldAudio, createdAt: recentIso(3) }));
+    const state = storage.addHistory(historyItem({ id: "recent", audioPath: recentAudio, createdAt: recentIso(0) }));
+
+    expect(state.history.map((item) => item.id)).toEqual(["recent"]);
+    expect(existsSync(oldAudio)).toBe(false);
+    expect(existsSync(recentAudio)).toBe(true);
+
+    const reopened = jsonStorage(paths);
+    expect(reopened.getState().history.map((item) => item.id)).toEqual(["recent"]);
+  });
+
+  it("treats zero text retention days as no retained history", () => {
+    const paths = testPaths();
+    const storage = jsonStorage(paths);
+    const audioPath = join(paths.audioDir, "zero.wav");
+    writeFileSync(audioPath, "audio");
+
+    storage.updateSettings({ textRetentionDays: 0 });
+    const state = storage.addHistory(historyItem({ audioPath }));
+
+    expect(state.history).toEqual([]);
+    expect(existsSync(audioPath)).toBe(false);
+    expect(jsonStorage(paths).getState().history).toEqual([]);
+  });
+
+  it("keeps the previous config intact when an atomic JSON write fails", () => {
+    const paths = testPaths();
+    const storage = jsonStorage(paths);
+    storage.updateSettings({ theme: "light" });
+    chmodSync(paths.configDir, 0o500);
+
+    try {
+      expect(() => storage.updateSettings({ theme: "dark" })).toThrow();
+    } finally {
+      chmodSync(paths.configDir, 0o700);
+    }
+
+    const config = JSON.parse(readFileSync(paths.configPath, "utf8")) as { settings: { theme: string } };
+    expect(config.settings.theme).toBe("light");
   });
 
   it("clears local config, history, and audio while leaving model cache intact", () => {
@@ -520,9 +570,13 @@ function historyItem(patch: Partial<DictationHistoryItem> = {}): DictationHistor
     transcriptionProviderCloud: false,
     transcriptionStreamingMode: "none",
     llmProviderCloud: false,
-    createdAt: "2026-01-01T00:00:00.000Z",
+    createdAt: new Date().toISOString(),
     ...patch
   };
+}
+
+function recentIso(daysAgo: number): string {
+  return new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString();
 }
 
 function discoveredModel(id: string): ModelCatalogItem {

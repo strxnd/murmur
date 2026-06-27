@@ -31,6 +31,10 @@ type RuntimeSource = SttRuntimeSource;
 type RuntimeCatalog = Record<SttRuntimeId, SttRuntimeCatalogEntry>;
 type ProgressEmitter = (state: SttRuntimeInstallState) => void;
 type RuntimeMutationHook = (id: SttRuntimeId) => void | Promise<void>;
+const defaultDownloadHeaderTimeoutMs = 15000;
+const defaultDownloadBodyTimeoutMs = 30000;
+const defaultProgressEmitIntervalMs = 500;
+const progressEmitMinBytes = 1024 * 1024;
 
 interface RuntimeCandidate {
   binaryPath: string;
@@ -79,6 +83,9 @@ export interface SttRuntimeServiceOptions {
   emitProgress?: ProgressEmitter;
   onBeforeRuntimeMutation?: RuntimeMutationHook;
   downloadsEnabled?: boolean;
+  downloadHeaderTimeoutMs?: number;
+  downloadBodyTimeoutMs?: number;
+  progressEmitIntervalMs?: number;
 }
 
 export { sttRuntimeIds };
@@ -97,6 +104,9 @@ export class SttRuntimeService {
   private emitProgress?: ProgressEmitter;
   private onBeforeRuntimeMutation?: RuntimeMutationHook;
   private downloadsEnabled: boolean;
+  private downloadHeaderTimeoutMs: number;
+  private downloadBodyTimeoutMs: number;
+  private progressEmitIntervalMs: number;
   private operations = new Map<SttRuntimeId, RuntimeOperation>();
   private activeStates = new Map<SttRuntimeId, SttRuntimeInstallState>();
   private lastErrors = new Map<SttRuntimeId, string>();
@@ -115,6 +125,9 @@ export class SttRuntimeService {
     this.emitProgress = options.emitProgress;
     this.onBeforeRuntimeMutation = options.onBeforeRuntimeMutation;
     this.downloadsEnabled = options.downloadsEnabled ?? true;
+    this.downloadHeaderTimeoutMs = options.downloadHeaderTimeoutMs ?? defaultDownloadHeaderTimeoutMs;
+    this.downloadBodyTimeoutMs = options.downloadBodyTimeoutMs ?? defaultDownloadBodyTimeoutMs;
+    this.progressEmitIntervalMs = options.progressEmitIntervalMs ?? defaultProgressEmitIntervalMs;
     this.cleanupPartialInstalls();
   }
 
@@ -366,6 +379,8 @@ export class SttRuntimeService {
 
       if (controller.signal.aborted) throw abortError();
       mkdirSync(extractDir, { recursive: true });
+      await assertSafeTarGzArchive(archivePath, controller.signal);
+      if (controller.signal.aborted) throw abortError();
       await this.extractArchiveImpl(archivePath, extractDir, controller.signal);
       if (controller.signal.aborted) throw abortError();
       const extractedRoot = singleChildDirectory(extractDir) ?? extractDir;
@@ -419,10 +434,15 @@ export class SttRuntimeService {
     id: SttRuntimeId,
     controller: AbortController
   ): Promise<string> {
-    const response = await this.fetchImpl(asset.url, {
-      headers: { "User-Agent": "murmur-runtime-manager" },
-      signal: controller.signal
-    });
+    const response = await fetchWithTimeout(
+      this.fetchImpl,
+      asset.url,
+      {
+        headers: { "User-Agent": "murmur-runtime-manager" }
+      },
+      this.downloadHeaderTimeoutMs,
+      controller.signal
+    );
     if (!response.ok || !response.body) {
       throw new Error(`Download failed with HTTP ${response.status}: ${await response.text()}`);
     }
@@ -431,19 +451,36 @@ export class SttRuntimeService {
     const writer = createWriteStream(archivePath);
     const hash = createHash("sha256");
     let progressBytes = 0;
+    let streamDone = false;
+    let lastEmittedAt = 0;
+    let lastProgressBytes = 0;
     const reader = response.body.getReader();
 
     try {
       while (true) {
         if (controller.signal.aborted) throw abortError();
-        const { done, value } = await reader.read();
-        if (done) break;
+        const { done, value } = await readStreamChunk(reader, this.downloadBodyTimeoutMs, controller.signal);
+        if (done) {
+          streamDone = true;
+          break;
+        }
         if (!value) continue;
         progressBytes += value.byteLength;
         hash.update(value);
         await writeChunk(writer, value);
         const active = this.activeStates.get(id);
-        if (active) {
+        const now = Date.now();
+        const firstPositiveProgress = lastProgressBytes === 0 && progressBytes > 0;
+        const shouldEmit =
+          active &&
+          (lastEmittedAt === 0 ||
+            firstPositiveProgress ||
+            progressBytes - lastProgressBytes >= progressEmitMinBytes ||
+            now - lastEmittedAt >= this.progressEmitIntervalMs ||
+            progressBytes >= totalBytes);
+        if (active && shouldEmit) {
+          lastEmittedAt = now;
+          lastProgressBytes = progressBytes;
           this.emit({
             ...active,
             progressBytes,
@@ -453,6 +490,7 @@ export class SttRuntimeService {
         }
       }
     } finally {
+      if (!streamDone) await reader.cancel().catch(() => undefined);
       await closeWriter(writer);
     }
 
@@ -682,6 +720,67 @@ function cleanupPartialEntries(root: string): void {
   }
 }
 
+async function fetchWithTimeout(
+  fetchImpl: typeof fetch,
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<Response> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const abort = (): void => controller.abort();
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    if (signal?.aborted) throw abortError();
+    return await fetchImpl(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (signal?.aborted) throw abortError();
+    if (timedOut) throw new Error(`Request timed out while waiting for response headers after ${timeoutMs}ms.`);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", abort);
+  }
+}
+
+function readStreamChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError());
+      return;
+    }
+
+    let settled = false;
+    let timeout: NodeJS.Timeout;
+    const finish = (callback: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
+      callback();
+    };
+    const abort = (): void => finish(() => reject(abortError()));
+    timeout = setTimeout(() => {
+      finish(() => reject(new Error(`Download stalled while reading the response body for ${timeoutMs}ms.`)));
+    }, timeoutMs);
+
+    signal?.addEventListener("abort", abort, { once: true });
+    reader.read().then(
+      (result) => finish(() => resolve(result)),
+      (error: unknown) => finish(() => reject(error))
+    );
+  });
+}
+
 function writeChunk(writer: NodeJS.WritableStream, value: Uint8Array): Promise<void> {
   return new Promise((resolve, reject) => {
     writer.write(Buffer.from(value), (error) => {
@@ -689,6 +788,60 @@ function writeChunk(writer: NodeJS.WritableStream, value: Uint8Array): Promise<v
       else resolve();
     });
   });
+}
+
+function assertSafeTarGzArchive(archivePath: string, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("tar", ["-tzf", archivePath], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", abort);
+      if (error) {
+        reject(error);
+        return;
+      }
+      const unsafeEntry = stdout
+        .split("\n")
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .find(isUnsafeArchiveEntry);
+      if (unsafeEntry) {
+        reject(new Error(`Archive contains an unsafe path: ${unsafeEntry}`));
+      } else {
+        resolve();
+      }
+    };
+    const abort = (): void => {
+      child.kill();
+      finish(abortError());
+    };
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => finish(isAbortError(error) ? abortError() : error));
+    child.on("close", (code) => {
+      if (code === 0) finish();
+      else finish(new Error(`tar archive listing failed with exit code ${code}: ${stderr.trim()}`));
+    });
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
+function isUnsafeArchiveEntry(entry: string): boolean {
+  const normalized = entry.replace(/\\/g, "/");
+  if (!normalized || normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized) || normalized.includes("\0")) return true;
+  return normalized.split("/").some((part) => part === "..");
 }
 
 function closeWriter(writer: NodeJS.WritableStream): Promise<void> {

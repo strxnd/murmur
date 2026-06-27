@@ -20,7 +20,7 @@ export interface SttRuntimeCatalogEntry {
 
 export const supportedSttRuntimePlatformKeys = ["linux-x64", "linux-arm64"] as const;
 
-const releaseBaseUrl = "https://github.com/kumaraarav/murmur/releases/download/stt-runtimes-v0.1.0";
+const releaseBaseUrl = "https://github.com/strxnd/murmur/releases/download/stt-runtimes-v0.1.0";
 
 export const sttRuntimeCatalog: Record<SttRuntimeId, SttRuntimeCatalogEntry> = {
   "whisper.cpp": {
