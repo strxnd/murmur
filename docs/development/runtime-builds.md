@@ -45,7 +45,22 @@ mise run runtimes:manifest-check
 
 `runtimes:stage` copies exactly one prepared platform from `vendor/runtimes/<platform-key>/` into `.cache/bundled-runtimes/runtimes/<platform-key>/` for `electron-builder` to place under `<process.resourcesPath>/runtimes/`.
 
+For cross-target packaging, pass the requested target explicitly:
+
+```sh
+npm run runtimes:stage -- --platform linux --arch arm64
+npm run runtimes:stage -- --platform linux-x64
+```
+
 `runtimes:package` writes archives to `dist/runtimes/` and prints size and SHA-256 values. Those values must match `src/shared/stt-runtime-catalog.ts` for `runtimes:manifest-check` to pass.
+
+Before publishing a release that advertises runtime downloads, run:
+
+```sh
+npm run runtimes:manifest-check:release
+```
+
+The release check verifies that every cataloged runtime asset URL is reachable. Local build and CI checks intentionally stay offline and only validate catalog shape and pinned metadata.
 
 ## Manual Smoke Tests
 
@@ -101,7 +116,7 @@ Missing executable:
 - Confirm `mise run runtimes:doctor` reports both runtimes available.
 - Check that the executable is under `vendor/runtimes/<platform-key>/<runtime>/`.
 - For app packaging, run `mise run runtimes:stage` and confirm both runtimes exist under `.cache/bundled-runtimes/runtimes/<platform-key>/`.
-- For development runtime downloads or archive releases, confirm `mise run runtimes:manifest-check` passes and the release archive exists.
+- For development runtime downloads or archive releases, confirm `mise run runtimes:manifest-check` passes locally and `npm run runtimes:manifest-check:release` passes before publishing.
 
 Unsupported platform:
 

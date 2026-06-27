@@ -135,6 +135,7 @@ export interface ModelCatalogItem {
   downloadUrl?: string;
   filename?: string;
   extractDir?: string;
+  sha256?: string;
   ollamaModel?: string;
   discovery?: {
     providerId: string;

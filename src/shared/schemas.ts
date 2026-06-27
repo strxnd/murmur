@@ -96,6 +96,7 @@ export const modelCatalogItemSchema = z.object({
   downloadUrl: optionalStringSchema,
   filename: optionalStringSchema,
   extractDir: optionalStringSchema,
+  sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   ollamaModel: optionalStringSchema,
   discovery: z
     .object({
