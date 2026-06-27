@@ -10,6 +10,7 @@ import { ProvidersView } from "../views/ProvidersView";
 import { ModelsLibraryView } from "../views/ModelsLibraryView";
 import { HistoryView } from "../views/HistoryView";
 import { cn } from "../lib/cn";
+import { shouldGuardConfigurationNavigation } from "../lib/navigation-guard";
 import { shouldAutoOpenOnboarding } from "../lib/onboarding";
 import { OnboardingWizard } from "../views/OnboardingWizard";
 
@@ -27,6 +28,7 @@ const sections: Array<{ id: SectionId; label: string; icon: LucideIcon }> = [
 
 export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
   const [activeSection, setActiveSection] = useState<SectionId>("home");
+  const [configurationHasUnsavedChanges, setConfigurationHasUnsavedChanges] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [autoPromptedOnboarding, setAutoPromptedOnboarding] = useState(false);
   const isCompact = useMediaQuery("(max-width: 980px)");
@@ -37,11 +39,26 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
     setOnboardingOpen(true);
   }, [autoPromptedOnboarding, state]);
 
+  const changeSection = (nextSection: SectionId): void => {
+    if (
+      shouldGuardConfigurationNavigation({
+        currentSection: activeSection,
+        nextSection,
+        hasUnsavedConfigurationChanges: configurationHasUnsavedChanges
+      }) &&
+      !window.confirm("You have unsaved configuration changes. Discard them and switch views?")
+    ) {
+      return;
+    }
+
+    setActiveSection(nextSection);
+  };
+
   return (
     <>
       <Tabs.Root
         value={activeSection}
-        onValueChange={(value) => setActiveSection(value as SectionId)}
+        onValueChange={(value) => changeSection(value as SectionId)}
         orientation={isCompact ? "horizontal" : "vertical"}
         className="grid h-screen grid-cols-[16rem_minmax(0,1fr)] bg-background text-foreground max-[980px]:grid-cols-1 max-[980px]:grid-rows-[auto_minmax(0,1fr)]"
       >
@@ -81,7 +98,7 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
           <Tabs.Panel value="home" id="home" className="outline-none">
             <HomeView
               state={state}
-              onOpenModels={() => setActiveSection("models")}
+              onOpenModels={() => changeSection("models")}
               onOpenOnboarding={() => setOnboardingOpen(true)}
             />
           </Tabs.Panel>
@@ -92,7 +109,7 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
             <VocabularyView state={state} />
           </Tabs.Panel>
           <Tabs.Panel value="configuration" id="configuration" className="outline-none">
-            <ConfigurationView state={state} />
+            <ConfigurationView state={state} onUnsavedChangesChange={setConfigurationHasUnsavedChanges} />
           </Tabs.Panel>
           <Tabs.Panel value="providers" id="providers" className="outline-none">
             <ProvidersView state={state} />

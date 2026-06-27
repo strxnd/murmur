@@ -1,4 +1,4 @@
-import type { IpcRendererEvent } from "electron";
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type {
   AppSettings,
   AppStateSnapshot,
@@ -18,8 +18,6 @@ import type {
   TranscriptionProviderConfig,
   VocabularyEntry
 } from "../shared/types";
-
-const { contextBridge, ipcRenderer } = require("electron") as typeof import("electron");
 
 const api = {
   getState: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("app:get-state"),

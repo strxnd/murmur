@@ -7,10 +7,21 @@ import {
   SlidersHorizontal,
   type LucideIcon
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type JSX, type Ref } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type JSX,
+  type KeyboardEvent,
+  type Ref
+} from "react";
 import type { ModeConfig, ModeIconKey, ModeSelectorStateSnapshot } from "../../../shared/types";
 import { murmurClient } from "../lib/murmur-client";
 import { cn } from "../lib/cn";
+import { modeSelectorOptionId } from "../lib/mode-selector";
 
 const blockedSessionStatuses = new Set(["recording", "transcribing", "processing", "pasting"]);
 
@@ -32,28 +43,40 @@ type OverlayMetrics = {
 export function ModeSelectorOverlay({ state }: { state: ModeSelectorStateSnapshot }): JSX.Element {
   const isBlocked = blockedSessionStatuses.has(state.session.status);
   const listRef = useRef<HTMLDivElement | null>(null);
-  const activeRowRef = useRef<HTMLButtonElement | null>(null);
+  const activeRowRef = useRef<HTMLDivElement | null>(null);
   const [overlayMetrics, setOverlayMetrics] = useState<OverlayMetrics | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const hide = useCallback((): void => {
-    void murmurClient.hideModeSelector();
+    void murmurClient.hideModeSelector().catch((error) => setActionError(errorMessage(error)));
   }, []);
 
   const moveSelection = useCallback((delta: number): void => {
     if (isBlocked) return;
-    void murmurClient.moveModeSelectorSelection(delta);
+    void murmurClient
+      .moveModeSelectorSelection(delta)
+      .then(() => setActionError(null))
+      .catch((error) => setActionError(errorMessage(error)));
   }, [isBlocked]);
 
   const selectMode = useCallback(
     async (mode: ModeConfig): Promise<void> => {
       if (isBlocked) return;
-      await murmurClient.selectModeFromSelector(mode.id);
+      try {
+        await murmurClient.selectModeFromSelector(mode.id);
+        setActionError(null);
+      } catch (error) {
+        setActionError(errorMessage(error));
+      }
     },
     [isBlocked]
   );
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent): void => {
+  const selectedMode = state.modes.find((mode) => mode.id === state.activeModeId) ?? state.modes[0];
+  const activeDescendant = selectedMode ? modeSelectorOptionId(selectedMode.id) : undefined;
+
+  const handleListKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>): void => {
       if (event.key === "Escape") {
         event.preventDefault();
         hide();
@@ -69,12 +92,16 @@ export function ModeSelectorOverlay({ state }: { state: ModeSelectorStateSnapsho
       if (event.key === "ArrowDown") {
         event.preventDefault();
         moveSelection(1);
+        return;
       }
-    };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [hide, moveSelection]);
+      if ((event.key === "Enter" || event.key === " ") && selectedMode) {
+        event.preventDefault();
+        void selectMode(selectedMode);
+      }
+    },
+    [hide, moveSelection, selectMode, selectedMode]
+  );
 
   const updateOverlayMetrics = useCallback((): void => {
     const activeRow = activeRowRef.current;
@@ -110,6 +137,11 @@ export function ModeSelectorOverlay({ state }: { state: ModeSelectorStateSnapsho
   }, [state.activeModeId, state.modes, updateOverlayMetrics]);
 
   useEffect(() => {
+    if (isBlocked) return;
+    listRef.current?.focus({ preventScroll: true });
+  }, [isBlocked]);
+
+  useEffect(() => {
     const activeRow = activeRowRef.current;
     const list = listRef.current;
     if (!activeRow || !list || typeof ResizeObserver === "undefined") return undefined;
@@ -141,8 +173,11 @@ export function ModeSelectorOverlay({ state }: { state: ModeSelectorStateSnapsho
           ref={listRef}
           className="mode-selector-list"
           role="listbox"
+          tabIndex={isBlocked ? -1 : 0}
           aria-label="Dictation modes"
-          aria-activedescendant={state.activeModeId}
+          aria-activedescendant={activeDescendant}
+          aria-disabled={isBlocked ? "true" : undefined}
+          onKeyDown={handleListKeyDown}
         >
           {overlayMetrics && <div className="mode-selector-active-overlay" aria-hidden="true" style={overlayStyle} />}
           {state.modes.map((mode) => (
@@ -164,6 +199,11 @@ export function ModeSelectorOverlay({ state }: { state: ModeSelectorStateSnapsho
             <kbd>Esc</kbd> to exit
           </span>
         </div>
+        {actionError && (
+          <div className="mode-selector-error" role="alert">
+            {actionError}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -180,20 +220,22 @@ function ModeSelectorRow({
   active: boolean;
   disabled: boolean;
   onSelect: () => void;
-  buttonRef?: Ref<HTMLButtonElement>;
+  buttonRef?: Ref<HTMLDivElement>;
 }): JSX.Element {
   const Icon = modeIconMap[mode.iconKey];
 
   return (
-    <button
+    <div
       ref={buttonRef}
-      id={mode.id}
-      type="button"
+      id={modeSelectorOptionId(mode.id)}
       role="option"
       aria-selected={active}
+      aria-disabled={disabled ? "true" : undefined}
       className={cn("mode-selector-row", active && "mode-selector-row--active")}
-      onClick={onSelect}
-      disabled={disabled}
+      onClick={() => {
+        if (!disabled) onSelect();
+      }}
+      onMouseDown={(event) => event.preventDefault()}
     >
       <span className="mode-selector-row__icon">
         <Icon size={18} />
@@ -202,6 +244,10 @@ function ModeSelectorRow({
       <span className="mode-selector-row__check" aria-hidden="true">
         {active && <Check size={18} />}
       </span>
-    </button>
+    </div>
   );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

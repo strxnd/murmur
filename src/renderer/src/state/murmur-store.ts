@@ -18,10 +18,17 @@ import { murmurClient } from "../lib/murmur-client";
 
 type LoadStatus = "loading" | "ready" | "error";
 
+export interface ActionError {
+  id: string;
+  message: string;
+}
+
 interface MurmurStore {
   status: LoadStatus;
   snapshot: AppStateSnapshot | null;
   error: string | null;
+  actionError: ActionError | null;
+  clearActionError: () => void;
   init: () => Promise<void>;
   dispose: () => void;
   refresh: () => Promise<void>;
@@ -64,12 +71,18 @@ let unsubscribeModelProgress: (() => void) | null = null;
 let unsubscribeRuntimeProgress: (() => void) | null = null;
 
 export const useMurmurStore = create<MurmurStore>()((set, get) => {
+  const actionErrorFrom = (error: unknown): ActionError => ({
+    id: `${Date.now()}:${Math.random().toString(36).slice(2)}`,
+    message: errorMessage(error)
+  });
+
   const commit = async (operation: () => Promise<AppStateSnapshot>): Promise<void> => {
     try {
       const snapshot = await operation();
-      set({ snapshot, status: "ready", error: null });
+      set({ snapshot, status: "ready", error: null, actionError: null });
     } catch (error) {
-      set({ status: get().snapshot ? "ready" : "error", error: errorMessage(error) });
+      const actionError = actionErrorFrom(error);
+      set({ status: get().snapshot ? "ready" : "error", error: actionError.message, actionError });
       throw error;
     }
   };
@@ -79,10 +92,12 @@ export const useMurmurStore = create<MurmurStore>()((set, get) => {
       set((current) => ({
         snapshot: current.snapshot ? { ...current.snapshot, modelLibrary } : current.snapshot,
         status: current.snapshot ? "ready" : current.status,
-        error: null
+        error: null,
+        actionError: null
       }));
     } catch (error) {
-      set({ status: get().snapshot ? "ready" : "error", error: errorMessage(error) });
+      const actionError = actionErrorFrom(error);
+      set({ status: get().snapshot ? "ready" : "error", error: actionError.message, actionError });
       throw error;
     }
   };
@@ -92,10 +107,23 @@ export const useMurmurStore = create<MurmurStore>()((set, get) => {
       set((current) => ({
         snapshot: current.snapshot ? { ...current.snapshot, sttSetup } : current.snapshot,
         status: current.snapshot ? "ready" : current.status,
-        error: null
+        error: null,
+        actionError: null
       }));
     } catch (error) {
-      set({ status: get().snapshot ? "ready" : "error", error: errorMessage(error) });
+      const actionError = actionErrorFrom(error);
+      set({ status: get().snapshot ? "ready" : "error", error: actionError.message, actionError });
+      throw error;
+    }
+  };
+  const runAction = async <T>(operation: () => Promise<T>): Promise<T> => {
+    try {
+      const result = await operation();
+      set({ actionError: null, error: null });
+      return result;
+    } catch (error) {
+      const actionError = actionErrorFrom(error);
+      set({ status: get().snapshot ? "ready" : "error", error: actionError.message, actionError });
       throw error;
     }
   };
@@ -104,6 +132,8 @@ export const useMurmurStore = create<MurmurStore>()((set, get) => {
     status: "loading",
     snapshot: null,
     error: null,
+    actionError: null,
+    clearActionError: () => set({ actionError: null, error: get().snapshot ? null : get().error }),
     init: async () => {
       if (unsubscribeState) return;
       await commit(() => murmurClient.getState());
@@ -134,14 +164,14 @@ export const useMurmurStore = create<MurmurStore>()((set, get) => {
       unsubscribeRuntimeProgress = null;
     },
     refresh: () => commit(() => murmurClient.getState()),
-    setSnapshot: (snapshot) => set({ snapshot, status: "ready", error: null }),
+    setSnapshot: (snapshot) => set({ snapshot, status: "ready", error: null, actionError: null }),
     activateMode: (modeId) => commit(() => murmurClient.activateMode(modeId)),
     updateSettings: (patch) => commit(() => murmurClient.updateSettings(patch)),
     setModes: (modes) => commit(() => murmurClient.setModes(modes)),
     setSttProviders: (providers) => commit(() => murmurClient.setSttProviders(providers)),
     setLlmProviders: (providers) => commit(() => murmurClient.setLlmProviders(providers)),
-    validateSttProvider: (provider) => murmurClient.validateSttProvider(provider),
-    validateLlmProvider: (provider) => murmurClient.validateLlmProvider(provider),
+    validateSttProvider: (provider) => runAction(() => murmurClient.validateSttProvider(provider)),
+    validateLlmProvider: (provider) => runAction(() => murmurClient.validateLlmProvider(provider)),
     setAutoModeRules: (rules) => commit(() => murmurClient.setAutoModeRules(rules)),
     setVocabulary: (entries) => commit(() => murmurClient.setVocabulary(entries)),
     getModelLibrary: () => commitLibrary(() => murmurClient.getModelLibrary()),
@@ -160,16 +190,20 @@ export const useMurmurStore = create<MurmurStore>()((set, get) => {
     stopDictation: () => commit(() => murmurClient.stopDictation()),
     cancelDictation: () => commit(() => murmurClient.cancelDictation()),
     testPaste: async (text) => {
-      const result = await murmurClient.testPaste(text);
-      await get().refresh();
-      return result;
+      return runAction(async () => {
+        const result = await murmurClient.testPaste(text);
+        await get().refresh();
+        return result;
+      });
     },
     copyHistoryOutput: async (text) => {
-      await murmurClient.copyHistoryOutput(text);
+      await runAction(() => murmurClient.copyHistoryOutput(text).then(() => undefined));
     },
     repasteHistoryOutput: async (text) => {
-      const result = await murmurClient.repasteHistoryOutput(text);
-      return result.message;
+      return runAction(async () => {
+        const result = await murmurClient.repasteHistoryOutput(text);
+        return result.message;
+      });
     },
     deleteHistoryItem: (id) => commit(() => murmurClient.deleteHistoryItem(id)),
     clearHistory: () => commit(() => murmurClient.clearHistory()),

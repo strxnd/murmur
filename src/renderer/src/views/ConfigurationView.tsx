@@ -61,7 +61,13 @@ const recordingPillPositionItems: Array<SelectItem<ConfigurationFormValues["sett
 
 type ShortcutSettingPath = "settings.activationHotkey" | "settings.modeSelectorHotkey";
 
-export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.Element {
+export function ConfigurationView({
+  state,
+  onUnsavedChangesChange
+}: {
+  state: AppStateSnapshot;
+  onUnsavedChangesChange?: (hasUnsavedChanges: boolean) => void;
+}): JSX.Element {
   const updateSettings = useMurmurStore((store) => store.updateSettings);
   const clearLocalData = useMurmurStore((store) => store.clearLocalData);
   const devices = useAudioDevices();
@@ -100,6 +106,23 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
   };
   const hasUnsavedChanges = hasConfigurationChanges(currentValues, persistedValuesRef.current);
   const canClearLocalData = clearDataConfirmation.trim() === clearLocalDataConfirmationPhrase;
+
+  useEffect(() => {
+    onUnsavedChangesChange?.(hasUnsavedChanges);
+    return () => onUnsavedChangesChange?.(false);
+  }, [hasUnsavedChanges, onUnsavedChangesChange]);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return undefined;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent): void => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   useEffect(() => {
     if (hasUnsavedChanges) {

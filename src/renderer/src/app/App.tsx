@@ -1,6 +1,8 @@
-import { useEffect, useLayoutEffect, useState, type JSX } from "react";
+import { AlertTriangle, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, type JSX } from "react";
+import { createPortal } from "react-dom";
 import type { AppSettings, ModeSelectorStateSnapshot, PillStateSnapshot } from "../../../shared/types";
-import { useMurmurStore } from "../state/murmur-store";
+import { useMurmurStore, type ActionError } from "../state/murmur-store";
 import { useRecordingBridge } from "../hooks/useRecordingBridge";
 import { murmurClient } from "../lib/murmur-client";
 import { AppShell } from "./AppShell";
@@ -22,6 +24,8 @@ function MainApp(): JSX.Element {
   const status = useMurmurStore((state) => state.status);
   const snapshot = useMurmurStore((state) => state.snapshot);
   const error = useMurmurStore((state) => state.error);
+  const actionError = useMurmurStore((state) => state.actionError);
+  const clearActionError = useMurmurStore((state) => state.clearActionError);
   const init = useMurmurStore((state) => state.init);
   const dispose = useMurmurStore((state) => state.dispose);
 
@@ -46,7 +50,50 @@ function MainApp(): JSX.Element {
     return <div className="grid min-h-screen place-items-center p-6 text-sm text-muted-foreground">Loading Murmur...</div>;
   }
 
-  return <AppShell state={snapshot} />;
+  return (
+    <>
+      <AppShell state={snapshot} />
+      <ActionErrorBanner error={actionError} onDismiss={clearActionError} />
+    </>
+  );
+}
+
+function ActionErrorBanner({ error, onDismiss }: { error: ActionError | null; onDismiss: () => void }): JSX.Element | null {
+  const alertRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!error) return;
+    alertRef.current?.focus({ preventScroll: true });
+  }, [error]);
+
+  if (!error) return null;
+
+  return createPortal(
+    <div className="pointer-events-none fixed right-4 top-4 z-50 max-w-[min(calc(100vw-2rem),28rem)]">
+      <div
+        ref={alertRef}
+        role="alert"
+        tabIndex={-1}
+        className="pointer-events-auto flex items-start gap-3 rounded-md border border-danger/45 bg-surface-raised p-3 text-sm text-foreground shadow-[var(--console-popover-shadow)] outline-none focus-visible:ring-2 focus-visible:ring-danger/30"
+      >
+        <AlertTriangle className="mt-0.5 shrink-0 text-danger" size={18} />
+        <div className="min-w-0 flex-1">
+          <p className="m-0 font-medium text-danger">Action failed</p>
+          <p className="m-0 mt-1 break-words text-xs leading-5 text-muted-foreground">{error.message}</p>
+        </div>
+        <button
+          type="button"
+          aria-label="Dismiss action error"
+          title="Dismiss"
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-border bg-surface text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-foreground/30"
+          onClick={onDismiss}
+        >
+          <X size={15} />
+        </button>
+      </div>
+    </div>,
+    document.body
+  );
 }
 
 function PillApp(): JSX.Element {
