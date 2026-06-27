@@ -24,6 +24,8 @@ export const defaultSettings: AppSettings = {
   typingBaselineWpm: 40
 };
 
+export const maxRecordingDurationMs = 10 * 60 * 1000;
+
 export const defaultSession: DictationSession = {
   id: "idle",
   status: "idle",

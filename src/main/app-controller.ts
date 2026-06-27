@@ -44,7 +44,7 @@ import {
   transcriptionProviderConfigSchema,
   vocabularySetPayloadSchema
 } from "../shared/schemas";
-import { defaultSession } from "../shared/defaults";
+import { defaultSession, maxRecordingDurationMs } from "../shared/defaults";
 import {
   isLlmProviderUsable,
   isTranscriptionProviderUsable as isBaseTranscriptionProviderUsable,
@@ -92,6 +92,8 @@ const pillWindowWidth = 140;
 const pillWindowHeight = 64;
 const pillWindowMargin = 24;
 const modeSelectorWindowSize = 640;
+const recordingStopAckTimeoutMs = 15000;
+const maxRecordingDurationNotice = "Maximum recording length reached; finishing this dictation.";
 const trayIconDataUrl =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAbklEQVR4nO3WQQ7AIAgEQJ7B/1/JrV4bg4kKXbTZTbzqoEYUYZgbo6qPN2CLm5k7PkeMKoftxLv6PpBdIIAAOKCfbAcQAhFwJGD1KU4FyEYzSgfIYjsOAyITpHTH2XMvac3w3xABpYDyy0fAb9MAo3Ifzf1J6oQAAAAASUVORK5CYII=";
 
@@ -120,6 +122,8 @@ export class AppController {
   private pendingContextCapture: { sessionId: string; promise: Promise<ContextSnapshot> } | null = null;
   private recordingStoppedAt: string | null = null;
   private pillHideTimer: ReturnType<typeof setTimeout> | null = null;
+  private recordingMaxDurationTimer: ReturnType<typeof setTimeout> | null = null;
+  private recordingStopAckTimer: ReturnType<typeof setTimeout> | null = null;
   private pushToTalkPressed = false;
   private pushToTalkSessionId: string | null = null;
   private hotkeyBackend: CapabilityReport["hotkeys"]["backend"] = "electron_global_shortcut";
@@ -177,6 +181,7 @@ export class AppController {
     this.tray?.destroy();
     this.tray = null;
     this.clearPillHideTimer();
+    this.clearRecordingTimers();
   }
 
   async initialize(): Promise<void> {
@@ -964,6 +969,7 @@ export class AppController {
 
     this.sessionContext = null;
     this.recordingStoppedAt = null;
+    this.clearRecordingTimers();
     this.session = {
       id: sessionId,
       status: "recording",
@@ -981,16 +987,20 @@ export class AppController {
     });
     this.broadcastState();
     this.beginRecordingContextCapture(sessionId, persisted);
+    this.scheduleRecordingMaxDurationStop(sessionId);
     return this.getSnapshot();
   }
 
-  private async stopRecording(): Promise<AppStateSnapshot> {
+  private async stopRecording(notice?: string): Promise<AppStateSnapshot> {
     if (this.session.status !== "recording") return this.getSnapshot();
     this.pushToTalkPressed = false;
     this.pushToTalkSessionId = null;
+    this.clearRecordingMaxDurationTimer();
     this.recordingStoppedAt = new Date().toISOString();
-    this.mainWindow?.webContents.send("recording:stop", { sessionId: this.session.id });
-    this.session = { ...this.session, status: "transcribing" };
+    const sessionId = this.session.id;
+    this.mainWindow?.webContents.send("recording:stop", { sessionId });
+    this.session = { ...this.session, status: "transcribing", error: notice ?? this.session.error };
+    this.scheduleRecordingStopAckTimeout(sessionId);
     this.broadcastState();
     return this.getSnapshot();
   }
@@ -1007,6 +1017,7 @@ export class AppController {
     this.sessionContext = null;
     this.pendingContextCapture = null;
     this.recordingStoppedAt = null;
+    this.clearRecordingTimers();
     this.pushToTalkPressed = false;
     this.pushToTalkSessionId = null;
     this.hidePillSoon();
@@ -1072,6 +1083,8 @@ export class AppController {
 
   private async completeRecording(payload: { sessionId: string; audio: ArrayBuffer; mimeType: string }): Promise<AppStateSnapshot> {
     if (payload.sessionId !== this.session.id) return this.getSnapshot();
+    this.clearRecordingStopAckTimer();
+    this.clearRecordingMaxDurationTimer();
 
     let persisted = this.storage.getState();
     const context = await this.getRecordingContext(payload.sessionId, persisted);
@@ -1109,6 +1122,7 @@ export class AppController {
       const selectedLlmProvider = mode.aiEnabled ? this.selectLlmProvider(persisted) : undefined;
       let llmProvider = selectedLlmProvider ? this.storage.resolveLlmProviderSecret(selectedLlmProvider) : undefined;
       let llmModel: string | undefined;
+      let llmFailureMessage: string | undefined;
 
       if (mode.aiEnabled && llmProvider) {
         this.session = { ...this.session, status: "processing" };
@@ -1123,7 +1137,8 @@ export class AppController {
           processedText = processed.text || transcription.text;
           llmModel = processed.model;
         } catch (error) {
-          console.warn(`LLM processing failed; using transcript without AI cleanup. ${errorMessage(error)}`);
+          llmFailureMessage = `LLM processing failed: ${errorMessage(error)}`;
+          console.warn(`${llmFailureMessage}; using transcript without AI cleanup.`);
           llmProvider = undefined;
         }
       } else {
@@ -1176,7 +1191,7 @@ export class AppController {
         ...this.session,
         status: "complete",
         transcriptPreview: processedText,
-        error: pasteResult.pasted ? undefined : pasteResult.message
+        error: pasteResult.pasted ? llmFailureMessage : pasteResult.message
       };
       this.recordingStoppedAt = null;
       this.pushToTalkPressed = false;
@@ -1206,7 +1221,12 @@ export class AppController {
   private handleRecordingError(payload: unknown): AppStateSnapshot {
     const result = recordingErrorPayloadSchema.safeParse(payload);
     if (!result.success) return this.getSnapshot();
-    if (result.data.sessionId !== this.session.id || this.session.status !== "recording") return this.getSnapshot();
+    if (
+      result.data.sessionId !== this.session.id ||
+      (this.session.status !== "recording" && this.session.status !== "transcribing")
+    ) {
+      return this.getSnapshot();
+    }
     return this.failSession(result.data.message);
   }
 
@@ -1259,6 +1279,8 @@ export class AppController {
 
   private failSession(message: string): AppStateSnapshot {
     this.session = { ...this.session, status: "error", error: message };
+    this.clearRecordingTimers();
+    this.recordingStoppedAt = null;
     this.pushToTalkPressed = false;
     this.pushToTalkSessionId = null;
     this.hidePillSoon();
@@ -1344,6 +1366,45 @@ export class AppController {
     if (!this.pillHideTimer) return;
     clearTimeout(this.pillHideTimer);
     this.pillHideTimer = null;
+  }
+
+  private scheduleRecordingMaxDurationStop(sessionId: string): void {
+    this.clearRecordingMaxDurationTimer();
+    this.recordingMaxDurationTimer = setTimeout(() => {
+      this.recordingMaxDurationTimer = null;
+      if (this.session.id === sessionId && this.session.status === "recording") {
+        void this.stopRecording(maxRecordingDurationNotice);
+      }
+    }, maxRecordingDurationMs);
+    this.recordingMaxDurationTimer.unref();
+  }
+
+  private scheduleRecordingStopAckTimeout(sessionId: string): void {
+    this.clearRecordingStopAckTimer();
+    this.recordingStopAckTimer = setTimeout(() => {
+      this.recordingStopAckTimer = null;
+      if (this.session.id === sessionId && this.session.status === "transcribing" && !this.session.transcriptPreview) {
+        this.failSession("Recording did not finish after stop. Try again.");
+      }
+    }, recordingStopAckTimeoutMs);
+    this.recordingStopAckTimer.unref();
+  }
+
+  private clearRecordingTimers(): void {
+    this.clearRecordingMaxDurationTimer();
+    this.clearRecordingStopAckTimer();
+  }
+
+  private clearRecordingMaxDurationTimer(): void {
+    if (!this.recordingMaxDurationTimer) return;
+    clearTimeout(this.recordingMaxDurationTimer);
+    this.recordingMaxDurationTimer = null;
+  }
+
+  private clearRecordingStopAckTimer(): void {
+    if (!this.recordingStopAckTimer) return;
+    clearTimeout(this.recordingStopAckTimer);
+    this.recordingStopAckTimer = null;
   }
 
   private isPillSessionActive(): boolean {

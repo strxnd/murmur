@@ -1,11 +1,14 @@
 import type { LlmProviderConfig, ProcessedResult } from "../../shared/types";
-import { fetchWithTimeout, joinUrl, parseJsonOrText } from "./http";
+import { fetchWithTimeout, joinUrl, parseJsonOrText, readResponseText } from "./http";
 import { llmProviderAuthHeaders } from "./provider-auth";
 
 interface LlmOptions {
   provider: LlmProviderConfig;
   prompt: string;
 }
+
+const llmTimeoutMs = 120000;
+const llmIdleTimeoutMs = 30000;
 
 export class LlmService {
   async process(options: LlmOptions): Promise<ProcessedResult> {
@@ -40,6 +43,7 @@ export class LlmService {
   }
 
   private async processOllama(options: LlmOptions): Promise<ProcessedResult> {
+    const timeouts = llmHttpTimeouts();
     const response = await fetchWithTimeout(
       joinUrl(options.provider.baseUrl || "http://127.0.0.1:11434", "/api/chat"),
       {
@@ -51,14 +55,18 @@ export class LlmService {
           messages: [{ role: "user", content: options.prompt }]
         })
       },
-      120000
+      timeouts.totalTimeoutMs
     );
-    if (!response.ok) throw new Error(`Ollama failed with HTTP ${response.status}: ${await response.text()}`);
-    const data = await parseJsonOrText(response);
+    if (!response.ok) {
+      const body = await readResponseText(response, { ...timeouts, label: "Ollama error" });
+      throw new Error(`Ollama failed with HTTP ${response.status}: ${body}`);
+    }
+    const data = await parseJsonOrText(response, { ...timeouts, label: "Ollama response" });
     return { text: data?.message?.content?.trim() ?? "", providerId: options.provider.id, model: options.provider.defaultModel };
   }
 
   private async processOpenAiCompatible(options: LlmOptions): Promise<ProcessedResult> {
+    const timeouts = llmHttpTimeouts();
     const response = await fetchWithTimeout(
       joinUrl(options.provider.baseUrl || "https://api.openai.com/v1", "/chat/completions"),
       {
@@ -73,10 +81,13 @@ export class LlmService {
           ]
         })
       },
-      120000
+      timeouts.totalTimeoutMs
     );
-    if (!response.ok) throw new Error(`LLM failed with HTTP ${response.status}: ${await response.text()}`);
-    const data = await parseJsonOrText(response);
+    if (!response.ok) {
+      const body = await readResponseText(response, { ...timeouts, label: "LLM error" });
+      throw new Error(`LLM failed with HTTP ${response.status}: ${body}`);
+    }
+    const data = await parseJsonOrText(response, { ...timeouts, label: "LLM response" });
     return {
       text: data?.choices?.[0]?.message?.content?.trim() ?? "",
       providerId: options.provider.id,
@@ -85,6 +96,7 @@ export class LlmService {
   }
 
   private async processAnthropic(options: LlmOptions): Promise<ProcessedResult> {
+    const timeouts = llmHttpTimeouts();
     const response = await fetchWithTimeout(
       joinUrl(options.provider.baseUrl || "https://api.anthropic.com", "/v1/messages"),
       {
@@ -101,10 +113,13 @@ export class LlmService {
           messages: [{ role: "user", content: options.prompt }]
         })
       },
-      120000
+      timeouts.totalTimeoutMs
     );
-    if (!response.ok) throw new Error(`Anthropic failed with HTTP ${response.status}: ${await response.text()}`);
-    const data = await parseJsonOrText(response);
+    if (!response.ok) {
+      const body = await readResponseText(response, { ...timeouts, label: "Anthropic error" });
+      throw new Error(`Anthropic failed with HTTP ${response.status}: ${body}`);
+    }
+    const data = await parseJsonOrText(response, { ...timeouts, label: "Anthropic response" });
     return {
       text: data?.content?.map((part: any) => part.text).join("").trim() ?? "",
       providerId: options.provider.id,
@@ -113,6 +128,7 @@ export class LlmService {
   }
 
   private async processGoogle(options: LlmOptions): Promise<ProcessedResult> {
+    const timeouts = llmHttpTimeouts();
     const model = options.provider.defaultModel || "gemini-2.5-flash";
     const endpoint = `${joinUrl(options.provider.baseUrl || "https://generativelanguage.googleapis.com/v1beta", `/models/${model}:generateContent`)}?key=${encodeURIComponent(options.provider.apiKey || "")}`;
     const response = await fetchWithTimeout(
@@ -125,11 +141,26 @@ export class LlmService {
           generationConfig: { temperature: 0.2 }
         })
       },
-      120000
+      timeouts.totalTimeoutMs
     );
-    if (!response.ok) throw new Error(`Google LLM failed with HTTP ${response.status}: ${await response.text()}`);
-    const data = await parseJsonOrText(response);
+    if (!response.ok) {
+      const body = await readResponseText(response, { ...timeouts, label: "Google LLM error" });
+      throw new Error(`Google LLM failed with HTTP ${response.status}: ${body}`);
+    }
+    const data = await parseJsonOrText(response, { ...timeouts, label: "Google LLM response" });
     const text = data?.candidates?.[0]?.content?.parts?.map((part: any) => part.text).join("").trim() ?? "";
     return { text, providerId: options.provider.id, model };
   }
+}
+
+function llmHttpTimeouts(): { totalTimeoutMs: number; idleTimeoutMs: number } {
+  return {
+    totalTimeoutMs: envPositiveInteger("MURMUR_PROVIDER_RESPONSE_TIMEOUT_MS", llmTimeoutMs),
+    idleTimeoutMs: envPositiveInteger("MURMUR_PROVIDER_RESPONSE_IDLE_TIMEOUT_MS", llmIdleTimeoutMs)
+  };
+}
+
+function envPositiveInteger(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
 }

@@ -18,6 +18,7 @@ export interface ContextCaptureOptions {
 export class ContextService {
   private lastClipboardText = "";
   private lastClipboardAt = 0;
+  private clipboardTrackingInterval: ReturnType<typeof setInterval> | null = null;
   private metadata = new DesktopMetadataService();
 
   constructor(
@@ -33,6 +34,7 @@ export class ContextService {
   }
 
   dispose(): void {
+    this.stopClipboardTracking();
     this.metadata.dispose();
   }
 
@@ -93,15 +95,23 @@ export class ContextService {
   }
 
   private startClipboardTracking(): void {
+    if (this.clipboardTrackingInterval) return;
     this.lastClipboardText = clipboard.readText();
     this.lastClipboardAt = Date.now();
-    setInterval(() => {
+    this.clipboardTrackingInterval = setInterval(() => {
       const text = clipboard.readText();
       if (text !== this.lastClipboardText) {
         this.lastClipboardText = text;
         this.lastClipboardAt = Date.now();
       }
-    }, 1000).unref();
+    }, 1000);
+    unrefTimer(this.clipboardTrackingInterval);
+  }
+
+  private stopClipboardTracking(): void {
+    if (!this.clipboardTrackingInterval) return;
+    clearInterval(this.clipboardTrackingInterval);
+    this.clipboardTrackingInterval = null;
   }
 
   private async captureSelectionViaClipboard(diagnostics: string[]): Promise<string | undefined> {
@@ -143,5 +153,11 @@ export class ContextService {
       await sleep(this.selectionPollIntervalMs);
     }
     return undefined;
+  }
+}
+
+function unrefTimer(timer: ReturnType<typeof setInterval>): void {
+  if (typeof timer === "object" && "unref" in timer && typeof timer.unref === "function") {
+    timer.unref();
   }
 }

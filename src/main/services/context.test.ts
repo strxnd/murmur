@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AutomationResult, TextAutomationBackend, TextAutomationCapability } from "./text-automation";
 import { TextAutomationService } from "./text-automation";
 import { ContextService } from "./context";
@@ -43,6 +43,10 @@ const clipboardHarness = vi.hoisted(() => {
 });
 
 vi.mock("../electron-api", () => ({ clipboard: clipboardHarness.api }));
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 class FakeBackend implements TextAutomationBackend {
   copyCalls = 0;
@@ -147,6 +151,27 @@ describe("ContextService", () => {
 
     expect(snapshot.selectedText).toBe("selected primary");
     expect(clipboardHarness.get().text).toBe("previous");
+  });
+
+  it("disposes clipboard tracking and ignores duplicate starts", () => {
+    vi.useFakeTimers();
+    const backend = new FakeBackend();
+    const context = new ContextService(new TextAutomationService(backend), 5, 1, fakePrimarySelection());
+    const tracking = context as unknown as { startClipboardTracking: () => void };
+    clipboardHarness.api.readText.mockClear();
+
+    tracking.startClipboardTracking();
+    tracking.startClipboardTracking();
+
+    expect(clipboardHarness.api.readText).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1000);
+    expect(clipboardHarness.api.readText).toHaveBeenCalledTimes(2);
+
+    context.dispose();
+    const callsAfterDispose = clipboardHarness.api.readText.mock.calls.length;
+    vi.advanceTimersByTime(3000);
+
+    expect(clipboardHarness.api.readText).toHaveBeenCalledTimes(callsAfterDispose);
   });
 });
 

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { maxRecordingDurationMs } from "../../../shared/defaults";
 import { murmurClient } from "../lib/murmur-client";
 
 interface WavRecorder {
@@ -6,55 +7,74 @@ interface WavRecorder {
   cancel: () => Promise<void>;
 }
 
+interface PendingCompletion {
+  sessionId: string;
+  cancelled: boolean;
+}
+
 const levelNoiseFloor = 0.012;
 const levelSpeechCeiling = 0.12;
 const levelPublishIntervalMs = 32;
 const levelPublishHeartbeatMs = 180;
 const levelPublishMinDelta = 0.012;
+const encodeYieldEveryChunks = 24;
 
 export function useRecordingBridge(enabled: boolean): void {
   const recorderRef = useRef<WavRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef<string | null>(null);
-  const cancelledRef = useRef(false);
   const completingRef = useRef(false);
+  const startGenerationRef = useRef(0);
+  const pendingCompletionRef = useRef<PendingCompletion | null>(null);
 
   useEffect(() => {
     if (!enabled) return undefined;
 
-    const stopTracks = (): void => {
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
+    const stopTracks = (stream = streamRef.current): void => {
+      stream?.getTracks().forEach((track) => track.stop());
+      if (stream === streamRef.current) streamRef.current = null;
     };
 
-    const completeCurrentRecording = async (cancelled: boolean): Promise<void> => {
-      if (completingRef.current) return;
-      completingRef.current = true;
+    const completeCurrentRecording = async (sessionId: string, cancelled: boolean): Promise<void> => {
+      if (sessionId !== sessionRef.current) return;
+      if (completingRef.current) {
+        pendingCompletionRef.current = { sessionId, cancelled: cancelled || pendingCompletionRef.current?.cancelled === true };
+        return;
+      }
+
       const recorder = recorderRef.current;
-      const completedSessionId = sessionRef.current;
+      if (!recorder) {
+        pendingCompletionRef.current = { sessionId, cancelled: cancelled || pendingCompletionRef.current?.cancelled === true };
+        return;
+      }
+
+      completingRef.current = true;
+      pendingCompletionRef.current = null;
       recorderRef.current = null;
 
       try {
-        if (!recorder) return;
-        if (cancelled || !completedSessionId) {
+        if (cancelled) {
           await recorder.cancel();
           return;
         }
 
         const audio = await recorder.stop();
         await murmurClient.completeRecording({
-          sessionId: completedSessionId,
+          sessionId,
           audio,
           mimeType: "audio/wav"
         });
       } finally {
         stopTracks();
+        if (sessionRef.current === sessionId) sessionRef.current = null;
         completingRef.current = false;
       }
     };
 
     const start = murmurClient.onRecordingStart(async ({ sessionId, preferredAudioInputId }) => {
-      cancelledRef.current = false;
+      const generation = startGenerationRef.current + 1;
+      startGenerationRef.current = generation;
+      pendingCompletionRef.current = null;
       sessionRef.current = sessionId;
 
       try {
@@ -63,37 +83,66 @@ export function useRecordingBridge(enabled: boolean): void {
           : true;
 
         const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
+        if (startGenerationRef.current !== generation || sessionRef.current !== sessionId) {
+          stopTracks(stream);
+          return;
+        }
+
         streamRef.current = stream;
-        recorderRef.current = await startWavRecorder(stream, sessionId);
+        const recorder = await startWavRecorder(stream, sessionId, () => {
+          if (sessionRef.current === sessionId) {
+            void murmurClient.stopDictation();
+          }
+        });
+        if (startGenerationRef.current !== generation || sessionRef.current !== sessionId) {
+          await recorder.cancel();
+          stopTracks(stream);
+          return;
+        }
+
+        recorderRef.current = recorder;
+        const pendingCompletion = pendingCompletionRef.current as PendingCompletion | null;
+        if (pendingCompletion?.sessionId === sessionId) {
+          void completeCurrentRecording(sessionId, pendingCompletion.cancelled);
+        }
       } catch (error) {
         stopTracks();
-        await murmurClient.reportRecordingError({
-          sessionId,
-          message: `Microphone recording failed: ${errorMessage(error)}`
-        });
+        if (
+          startGenerationRef.current === generation &&
+          sessionRef.current === sessionId &&
+          (pendingCompletionRef.current as PendingCompletion | null)?.cancelled !== true
+        ) {
+          await murmurClient.reportRecordingError({
+            sessionId,
+            message: `Microphone recording failed: ${errorMessage(error)}`
+          });
+        }
       }
     });
 
-    const stop = murmurClient.onRecordingStop(() => {
-      void completeCurrentRecording(cancelledRef.current);
+    const stop = murmurClient.onRecordingStop(({ sessionId }) => {
+      void completeCurrentRecording(sessionId, false);
     });
 
-    const cancel = murmurClient.onRecordingCancel(() => {
-      cancelledRef.current = true;
-      void completeCurrentRecording(true);
+    const cancel = murmurClient.onRecordingCancel(({ sessionId }) => {
+      void completeCurrentRecording(sessionId, true);
     });
 
     return () => {
+      startGenerationRef.current += 1;
       start();
       stop();
       cancel();
       void recorderRef.current?.cancel();
+      recorderRef.current = null;
+      pendingCompletionRef.current = null;
+      sessionRef.current = null;
       stopTracks();
     };
   }, [enabled]);
 }
 
-async function startWavRecorder(stream: MediaStream, sessionId: string): Promise<WavRecorder> {
+async function startWavRecorder(stream: MediaStream, sessionId: string, onMaxDuration: () => void): Promise<WavRecorder> {
   const context = new AudioContext();
   const source = context.createMediaStreamSource(stream);
   const processor = context.createScriptProcessor(2048, source.channelCount || 1, 1);
@@ -101,19 +150,32 @@ async function startWavRecorder(stream: MediaStream, sessionId: string): Promise
   monitor.gain.value = 0;
 
   const chunks: Float32Array[] = [];
+  const maxSamples = Math.floor((context.sampleRate * maxRecordingDurationMs) / 1000);
+  let totalSamples = 0;
+  let maxDurationNotified = false;
   let smoothedLevel = 0;
   let lastLevelPublishedAt = 0;
   let lastPublishedLevel = 0;
   processor.onaudioprocess = (event) => {
     const input = event.inputBuffer;
-    const output = new Float32Array(input.length);
+    let output = new Float32Array(input.length);
     for (let channel = 0; channel < input.numberOfChannels; channel += 1) {
       const data = input.getChannelData(channel);
       for (let index = 0; index < data.length; index += 1) {
         output[index] += data[index] / input.numberOfChannels;
       }
     }
+    const remainingSamples = maxSamples - totalSamples;
+    if (remainingSamples <= 0) {
+      notifyMaxDuration();
+      return;
+    }
+    if (output.length > remainingSamples) {
+      output = output.slice(0, remainingSamples);
+    }
     chunks.push(output);
+    totalSamples += output.length;
+    if (totalSamples >= maxSamples) notifyMaxDuration();
 
     const targetLevel = normalizeRecordingLevel(computeRms(output));
     const smoothing = targetLevel > smoothedLevel ? 0.35 : 0.18;
@@ -144,10 +206,17 @@ async function startWavRecorder(stream: MediaStream, sessionId: string): Promise
     await context.close();
   };
 
+  const notifyMaxDuration = (): void => {
+    if (maxDurationNotified) return;
+    maxDurationNotified = true;
+    onMaxDuration();
+  };
+
   return {
     stop: async () => {
+      const sampleRate = context.sampleRate;
       await cleanup();
-      return encodeWav(mergeFloat32(chunks), context.sampleRate);
+      return encodeWav(chunks, totalSamples, sampleRate);
     },
     cancel: cleanup
   };
@@ -166,20 +235,9 @@ function normalizeRecordingLevel(rms: number): number {
   return Math.max(0, Math.min(1, (rms - levelNoiseFloor) / (levelSpeechCeiling - levelNoiseFloor)));
 }
 
-function mergeFloat32(chunks: Float32Array[]): Float32Array {
-  const totalLength = chunks.reduce((total, chunk) => total + chunk.length, 0);
-  const merged = new Float32Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return merged;
-}
-
-function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
+async function encodeWav(chunks: Float32Array[], totalSamples: number, sampleRate: number): Promise<ArrayBuffer> {
   const bytesPerSample = 2;
-  const dataLength = samples.length * bytesPerSample;
+  const dataLength = totalSamples * bytesPerSample;
   const buffer = new ArrayBuffer(44 + dataLength);
   const view = new DataView(buffer);
 
@@ -198,13 +256,28 @@ function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
   view.setUint32(40, dataLength, true);
 
   let offset = 44;
-  for (const sample of samples) {
-    const clamped = Math.max(-1, Math.min(1, sample));
-    view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
-    offset += bytesPerSample;
+  let chunksSinceYield = 0;
+  for (const chunk of chunks) {
+    for (const sample of chunk) {
+      const clamped = Math.max(-1, Math.min(1, sample));
+      view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+      offset += bytesPerSample;
+    }
+
+    chunksSinceYield += 1;
+    if (chunksSinceYield >= encodeYieldEveryChunks) {
+      chunksSinceYield = 0;
+      await yieldToBrowser();
+    }
   }
 
   return buffer;
+}
+
+function yieldToBrowser(): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
 }
 
 function writeAscii(view: DataView, offset: number, value: string): void {
