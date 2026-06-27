@@ -45,6 +45,7 @@ describe("acceleratorToGnomeShortcut", () => {
     expect(acceleratorToGnomeShortcut("Super+Shift+F9")).toBe("<Super><Shift>F9");
     expect(acceleratorToGnomeShortcut("CommandOrControl+Left")).toBe("<Control>Left");
     expect(acceleratorToGnomeShortcut("Alt+,")).toBe("<Alt>comma");
+    expect(acceleratorToGnomeShortcut("Alt+Shift+K")).toBe("<Alt><Shift>k");
   });
 
   it("rejects unsupported GNOME shortcuts", () => {
@@ -67,6 +68,7 @@ describe("acceleratorToHyprlandBinding", () => {
     expect(acceleratorToHyprlandBinding("Super+Shift+F9")).toMatchObject({ bindKey: "SUPER SHIFT, F9" });
     expect(acceleratorToHyprlandBinding("CommandOrControl+Left")).toMatchObject({ bindKey: "CTRL, Left" });
     expect(acceleratorToHyprlandBinding("Alt+,")).toMatchObject({ bindKey: "ALT, comma" });
+    expect(acceleratorToHyprlandBinding("Alt+Shift+K")).toMatchObject({ bindKey: "ALT SHIFT, K" });
   });
 
   it("supports modifier-only combinations by using the last modifier as the trigger key", () => {
@@ -88,6 +90,7 @@ describe("acceleratorToKdeQtKey", () => {
     expect(acceleratorToKdeQtKey("Super+Shift+F9")).toBe(0x10000000 | 0x02000000 | 0x01000038);
     expect(acceleratorToKdeQtKey("CommandOrControl+Left")).toBe(0x04000000 | 0x01000012);
     expect(acceleratorToKdeQtKey("Alt+,")).toBe(0x08000000 | 0x2c);
+    expect(acceleratorToKdeQtKey("Alt+Shift+K")).toBe(0x08000000 | 0x02000000 | 0x4b);
   });
 
   it("supports modifier-only combinations and normalizes duplicate modifiers", () => {

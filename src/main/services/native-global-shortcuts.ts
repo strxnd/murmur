@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import * as dbusNative from "@homebridge/dbus-native";
 import type { BusConnection, MessageBus } from "@homebridge/dbus-native";
-import type { ActivationMode } from "../../shared/types";
+import type { ActivationMode, GlobalShortcutActionId } from "../../shared/types";
 
 const dbusServiceName = "dev.murmur.App";
 const dbusObjectPath = "/dev/murmur/App";
@@ -17,21 +17,46 @@ const nativeTimeoutMs = 3000;
 
 const gnomeMediaKeysSchema = "org.gnome.settings-daemon.plugins.media-keys";
 const gnomeCustomKeybindingSchema = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding";
-const gnomeKeybindingPath = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/murmur/";
 
 const kdeDestination = "org.kde.kglobalaccel";
 const kdePath = "/kglobalaccel";
 const kdeInterface = "org.kde.KGlobalAccel";
 const kdeComponentName = "murmur";
-const kdeActionName = "activation";
 const kdeComponentFriendlyName = "Murmur";
-const kdeActionFriendlyName = "Murmur activation";
 const kdeComponentPath = `/component/${kdeComponentName}`;
 const kdeComponentInterface = "org.kde.kglobalaccel.Component";
 
+const shortcutActionIds: GlobalShortcutActionId[] = ["activation", "mode-selector"];
+const shortcutActionDefinitions: Record<
+  GlobalShortcutActionId,
+  {
+    dbusMethod: "Activate" | "Deactivate" | "ModeSelector";
+    gnomePath: string;
+    kdeActionName: string;
+    kdeActionFriendlyName: string;
+    label: string;
+  }
+> = {
+  activation: {
+    dbusMethod: "Activate",
+    gnomePath: "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/murmur/",
+    kdeActionName: "activation",
+    kdeActionFriendlyName: "Murmur activation",
+    label: "activation"
+  },
+  "mode-selector": {
+    dbusMethod: "ModeSelector",
+    gnomePath: "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/murmur-mode-selector/",
+    kdeActionName: "mode-selector",
+    kdeActionFriendlyName: "Murmur mode selector",
+    label: "mode selector"
+  }
+};
+
 export type NativeDesktopShortcutBackend = "gnome_custom_shortcut" | "kde_kglobalaccel" | "hyprland_bind";
 
-export interface NativeDesktopShortcutRegistrationOptions {
+export interface NativeDesktopShortcutActionRegistration {
+  id: GlobalShortcutActionId;
   accelerator: string;
   description: string;
   activationMode: ActivationMode;
@@ -40,10 +65,22 @@ export interface NativeDesktopShortcutRegistrationOptions {
   onPressedWithoutRelease: () => void;
 }
 
+export interface NativeDesktopShortcutRegistrationOptions {
+  actions: NativeDesktopShortcutActionRegistration[];
+}
+
 export interface NativeDesktopShortcutRegistrationResult {
   attempted: boolean;
   registered: boolean;
   backend?: NativeDesktopShortcutBackend;
+  pushToTalkRelease: boolean;
+  triggerDescription?: string;
+  diagnostics: string[];
+  actionResults: Record<GlobalShortcutActionId, NativeDesktopShortcutActionResult>;
+}
+
+export interface NativeDesktopShortcutActionResult {
+  registered: boolean;
   pushToTalkRelease: boolean;
   triggerDescription?: string;
   diagnostics: string[];
@@ -98,29 +135,35 @@ interface HyprlandBinding {
   mods: string;
 }
 
+interface RegisteredHyprlandBinding extends HyprlandBinding {
+  releaseBindKey?: string;
+}
+
 const dbus = dbusNative as DbusNativeModule;
 
 export class NativeDesktopGlobalShortcutService {
   private bus: NativeMessageBus | null = null;
-  private activeRegistration: ActiveNativeRegistration | null = null;
+  private activeRegistrations = new Map<GlobalShortcutActionId, ActiveNativeRegistration>();
   private callbackServiceExported = false;
   private callbackServiceRequested = false;
-  private gnomeRegistered = false;
-  private hyprlandBinding: HyprlandBinding | null = null;
-  private kdeRegistered = false;
+  private gnomeRegistered = new Set<GlobalShortcutActionId>();
+  private hyprlandBindings = new Map<GlobalShortcutActionId, RegisteredHyprlandBinding>();
+  private kdeRegistered = new Set<GlobalShortcutActionId>();
   private matchRules = new Set<string>();
 
   async register(options: NativeDesktopShortcutRegistrationOptions): Promise<NativeDesktopShortcutRegistrationResult> {
     await this.unregister();
 
     const diagnostics: string[] = [];
+    const actionResults = emptyActionResults();
     const result = (patch: Partial<NativeDesktopShortcutRegistrationResult>): NativeDesktopShortcutRegistrationResult => ({
       attempted: patch.attempted ?? false,
       registered: patch.registered ?? false,
       backend: patch.backend,
       pushToTalkRelease: patch.pushToTalkRelease ?? false,
       triggerDescription: patch.triggerDescription,
-      diagnostics: [...diagnostics, ...(patch.diagnostics ?? [])]
+      diagnostics: [...diagnostics, ...(patch.diagnostics ?? [])],
+      actionResults: patch.actionResults ?? actionResults
     });
 
     if (process.platform !== "linux") return result({});
@@ -151,21 +194,30 @@ export class NativeDesktopGlobalShortcutService {
   }
 
   async unregister(): Promise<void> {
-    this.activeRegistration = null;
+    this.activeRegistrations.clear();
 
-    if (this.gnomeRegistered) {
-      this.gnomeRegistered = false;
+    if (this.gnomeRegistered.size > 0) {
+      const registered = new Set(this.gnomeRegistered);
+      this.gnomeRegistered.clear();
       await this.unregisterGnome().catch(() => undefined);
+      for (const id of registered) this.activeRegistrations.delete(id);
     }
 
-    if (this.hyprlandBinding) {
-      const binding = this.hyprlandBinding;
-      this.hyprlandBinding = null;
-      await execFileOutput("hyprctl", ["keyword", "unbind", binding.bindKey], commandTimeoutMs).catch(() => undefined);
+    if (this.hyprlandBindings.size > 0) {
+      const bindings = [...this.hyprlandBindings.values()];
+      this.hyprlandBindings.clear();
+      await Promise.all(
+        bindings.flatMap((binding) => [
+          execFileOutput("hyprctl", ["keyword", "unbind", binding.bindKey], commandTimeoutMs).catch(() => undefined),
+          binding.releaseBindKey
+            ? execFileOutput("hyprctl", ["keyword", "unbind", binding.releaseBindKey], commandTimeoutMs).catch(() => undefined)
+            : Promise.resolve("")
+        ])
+      );
     }
 
-    if (this.kdeRegistered) {
-      this.kdeRegistered = false;
+    if (this.kdeRegistered.size > 0) {
+      this.kdeRegistered.clear();
       await this.unregisterKde().catch(() => undefined);
     }
 
@@ -199,62 +251,110 @@ export class NativeDesktopGlobalShortcutService {
     options: NativeDesktopShortcutRegistrationOptions,
     diagnostics: string[]
   ): Promise<Partial<NativeDesktopShortcutRegistrationResult> & { registered: boolean }> {
-    const shortcut = acceleratorToGnomeShortcut(options.accelerator);
-    if (!shortcut) {
-      diagnostics.push(`GNOME custom shortcuts do not support activation shortcut "${options.accelerator}".`);
-      return { registered: false };
-    }
-
     if (!(await commandExists("dbus-send"))) {
       throw new Error("dbus-send is unavailable.");
     }
 
     await this.ensureCallbackService();
     const existing = await this.getGnomeKeybindingPaths();
-    const conflict = await this.findGnomeConflict(shortcut, existing, gnomeKeybindingPath);
-    if (conflict) {
-      diagnostics.push(`GNOME custom shortcut "${shortcut}" is already used by another custom shortcut.`);
-      return { registered: false };
-    }
+    const ownPaths = shortcutActionIds.map((id) => shortcutActionDefinitions[id].gnomePath);
+    const nextPaths = [...existing];
+    const actionResults = emptyActionResults();
+    const usedShortcuts = new Set<string>();
 
-    const command = dbusSendCommand("Activate");
-    await execFileOutput("gsettings", ["set", `${gnomeCustomKeybindingSchema}:${gnomeKeybindingPath}`, "name", options.description], commandTimeoutMs);
-    await execFileOutput("gsettings", ["set", `${gnomeCustomKeybindingSchema}:${gnomeKeybindingPath}`, "binding", shortcut], commandTimeoutMs);
-    await execFileOutput("gsettings", ["set", `${gnomeCustomKeybindingSchema}:${gnomeKeybindingPath}`, "command", command], commandTimeoutMs);
+    for (const action of options.actions) {
+      const definition = shortcutActionDefinitions[action.id];
+      const shortcut = acceleratorToGnomeShortcut(action.accelerator);
+      if (!shortcut) {
+        actionResults[action.id].diagnostics.push(
+          `GNOME custom shortcuts do not support ${definition.label} shortcut "${action.accelerator}".`
+        );
+        continue;
+      }
+      const normalizedShortcut = normalizeGnomeShortcut(shortcut);
+      if (usedShortcuts.has(normalizedShortcut)) {
+        actionResults[action.id].diagnostics.push(`GNOME custom shortcut "${shortcut}" is already used by another Murmur shortcut.`);
+        continue;
+      }
+      usedShortcuts.add(normalizedShortcut);
 
-    if (!existing.includes(gnomeKeybindingPath)) {
+      const conflict = await this.findGnomeConflict(shortcut, existing, ownPaths);
+      if (conflict) {
+        actionResults[action.id].diagnostics.push(`GNOME custom shortcut "${shortcut}" is already used by another custom shortcut.`);
+        continue;
+      }
+
+      const command = dbusSendCommand(definition.dbusMethod);
       await execFileOutput(
         "gsettings",
-        ["set", gnomeMediaKeysSchema, "custom-keybindings", formatGsettingsStringList([...existing, gnomeKeybindingPath])],
+        ["set", `${gnomeCustomKeybindingSchema}:${definition.gnomePath}`, "name", action.description],
+        commandTimeoutMs
+      );
+      await execFileOutput(
+        "gsettings",
+        ["set", `${gnomeCustomKeybindingSchema}:${definition.gnomePath}`, "binding", shortcut],
+        commandTimeoutMs
+      );
+      await execFileOutput(
+        "gsettings",
+        ["set", `${gnomeCustomKeybindingSchema}:${definition.gnomePath}`, "command", command],
+        commandTimeoutMs
+      );
+
+      if (!nextPaths.includes(definition.gnomePath)) {
+        nextPaths.push(definition.gnomePath);
+      }
+
+      const pushToTalkRelease = false;
+      this.gnomeRegistered.add(action.id);
+      this.activeRegistrations.set(action.id, {
+        activationMode: action.activationMode,
+        backend: "gnome_custom_shortcut",
+        onActivated: action.onActivated,
+        onDeactivated: action.onDeactivated,
+        onPressedWithoutRelease: action.onPressedWithoutRelease,
+        pushToTalkRelease
+      });
+      actionResults[action.id] = {
+        registered: true,
+        pushToTalkRelease,
+        triggerDescription: shortcut,
+        diagnostics: actionResults[action.id].diagnostics
+      };
+    }
+
+    const activationResult = actionResults.activation;
+    if (!activationResult.registered) {
+      return { registered: false, actionResults };
+    }
+
+    if (nextPaths.length !== existing.length || nextPaths.some((path, index) => path !== existing[index])) {
+      await execFileOutput(
+        "gsettings",
+        ["set", gnomeMediaKeysSchema, "custom-keybindings", formatGsettingsStringList(nextPaths)],
         commandTimeoutMs
       );
     }
 
-    this.gnomeRegistered = true;
-    this.activeRegistration = {
-      activationMode: options.activationMode,
-      backend: "gnome_custom_shortcut",
-      onActivated: options.onActivated,
-      onDeactivated: options.onDeactivated,
-      onPressedWithoutRelease: options.onPressedWithoutRelease,
-      pushToTalkRelease: false
-    };
-
     return {
       backend: "gnome_custom_shortcut",
       registered: true,
-      pushToTalkRelease: false,
-      triggerDescription: shortcut
+      pushToTalkRelease: activationResult.pushToTalkRelease,
+      triggerDescription: activationResult.triggerDescription,
+      actionResults
     };
   }
 
   private async unregisterGnome(): Promise<void> {
     const existing = await this.getGnomeKeybindingPaths();
-    const filtered = existing.filter((path) => path !== gnomeKeybindingPath);
+    const ownPaths = new Set(shortcutActionIds.map((id) => shortcutActionDefinitions[id].gnomePath));
+    const filtered = existing.filter((path) => !ownPaths.has(path));
     await execFileOutput("gsettings", ["set", gnomeMediaKeysSchema, "custom-keybindings", formatGsettingsStringList(filtered)], commandTimeoutMs);
-    await execFileOutput("gsettings", ["reset", `${gnomeCustomKeybindingSchema}:${gnomeKeybindingPath}`, "name"], commandTimeoutMs).catch(() => undefined);
-    await execFileOutput("gsettings", ["reset", `${gnomeCustomKeybindingSchema}:${gnomeKeybindingPath}`, "binding"], commandTimeoutMs).catch(() => undefined);
-    await execFileOutput("gsettings", ["reset", `${gnomeCustomKeybindingSchema}:${gnomeKeybindingPath}`, "command"], commandTimeoutMs).catch(() => undefined);
+    for (const path of ownPaths) {
+      await execFileOutput("gsettings", ["reset", `${gnomeCustomKeybindingSchema}:${path}`, "name"], commandTimeoutMs).catch(() => undefined);
+      await execFileOutput("gsettings", ["reset", `${gnomeCustomKeybindingSchema}:${path}`, "binding"], commandTimeoutMs).catch(() => undefined);
+      await execFileOutput("gsettings", ["reset", `${gnomeCustomKeybindingSchema}:${path}`, "command"], commandTimeoutMs).catch(() => undefined);
+    }
   }
 
   private async getGnomeKeybindingPaths(): Promise<string[]> {
@@ -262,10 +362,11 @@ export class NativeDesktopGlobalShortcutService {
     return parseGsettingsStringList(output);
   }
 
-  private async findGnomeConflict(shortcut: string, paths: string[], ownPath: string): Promise<string | null> {
+  private async findGnomeConflict(shortcut: string, paths: string[], ownPaths: string[]): Promise<string | null> {
     const normalizedShortcut = normalizeGnomeShortcut(shortcut);
+    const ownPathSet = new Set(ownPaths);
     for (const path of paths) {
-      if (path === ownPath) continue;
+      if (ownPathSet.has(path)) continue;
       try {
         const output = await execFileOutput("gsettings", ["get", `${gnomeCustomKeybindingSchema}:${path}`, "binding"], commandTimeoutMs);
         const binding = stripGsettingsString(output.trim());
@@ -285,44 +386,73 @@ export class NativeDesktopGlobalShortcutService {
       throw new Error(`hyprctl is unavailable: ${errorMessage(error)}`);
     });
 
-    const binding = acceleratorToHyprlandBinding(options.accelerator);
-    if (!binding) {
-      diagnostics.push(`Hyprland bind does not support activation shortcut "${options.accelerator}".`);
-      return { registered: false };
-    }
-
     if (!(await commandExists("dbus-send"))) {
       throw new Error("dbus-send is unavailable.");
     }
 
     await this.ensureCallbackService();
-    await execFileOutput("hyprctl", ["keyword", "bind", `${binding.bindKey}, exec, ${dbusSendCommand("Activate")}`], commandTimeoutMs);
+    const actionResults = emptyActionResults();
+    const usedBindKeys = new Set<string>();
 
-    const pushToTalkRelease = options.activationMode === "push_to_talk";
-    if (pushToTalkRelease) {
-      try {
-        await execFileOutput("hyprctl", ["keyword", "bindr", `${binding.bindKey}, exec, ${dbusSendCommand("Deactivate")}`], commandTimeoutMs);
-      } catch (error) {
-        await execFileOutput("hyprctl", ["keyword", "unbind", binding.bindKey], commandTimeoutMs).catch(() => undefined);
-        throw new Error(`Hyprland release bind failed: ${errorMessage(error)}`);
+    for (const action of options.actions) {
+      const definition = shortcutActionDefinitions[action.id];
+      const binding = acceleratorToHyprlandBinding(action.accelerator);
+      if (!binding) {
+        actionResults[action.id].diagnostics.push(`Hyprland bind does not support ${definition.label} shortcut "${action.accelerator}".`);
+        continue;
       }
+      if (usedBindKeys.has(binding.bindKey)) {
+        actionResults[action.id].diagnostics.push(`Hyprland bind "${binding.bindKey}" is already used by another Murmur shortcut.`);
+        continue;
+      }
+      usedBindKeys.add(binding.bindKey);
+
+      await execFileOutput(
+        "hyprctl",
+        ["keyword", "bind", `${binding.bindKey}, exec, ${dbusSendCommand(definition.dbusMethod)}`],
+        commandTimeoutMs
+      );
+
+      const pushToTalkRelease = action.id === "activation" && action.activationMode === "push_to_talk";
+      let releaseBindKey: string | undefined;
+      if (pushToTalkRelease) {
+        try {
+          await execFileOutput("hyprctl", ["keyword", "bindr", `${binding.bindKey}, exec, ${dbusSendCommand("Deactivate")}`], commandTimeoutMs);
+          releaseBindKey = binding.bindKey;
+        } catch (error) {
+          await execFileOutput("hyprctl", ["keyword", "unbind", binding.bindKey], commandTimeoutMs).catch(() => undefined);
+          throw new Error(`Hyprland release bind failed: ${errorMessage(error)}`);
+        }
+      }
+
+      this.hyprlandBindings.set(action.id, { ...binding, releaseBindKey });
+      this.activeRegistrations.set(action.id, {
+        activationMode: action.activationMode,
+        backend: "hyprland_bind",
+        onActivated: action.onActivated,
+        onDeactivated: action.onDeactivated,
+        onPressedWithoutRelease: action.onPressedWithoutRelease,
+        pushToTalkRelease
+      });
+      actionResults[action.id] = {
+        registered: true,
+        pushToTalkRelease,
+        triggerDescription: binding.bindKey,
+        diagnostics: actionResults[action.id].diagnostics
+      };
     }
 
-    this.hyprlandBinding = binding;
-    this.activeRegistration = {
-      activationMode: options.activationMode,
-      backend: "hyprland_bind",
-      onActivated: options.onActivated,
-      onDeactivated: options.onDeactivated,
-      onPressedWithoutRelease: options.onPressedWithoutRelease,
-      pushToTalkRelease
-    };
+    const activationResult = actionResults.activation;
+    if (!activationResult.registered) {
+      return { registered: false, actionResults };
+    }
 
     return {
       backend: "hyprland_bind",
       registered: true,
-      pushToTalkRelease,
-      triggerDescription: binding.bindKey
+      pushToTalkRelease: activationResult.pushToTalkRelease,
+      triggerDescription: activationResult.triggerDescription,
+      actionResults
     };
   }
 
@@ -330,86 +460,120 @@ export class NativeDesktopGlobalShortcutService {
     options: NativeDesktopShortcutRegistrationOptions,
     diagnostics: string[]
   ): Promise<Partial<NativeDesktopShortcutRegistrationResult> & { registered: boolean }> {
-    const qtKey = acceleratorToKdeQtKey(options.accelerator);
-    if (qtKey === null) {
-      diagnostics.push(`KDE KGlobalAccel does not support activation shortcut "${options.accelerator}".`);
-      return { registered: false };
-    }
-
     const bus = this.getBus();
-    const actionId = kdeActionId();
     await this.addMatch(kdeSignalMatch("globalShortcutPressed"));
+    const actionResults = emptyActionResults();
+    const usedQtKeys = new Set<number>();
 
-    const conflict = await this.findKdeConflict(qtKey);
-    if (conflict) {
-      diagnostics.push(`KDE KGlobalAccel shortcut "${options.accelerator}" is already owned by another component.`);
-      return { registered: false };
+    for (const action of options.actions) {
+      const definition = shortcutActionDefinitions[action.id];
+      const qtKey = acceleratorToKdeQtKey(action.accelerator);
+      if (qtKey === null) {
+        actionResults[action.id].diagnostics.push(`KDE KGlobalAccel does not support ${definition.label} shortcut "${action.accelerator}".`);
+        continue;
+      }
+      if (usedQtKeys.has(qtKey)) {
+        actionResults[action.id].diagnostics.push(`KDE KGlobalAccel shortcut "${action.accelerator}" is already used by another Murmur shortcut.`);
+        continue;
+      }
+      usedQtKeys.add(qtKey);
+
+      const conflict = await this.findKdeConflict(qtKey);
+      if (conflict) {
+        actionResults[action.id].diagnostics.push(`KDE KGlobalAccel shortcut "${action.accelerator}" is already owned by another component.`);
+        continue;
+      }
+
+      const actionId = kdeActionId(action.id);
+      await this.invoke({
+        bus,
+        destination: kdeDestination,
+        path: kdePath,
+        interfaceName: kdeInterface,
+        member: "unRegister",
+        signature: "as",
+        body: [actionId]
+      }).catch(() => undefined);
+      await this.invoke({
+        bus,
+        destination: kdeDestination,
+        path: kdePath,
+        interfaceName: kdeInterface,
+        member: "doRegister",
+        signature: "as",
+        body: [actionId]
+      });
+      const assigned = await this.invoke<unknown>({
+        bus,
+        destination: kdeDestination,
+        path: kdePath,
+        interfaceName: kdeInterface,
+        member: "setShortcut",
+        signature: "asaiu",
+        body: [actionId, [qtKey], 0x02]
+      });
+
+      const assignedKey = Array.isArray(assigned) ? assigned[0] : undefined;
+      if (typeof assignedKey === "number" && assignedKey !== qtKey) {
+        await this.invoke({
+          bus,
+          destination: kdeDestination,
+          path: kdePath,
+          interfaceName: kdeInterface,
+          member: "unRegister",
+          signature: "as",
+          body: [actionId]
+        }).catch(() => undefined);
+        actionResults[action.id].diagnostics.push(`KDE KGlobalAccel assigned a different shortcut than "${action.accelerator}".`);
+        continue;
+      }
+
+      this.kdeRegistered.add(action.id);
+      this.activeRegistrations.set(action.id, {
+        activationMode: action.activationMode,
+        backend: "kde_kglobalaccel",
+        onActivated: action.onActivated,
+        onDeactivated: action.onDeactivated,
+        onPressedWithoutRelease: action.onPressedWithoutRelease,
+        pushToTalkRelease: false
+      });
+      actionResults[action.id] = {
+        registered: true,
+        pushToTalkRelease: false,
+        triggerDescription: action.accelerator,
+        diagnostics: actionResults[action.id].diagnostics
+      };
     }
 
-    await this.invoke({
-      bus,
-      destination: kdeDestination,
-      path: kdePath,
-      interfaceName: kdeInterface,
-      member: "unRegister",
-      signature: "as",
-      body: [actionId]
-    }).catch(() => undefined);
-    await this.invoke({
-      bus,
-      destination: kdeDestination,
-      path: kdePath,
-      interfaceName: kdeInterface,
-      member: "doRegister",
-      signature: "as",
-      body: [actionId]
-    });
-    const assigned = await this.invoke<unknown>({
-      bus,
-      destination: kdeDestination,
-      path: kdePath,
-      interfaceName: kdeInterface,
-      member: "setShortcut",
-      signature: "asaiu",
-      body: [actionId, [qtKey], 0x02]
-    });
-
-    const assignedKey = Array.isArray(assigned) ? assigned[0] : undefined;
-    if (typeof assignedKey === "number" && assignedKey !== qtKey) {
-      await this.unregisterKde().catch(() => undefined);
-      diagnostics.push(`KDE KGlobalAccel assigned a different shortcut than "${options.accelerator}".`);
-      return { registered: false };
+    const activationResult = actionResults.activation;
+    if (!activationResult.registered) {
+      return { registered: false, actionResults };
     }
-
-    this.kdeRegistered = true;
-    this.activeRegistration = {
-      activationMode: options.activationMode,
-      backend: "kde_kglobalaccel",
-      onActivated: options.onActivated,
-      onDeactivated: options.onDeactivated,
-      onPressedWithoutRelease: options.onPressedWithoutRelease,
-      pushToTalkRelease: false
-    };
 
     return {
       backend: "kde_kglobalaccel",
       registered: true,
-      pushToTalkRelease: false,
-      triggerDescription: options.accelerator
+      pushToTalkRelease: activationResult.pushToTalkRelease,
+      triggerDescription: activationResult.triggerDescription,
+      actionResults
     };
   }
 
   private async unregisterKde(): Promise<void> {
     if (!this.bus) return;
-    await this.invoke({
-      bus: this.bus,
-      destination: kdeDestination,
-      path: kdePath,
-      interfaceName: kdeInterface,
-      member: "unRegister",
-      signature: "as",
-      body: [kdeActionId()]
-    });
+    await Promise.all(
+      shortcutActionIds.map((id) =>
+        this.invoke({
+          bus: this.bus!,
+          destination: kdeDestination,
+          path: kdePath,
+          interfaceName: kdeInterface,
+          member: "unRegister",
+          signature: "as",
+          body: [kdeActionId(id)]
+        }).catch(() => undefined)
+      )
+    );
   }
 
   private async findKdeConflict(qtKey: number): Promise<boolean> {
@@ -446,15 +610,17 @@ export class NativeDesktopGlobalShortcutService {
     }
     bus.exportInterface(
       {
-        Activate: () => this.handleActivated(),
-        Deactivate: () => this.handleDeactivated()
+        Activate: () => this.handleActivated("activation"),
+        Deactivate: () => this.handleDeactivated("activation"),
+        ModeSelector: () => this.handleActivated("mode-selector")
       },
       dbusObjectPath,
       {
         name: dbusCallbackInterface,
         methods: {
           Activate: ["", ""],
-          Deactivate: ["", ""]
+          Deactivate: ["", ""],
+          ModeSelector: ["", ""]
         }
       }
     );
@@ -562,12 +728,13 @@ export class NativeDesktopGlobalShortcutService {
     if (message.interface !== kdeComponentInterface || message.member !== "globalShortcutPressed") return;
     if (message.path !== kdeComponentPath) return;
     const [, actionUnique] = message.body ?? [];
-    if (actionUnique !== kdeActionName && actionUnique !== kdeActionFriendlyName) return;
-    this.handleActivated();
+    const actionId = kdeActionIdFromSignal(actionUnique);
+    if (!actionId) return;
+    this.handleActivated(actionId);
   };
 
-  private handleActivated(): void {
-    const registration = this.activeRegistration;
+  private handleActivated(actionId: GlobalShortcutActionId): void {
+    const registration = this.activeRegistrations.get(actionId);
     if (!registration) return;
     if (registration.activationMode === "push_to_talk" && !registration.pushToTalkRelease) {
       registration.onPressedWithoutRelease();
@@ -576,8 +743,8 @@ export class NativeDesktopGlobalShortcutService {
     registration.onActivated();
   }
 
-  private handleDeactivated(): void {
-    const registration = this.activeRegistration;
+  private handleDeactivated(actionId: GlobalShortcutActionId): void {
+    const registration = this.activeRegistrations.get(actionId);
     if (!registration || registration.activationMode !== "push_to_talk" || !registration.pushToTalkRelease) return;
     registration.onDeactivated();
   }
@@ -936,12 +1103,21 @@ function normalizeGnomeShortcut(shortcut: string): string {
   return `${modifiers.map((modifier) => `<${modifier}>`).join("")}${key.toLowerCase()}`;
 }
 
-function dbusSendCommand(method: "Activate" | "Deactivate"): string {
+function dbusSendCommand(method: "Activate" | "Deactivate" | "ModeSelector"): string {
   return `dbus-send --session --type=method_call --dest=${dbusServiceName} ${dbusObjectPath} ${dbusCallbackInterface}.${method}`;
 }
 
-function kdeActionId(): string[] {
-  return [kdeComponentName, kdeActionName, kdeComponentFriendlyName, kdeActionFriendlyName];
+function kdeActionId(id: GlobalShortcutActionId): string[] {
+  const definition = shortcutActionDefinitions[id];
+  return [kdeComponentName, definition.kdeActionName, kdeComponentFriendlyName, definition.kdeActionFriendlyName];
+}
+
+function kdeActionIdFromSignal(actionUnique: unknown): GlobalShortcutActionId | null {
+  for (const id of shortcutActionIds) {
+    const definition = shortcutActionDefinitions[id];
+    if (actionUnique === definition.kdeActionName || actionUnique === definition.kdeActionFriendlyName) return id;
+  }
+  return null;
 }
 
 function kdeSignalMatch(member: string): string {
@@ -952,6 +1128,13 @@ function backendLabel(backend: NativeDesktopShortcutBackend): string {
   if (backend === "gnome_custom_shortcut") return "GNOME";
   if (backend === "hyprland_bind") return "Hyprland";
   return "KDE";
+}
+
+function emptyActionResults(): Record<GlobalShortcutActionId, NativeDesktopShortcutActionResult> {
+  return {
+    activation: { registered: false, pushToTalkRelease: false, diagnostics: [] },
+    "mode-selector": { registered: false, pushToTalkRelease: false, diagnostics: [] }
+  };
 }
 
 function execFileOutput(file: string, args: string[], timeout: number): Promise<string> {

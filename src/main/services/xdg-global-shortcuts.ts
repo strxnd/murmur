@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import * as dbusNative from "@homebridge/dbus-native";
 import type { BusConnection, MessageBus } from "@homebridge/dbus-native";
-import type { ActivationMode } from "../../shared/types";
+import type { ActivationMode, GlobalShortcutActionId } from "../../shared/types";
 
 const portalDestination = "org.freedesktop.portal.Desktop";
 const portalPath = "/org/freedesktop/portal/desktop";
@@ -14,8 +14,9 @@ const dbusDestination = "org.freedesktop.DBus";
 const dbusPath = "/org/freedesktop/DBus";
 const dbusInterface = "org.freedesktop.DBus";
 const appId = "dev.murmur.app";
-const shortcutId = "activation";
 const portalTimeoutMs = 3000;
+
+const shortcutActionIds: GlobalShortcutActionId[] = ["activation", "mode-selector"];
 
 export interface XdgShortcutRegistrationResult {
   attempted: boolean;
@@ -23,14 +24,27 @@ export interface XdgShortcutRegistrationResult {
   pushToTalkRelease: boolean;
   triggerDescription?: string;
   diagnostics: string[];
+  actionResults: Record<GlobalShortcutActionId, XdgShortcutActionResult>;
 }
 
-export interface XdgGlobalShortcutRegistrationOptions {
+export interface XdgShortcutActionResult {
+  registered: boolean;
+  pushToTalkRelease: boolean;
+  triggerDescription?: string;
+  diagnostics: string[];
+}
+
+export interface XdgShortcutActionRegistration {
+  id: GlobalShortcutActionId;
   accelerator: string;
   description: string;
   activationMode: ActivationMode;
   onActivated: () => void;
   onDeactivated: () => void;
+}
+
+export interface XdgGlobalShortcutRegistrationOptions {
+  actions: XdgShortcutActionRegistration[];
 }
 
 type DbusNativeModule = typeof dbusNative & {
@@ -68,8 +82,7 @@ interface PendingRequestResponse {
 }
 
 interface ActiveRegistration {
-  onActivated: () => void;
-  onDeactivated: () => void;
+  actions: Map<GlobalShortcutActionId, XdgShortcutActionRegistration>;
   sessionHandle: string;
 }
 
@@ -89,12 +102,14 @@ export class XdgGlobalShortcutService {
     await this.unregister();
 
     const diagnostics: string[] = [];
+    const actionResults = emptyActionResults();
     const result = (patch: Partial<XdgShortcutRegistrationResult>): XdgShortcutRegistrationResult => ({
       attempted: patch.attempted ?? false,
       registered: patch.registered ?? false,
       pushToTalkRelease: patch.pushToTalkRelease ?? false,
       triggerDescription: patch.triggerDescription,
-      diagnostics: [...diagnostics, ...(patch.diagnostics ?? [])]
+      diagnostics: [...diagnostics, ...(patch.diagnostics ?? [])],
+      actionResults: patch.actionResults ?? actionResults
     });
 
     if (process.platform !== "linux") {
@@ -107,11 +122,21 @@ export class XdgGlobalShortcutService {
       return result({});
     }
 
-    const preferredTrigger = acceleratorToPortalTrigger(options.accelerator);
-    if (!preferredTrigger) {
-      diagnostics.push(
-        `Activation shortcut "${options.accelerator}" cannot be represented as an XDG Desktop Portal trigger.`
-      );
+    const requestedActions = options.actions.filter((action) => shortcutActionIds.includes(action.id));
+    const bindableActions: Array<XdgShortcutActionRegistration & { preferredTrigger: string }> = [];
+
+    for (const action of requestedActions) {
+      const preferredTrigger = acceleratorToPortalTrigger(action.accelerator);
+      if (!preferredTrigger) {
+        actionResults[action.id].diagnostics.push(
+          `${shortcutActionLabel(action.id)} shortcut "${action.accelerator}" cannot be represented as an XDG Desktop Portal trigger.`
+        );
+        continue;
+      }
+      bindableActions.push({ ...action, preferredTrigger });
+    }
+
+    if (bindableActions.length === 0) {
       return result({});
     }
 
@@ -146,8 +171,10 @@ export class XdgGlobalShortcutService {
 
       this.sessionHandle = sessionHandle;
 
-      const description = options.description || shortcutDescriptionForActivationMode(options.activationMode);
-      const shortcutProperties = shortcutPropertiesForPortalVersion(description, preferredTrigger, globalShortcutsVersion);
+      const shortcuts = bindableActions.map((action) => [
+        action.id,
+        shortcutPropertiesForPortalVersion(action.description, action.preferredTrigger, globalShortcutsVersion)
+      ]);
       const bindResponse = await this.callPortalRequest({
         bus,
         uniqueName,
@@ -155,12 +182,7 @@ export class XdgGlobalShortcutService {
         signature: "oa(sa{sv})sa{sv}",
         body: [
           sessionHandle,
-          [
-            [
-              shortcutId,
-              shortcutProperties
-            ]
-          ],
+          shortcuts,
           "",
           makeVardict({
             handle_token: makeToken("bind")
@@ -174,32 +196,47 @@ export class XdgGlobalShortcutService {
         return result({ attempted: true });
       }
 
-      const boundShortcut = findBoundShortcut(bindResponse.results, shortcutId);
-      if (!boundShortcut) {
-        diagnostics.push("XDG Desktop Portal did not bind the requested activation shortcut.");
-        await this.unregister();
-        return result({ attempted: true });
+      const activeActions = new Map<GlobalShortcutActionId, XdgShortcutActionRegistration>();
+      for (const action of bindableActions) {
+        const boundShortcut = findBoundShortcut(bindResponse.results, action.id);
+        if (!boundShortcut) {
+          actionResults[action.id].diagnostics.push(`XDG Desktop Portal did not bind the requested ${shortcutActionLabel(action.id)} shortcut.`);
+          continue;
+        }
+        if (!boundShortcut.triggerDescription) {
+          actionResults[action.id].diagnostics.push(
+            `XDG Desktop Portal did not assign a system shortcut to ${portalActionId(action.id)}; assign it in system keyboard settings.`
+          );
+          continue;
+        }
+
+        activeActions.set(action.id, action);
+        actionResults[action.id] = {
+          registered: true,
+          pushToTalkRelease: action.activationMode === "push_to_talk",
+          triggerDescription: boundShortcut.triggerDescription || undefined,
+          diagnostics: actionResults[action.id].diagnostics
+        };
       }
-      if (!boundShortcut.triggerDescription) {
-        diagnostics.push(
-          `XDG Desktop Portal did not assign a system shortcut to ${portalActivationActionId()}; assign it in system keyboard settings.`
-        );
+
+      const activationResult = actionResults.activation;
+      if (!activationResult.registered) {
         await this.unregister();
         return result({ attempted: true });
       }
 
       await this.addMatch("type='signal',path='/org/freedesktop/portal/desktop',interface='org.freedesktop.portal.GlobalShortcuts'");
       this.activeRegistration = {
-        onActivated: options.onActivated,
-        onDeactivated: options.onDeactivated,
+        actions: activeActions,
         sessionHandle
       };
 
       return result({
         attempted: true,
         registered: true,
-        pushToTalkRelease: options.activationMode === "push_to_talk",
-        triggerDescription: boundShortcut.triggerDescription || undefined
+        pushToTalkRelease: activationResult.pushToTalkRelease,
+        triggerDescription: activationResult.triggerDescription,
+        actionResults
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -459,12 +496,15 @@ export class XdgGlobalShortcutService {
     if (message.member !== "Activated" && message.member !== "Deactivated") return;
 
     const [sessionHandle, id] = message.body ?? [];
-    if (sessionHandle !== this.activeRegistration.sessionHandle || id !== shortcutId) return;
+    if (sessionHandle !== this.activeRegistration.sessionHandle) return;
+    if (id !== "activation" && id !== "mode-selector") return;
+    const action = this.activeRegistration.actions.get(id);
+    if (!action) return;
 
     if (message.member === "Activated") {
-      this.activeRegistration.onActivated();
+      action.onActivated();
     } else {
-      this.activeRegistration.onDeactivated();
+      action.onDeactivated();
     }
   };
 
@@ -480,6 +520,10 @@ export class XdgGlobalShortcutService {
 
 export function shortcutDescriptionForActivationMode(mode: ActivationMode): string {
   return mode === "push_to_talk" ? "Push to talk with Murmur" : "Toggle Murmur recording";
+}
+
+export function shortcutDescriptionForModeSelector(): string {
+  return "Show Murmur mode selector";
 }
 
 export function acceleratorToPortalTrigger(accelerator: string): string | null {
@@ -519,8 +563,19 @@ export function shortcutPropertiesForPortalVersion(description: string, preferre
   return makeVardict(properties);
 }
 
-function portalActivationActionId(): string {
-  return `${appId}:${shortcutId}`;
+function portalActionId(id: GlobalShortcutActionId): string {
+  return `${appId}:${id}`;
+}
+
+function emptyActionResults(): Record<GlobalShortcutActionId, XdgShortcutActionResult> {
+  return {
+    activation: { registered: false, pushToTalkRelease: false, diagnostics: [] },
+    "mode-selector": { registered: false, pushToTalkRelease: false, diagnostics: [] }
+  };
+}
+
+function shortcutActionLabel(id: GlobalShortcutActionId): string {
+  return id === "activation" ? "activation" : "mode selector";
 }
 
 function portalModifier(token: string): string | null | "unsupported" {

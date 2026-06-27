@@ -57,6 +57,34 @@ describe("StorageService", () => {
     expect(settings.cancelHotkey).toBeUndefined();
   });
 
+  it("adds the default mode selector hotkey to old configs", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        settings: {
+          activeModeId: "default",
+          theme: "dark",
+          activationHotkey: "Alt+R"
+        }
+      })
+    );
+    const storage = jsonStorage(paths);
+
+    expect(storage.getState().settings.modeSelectorHotkey).toBe("Alt+Shift+K");
+  });
+
+  it("persists user-edited mode selector hotkeys", () => {
+    const paths = testPaths();
+    const storage = jsonStorage(paths);
+
+    storage.updateSettings({ modeSelectorHotkey: "Alt+Shift+M" });
+    const reopened = jsonStorage(paths);
+
+    expect(reopened.getState().settings.modeSelectorHotkey).toBe("Alt+Shift+M");
+  });
+
   it("drops obsolete STT setup settings during migration", () => {
     const paths = testPaths();
     mkdirSync(paths.configDir, { recursive: true });

@@ -116,7 +116,11 @@ function state({
         backend: "electron_global_shortcut",
         pushToTalkRelease: false,
         registered: true,
-        diagnostics: []
+        diagnostics: [],
+        modeSelector: {
+          registered: true,
+          diagnostics: []
+        }
       },
       context: {
         backend: "clipboard_fallback",

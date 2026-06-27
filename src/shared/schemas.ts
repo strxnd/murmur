@@ -201,6 +201,7 @@ export const appSettingsSchema = z
     activeModeId: z.string().min(1),
     activationMode: z.enum(["toggle", "push_to_talk"]),
     activationHotkey: z.string().min(1),
+    modeSelectorHotkey: z.string().min(1),
     recordingPillPosition: recordingPillPositionSchema,
     preferredAudioInputId: optionalStringSchema,
     typingBaselineWpm: z.number().min(1),
@@ -307,7 +308,12 @@ export const capabilityReportSchema = z
         pushToTalkRelease: z.boolean(),
         registered: z.boolean(),
         triggerDescription: optionalStringSchema,
-        diagnostics: z.array(z.string())
+        diagnostics: z.array(z.string()),
+        modeSelector: z.object({
+          registered: z.boolean(),
+          triggerDescription: optionalStringSchema,
+          diagnostics: z.array(z.string())
+        })
       }),
     context: z
       .object({
@@ -362,6 +368,15 @@ export const pillStateSnapshotSchema = z
   .object({
     session: dictationSessionSchema,
     theme: appSettingsSchema.shape.theme
+  })
+  .passthrough();
+
+export const modeSelectorStateSnapshotSchema = z
+  .object({
+    theme: appSettingsSchema.shape.theme,
+    modes: z.array(modeConfigSchema),
+    activeModeId: z.string().min(1),
+    session: dictationSessionSchema
   })
   .passthrough();
 

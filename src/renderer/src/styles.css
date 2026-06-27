@@ -126,8 +126,11 @@ body,
 }
 
 :root[data-window="pill"],
+:root[data-window="mode-selector"],
 :root[data-window="pill"] body,
-:root[data-window="pill"] #root {
+:root[data-window="mode-selector"] body,
+:root[data-window="pill"] #root,
+:root[data-window="mode-selector"] #root {
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -181,6 +184,182 @@ pre {
   height: 100vh;
   place-items: center;
   background: transparent;
+}
+
+.mode-selector-shell {
+  display: grid;
+  width: 100vw;
+  height: 100vh;
+  place-items: center;
+  background: transparent;
+  color: var(--foreground);
+  outline: none;
+}
+
+.mode-selector-panel {
+  position: relative;
+  display: flex;
+  width: min(420px, calc(100vw - 24px));
+  max-height: min(520px, calc(100vh - 24px));
+  min-height: min(240px, calc(100vh - 24px));
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 20%, var(--border));
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-raised) 92%, var(--foreground) 8%), color-mix(in srgb, var(--surface) 96%, transparent)),
+    color-mix(in srgb, var(--surface) 96%, transparent);
+  box-shadow:
+    0 24px 54px rgba(0, 0, 0, 0.34),
+    inset 0 0 0 1px color-mix(in srgb, var(--foreground) 7%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  contain: layout paint;
+}
+
+.mode-selector-panel[data-blocked="true"] {
+  opacity: 0.68;
+}
+
+.mode-selector-list {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  width: 100%;
+  flex: 1 1 auto;
+  max-height: calc(min(520px, calc(100vh - 24px)) - 24px);
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 4px 2px 2px;
+  outline: none;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--foreground) 28%, transparent) transparent;
+}
+
+.mode-selector-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.mode-selector-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--foreground) 24%, transparent);
+}
+
+.mode-selector-active-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  pointer-events: none;
+  border: 1px solid color-mix(in srgb, var(--foreground) 20%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--muted-foreground) 18%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--foreground) 6%, transparent),
+    var(--console-control-shadow);
+  transition:
+    transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    width 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    height 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform, width, height;
+}
+
+.mode-selector-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: 100%;
+  min-height: 46px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--foreground);
+  outline: none;
+}
+
+.mode-selector-row:not(.mode-selector-row--active):hover,
+.mode-selector-row:not(.mode-selector-row--active):focus-visible {
+  border-color: color-mix(in srgb, var(--foreground) 18%, var(--border));
+  background: color-mix(in srgb, var(--muted) 72%, var(--surface-raised));
+}
+
+.mode-selector-row--active {
+  border-color: transparent;
+  background: transparent;
+  color: var(--foreground);
+}
+
+.mode-selector-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.mode-selector-row__icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.mode-selector-row__check {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.mode-selector-row__name {
+  display: -webkit-box;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-align: left;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.mode-selector-bindings {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 6px 1px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.mode-selector-bindings kbd {
+  display: inline-grid;
+  min-width: 26px;
+  height: 20px;
+  place-items: center;
+  margin: 0 2px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 16%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface-raised) 86%, var(--foreground) 6%);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 10px;
 }
 
 .recording-pill {
@@ -422,9 +601,13 @@ pre {
   .mode-dialog-popup {
     transform: translate(-50%, -50%) !important;
   }
+
+  .mode-selector-active-overlay {
+    transition: none !important;
+  }
 }
 
-:root:not([data-window="pill"]) body {
+:root:not([data-window="pill"]):not([data-window="mode-selector"]) body {
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--foreground) 4%, transparent), transparent 18rem),
     linear-gradient(90deg, color-mix(in srgb, var(--foreground) 3%, transparent) 1px, transparent 1px) 0 0 / 56px 56px,

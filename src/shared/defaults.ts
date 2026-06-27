@@ -18,6 +18,7 @@ export const defaultSettings: AppSettings = {
   activeModeId: "default",
   activationMode: "toggle",
   activationHotkey: "CommandOrControl+Alt+Space",
+  modeSelectorHotkey: "Alt+Shift+K",
   recordingPillPosition: "bottom_center",
   typingBaselineWpm: 40
 };

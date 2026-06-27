@@ -5,6 +5,7 @@ import type {
   LlmProviderConfig,
   ModelDownloadState,
   ModelLibrarySnapshot,
+  ModeSelectorStateSnapshot,
   ModeConfig,
   PillStateSnapshot,
   ProviderValidationResult,
@@ -22,6 +23,7 @@ import {
   copyResultSchema,
   modelDownloadStateSchema,
   modelLibrarySnapshotSchema,
+  modeSelectorStateSnapshotSchema,
   pasteResultSchema,
   pillStateSnapshotSchema,
   providerValidationResultSchema,
@@ -32,6 +34,7 @@ import {
 export const murmurClient = {
   getState: (): Promise<AppStateSnapshot> => window.murmur.getState().then(parseState),
   getPillState: (): Promise<PillStateSnapshot> => window.murmur.getPillState().then(parsePillState),
+  getModeSelectorState: (): Promise<ModeSelectorStateSnapshot> => window.murmur.getModeSelectorState().then(parseModeSelectorState),
   updateSettings: (patch: Partial<AppSettings>): Promise<AppStateSnapshot> => window.murmur.updateSettings(patch).then(parseState),
   beginHotkeyCapture: (): Promise<void> => window.murmur.beginHotkeyCapture().then(() => undefined),
   endHotkeyCapture: (): Promise<void> => window.murmur.endHotkeyCapture().then(() => undefined),
@@ -81,10 +84,16 @@ export const murmurClient = {
   clearHistory: (): Promise<AppStateSnapshot> => window.murmur.clearHistory().then(parseState),
   reprocessHistoryItem: (id: string): Promise<AppStateSnapshot> => window.murmur.reprocessHistoryItem(id).then(parseState),
   clearLocalData: (): Promise<AppStateSnapshot> => window.murmur.clearLocalData().then(parseState),
+  hideModeSelector: (): Promise<void> => window.murmur.hideModeSelector().then(() => undefined),
+  selectModeFromSelector: (modeId: string): Promise<AppStateSnapshot> => window.murmur.selectModeFromSelector(modeId).then(parseState),
+  moveModeSelectorSelection: (delta: number): Promise<ModeSelectorStateSnapshot> =>
+    window.murmur.moveModeSelectorSelection(delta).then(parseModeSelectorState),
   onStateChanged: (callback: (state: AppStateSnapshot) => void): (() => void) =>
     window.murmur.onStateChanged((state) => callback(parseState(state))),
   onPillStateChanged: (callback: (state: PillStateSnapshot) => void): (() => void) =>
     window.murmur.onPillStateChanged((state) => callback(parsePillState(state))),
+  onModeSelectorStateChanged: (callback: (state: ModeSelectorStateSnapshot) => void): (() => void) =>
+    window.murmur.onModeSelectorStateChanged((state) => callback(parseModeSelectorState(state))),
   onRecordingStart: (callback: (payload: RecordingStartPayload) => void): (() => void) => window.murmur.onRecordingStart(callback),
   onRecordingStop: (callback: (payload: { sessionId: string }) => void): (() => void) => window.murmur.onRecordingStop(callback),
   onRecordingCancel: (callback: (payload: { sessionId: string }) => void): (() => void) => window.murmur.onRecordingCancel(callback),
@@ -102,6 +111,10 @@ function parseState(value: unknown): AppStateSnapshot {
 
 function parsePillState(value: unknown): PillStateSnapshot {
   return pillStateSnapshotSchema.parse(value) as PillStateSnapshot;
+}
+
+function parseModeSelectorState(value: unknown): ModeSelectorStateSnapshot {
+  return modeSelectorStateSnapshotSchema.parse(value) as ModeSelectorStateSnapshot;
 }
 
 function parseProviderValidation(value: unknown): ProviderValidationResult {

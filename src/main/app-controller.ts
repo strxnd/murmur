@@ -17,6 +17,7 @@ import type {
   ModelCatalogItem,
   ModelLibrarySnapshot,
   ModeConfig,
+  ModeSelectorStateSnapshot,
   PillStateSnapshot,
   RecordingLevelPayload,
   SttRuntimeId,
@@ -34,6 +35,7 @@ import {
 import { buildProcessingPrompt, buildVocabularyPrompt } from "../shared/prompts";
 import { resolveModeByContext } from "./services/auto-mode";
 import { createId } from "./services/ids";
+import { registerElectronShortcutActions, registerModeSelectorNavigationShortcuts } from "./services/electron-global-shortcuts";
 import { ContextService } from "./services/context";
 import { LlmService } from "./services/llm";
 import { ModelLibraryService } from "./services/model-library";
@@ -45,7 +47,11 @@ import { SttRuntimeService } from "./services/stt-runtime";
 import { resolveAppPaths, type AppPaths } from "./services/app-paths";
 import { NativeDesktopGlobalShortcutService } from "./services/native-global-shortcuts";
 import { TextAutomationService } from "./services/text-automation";
-import { shortcutDescriptionForActivationMode, XdgGlobalShortcutService } from "./services/xdg-global-shortcuts";
+import {
+  shortcutDescriptionForActivationMode,
+  shortcutDescriptionForModeSelector,
+  XdgGlobalShortcutService
+} from "./services/xdg-global-shortcuts";
 import {
   app,
   BrowserWindow,
@@ -63,12 +69,14 @@ import {
 const pillWindowWidth = 140;
 const pillWindowHeight = 64;
 const pillWindowMargin = 24;
+const modeSelectorWindowSize = 640;
 const trayIconDataUrl =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAbklEQVR4nO3WQQ7AIAgEQJ7B/1/JrV4bg4kKXbTZTbzqoEYUYZgbo6qPN2CLm5k7PkeMKoftxLv6PpBdIIAAOKCfbAcQAhFwJGD1KU4FyEYzSgfIYjsOAyITpHTH2XMvac3w3xABpYDyy0fAb9MAo3Ifzf1J6oQAAAAASUVORK5CYII=";
 
 export class AppController {
   private mainWindow: ElectronBrowserWindow | null = null;
   private pillWindow: ElectronBrowserWindow | null = null;
+  private modeSelectorWindow: ElectronBrowserWindow | null = null;
   private tray: ElectronTray | null = null;
   private isQuitting = false;
   private closeToTrayNotification: ElectronNotification | null = null;
@@ -96,6 +104,10 @@ export class AppController {
   private hotkeyPushToTalkRelease = false;
   private hotkeyTriggerDescription: string | undefined;
   private hotkeyDiagnostics: string[] = [];
+  private modeSelectorHotkeyRegistered = false;
+  private modeSelectorHotkeyTriggerDescription: string | undefined;
+  private modeSelectorHotkeyDiagnostics: string[] = [];
+  private modeSelectorNavigationShortcutCleanup: (() => void) | null = null;
   private hotkeyCaptureDepth = 0;
   private hotkeyRegistrationGeneration = 0;
   private hotkeyRegistrationQueue: Promise<void> = Promise.resolve();
@@ -124,6 +136,7 @@ export class AppController {
   }
 
   dispose(): void {
+    this.unregisterModeSelectorNavigationShortcuts();
     globalShortcut.unregisterAll();
     this.portalHotkeys.dispose();
     this.nativeHotkeys.dispose();
@@ -152,6 +165,7 @@ export class AppController {
   private createWindows(): void {
     this.createMainWindow();
     this.createPillWindow();
+    this.createModeSelectorWindow();
   }
 
   private createMainWindow(): void {
@@ -229,6 +243,48 @@ export class AppController {
 
     window.on("closed", () => {
       if (this.pillWindow === window) this.pillWindow = null;
+    });
+  }
+
+  private createModeSelectorWindow(): void {
+    if (this.modeSelectorWindow && !this.modeSelectorWindow.isDestroyed()) return;
+
+    const window = new BrowserWindow({
+      width: modeSelectorWindowSize,
+      height: modeSelectorWindowSize,
+      show: false,
+      frame: false,
+      focusable: true,
+      acceptFirstMouse: true,
+      resizable: false,
+      hasShadow: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      movable: true,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      title: "Murmur Mode Selector",
+      transparent: true,
+      webPreferences: {
+        preload: join(__dirname, "../preload/index.cjs"),
+        contextIsolation: true,
+        nodeIntegration: false,
+        backgroundThrottling: false
+      }
+    });
+    this.modeSelectorWindow = window;
+
+    void this.loadRenderer(window, "?mode-selector=1");
+    this.attachWindowDiagnostics(window, "mode-selector");
+    this.configureModeSelectorWindow();
+
+    window.on("hide", () => {
+      this.unregisterModeSelectorNavigationShortcuts();
+    });
+    window.on("closed", () => {
+      this.unregisterModeSelectorNavigationShortcuts();
+      if (this.modeSelectorWindow === window) this.modeSelectorWindow = null;
     });
   }
 
@@ -335,7 +391,8 @@ export class AppController {
     if (process.env.ELECTRON_RENDERER_URL) {
       await window.loadURL(`${process.env.ELECTRON_RENDERER_URL}${suffix}`);
     } else {
-      await window.loadFile(join(__dirname, "../renderer/index.html"), suffix ? { query: { pill: "1" } } : undefined);
+      const query = rendererQueryFromSuffix(suffix);
+      await window.loadFile(join(__dirname, "../renderer/index.html"), query ? { query } : undefined);
     }
   }
 
@@ -356,6 +413,7 @@ export class AppController {
   private registerIpc(): void {
     ipcMain.handle("app:get-state", () => this.getSnapshot());
     ipcMain.handle("app:get-pill-state", () => this.getPillSnapshot());
+    ipcMain.handle("app:get-mode-selector-state", () => this.getModeSelectorSnapshot());
     ipcMain.handle("settings:update", async (_event, patch: Partial<AppSettings>) => {
       const state = this.storage.updateSettings(patch);
       this.applySettings(state.settings);
@@ -493,11 +551,18 @@ export class AppController {
       this.broadcastState();
       return this.getSnapshot();
     });
+    ipcMain.handle("mode-selector:hide", () => {
+      this.hideModeSelectorWindow();
+      return { ok: true };
+    });
+    ipcMain.handle("mode-selector:select-mode", (_event, modeId: string) => this.selectModeFromSelector(modeId));
+    ipcMain.handle("mode-selector:move-selection", (_event, delta: number) => this.moveModeSelectorSelection(delta));
   }
 
   private applySettings(settings: AppSettings): void {
     nativeTheme.themeSource = settings.theme;
     this.configurePillWindow();
+    this.configureModeSelectorWindow();
   }
 
   private async beginHotkeyCapture(): Promise<void> {
@@ -523,6 +588,7 @@ export class AppController {
   }
 
   private async registerHotkeysForGeneration(generation: number): Promise<void> {
+    this.hideModeSelectorWindow();
     globalShortcut.unregisterAll();
     await this.portalHotkeys.unregister();
     await this.nativeHotkeys.unregister();
@@ -534,25 +600,49 @@ export class AppController {
 
     if (this.hotkeyCaptureDepth > 0) {
       this.hotkeyDiagnostics = ["Keyboard shortcut recording is active."];
+      this.modeSelectorHotkeyDiagnostics = ["Keyboard shortcut recording is active."];
       return;
     }
 
-    const portalResult = await this.portalHotkeys.register({
-      accelerator: settings.activationHotkey,
-      description: shortcutDescriptionForActivationMode(settings.activationMode),
-      activationMode: settings.activationMode,
-      onActivated: () => {
-        if (settings.activationMode === "push_to_talk") {
-          void this.handlePushToTalkActivated();
-        } else {
-          void this.handleActivationHotkey("toggle_global_hotkey");
+    const shortcutActions = [
+      {
+        id: "activation" as const,
+        accelerator: settings.activationHotkey,
+        description: shortcutDescriptionForActivationMode(settings.activationMode),
+        activationMode: settings.activationMode,
+        onActivated: () => {
+          if (settings.activationMode === "push_to_talk") {
+            void this.handlePushToTalkActivated();
+          } else {
+            void this.handleActivationHotkey("toggle_global_hotkey");
+          }
+        },
+        onDeactivated: () => {
+          if (settings.activationMode === "push_to_talk") {
+            void this.handlePushToTalkDeactivated();
+          }
+        },
+        onPressedWithoutRelease: () => {
+          void this.handleActivationHotkey(`${settings.activationMode}_global_hotkey`);
         }
       },
-      onDeactivated: () => {
-        if (settings.activationMode === "push_to_talk") {
-          void this.handlePushToTalkDeactivated();
+      {
+        id: "mode-selector" as const,
+        accelerator: settings.modeSelectorHotkey,
+        description: shortcutDescriptionForModeSelector(),
+        activationMode: "toggle" as const,
+        onActivated: () => {
+          this.showModeSelectorWindow();
+        },
+        onDeactivated: () => undefined,
+        onPressedWithoutRelease: () => {
+          this.showModeSelectorWindow();
         }
       }
+    ];
+
+    const portalResult = await this.portalHotkeys.register({
+      actions: shortcutActions
     });
 
     if (generation !== this.hotkeyRegistrationGeneration) {
@@ -562,34 +652,18 @@ export class AppController {
       return;
     }
 
-    this.hotkeyDiagnostics = portalResult.diagnostics;
     if (portalResult.registered) {
       this.hotkeyBackend = "xdg_desktop_portal";
-      this.hotkeyRegistered = true;
-      this.hotkeyPushToTalkRelease = portalResult.pushToTalkRelease;
-      this.hotkeyTriggerDescription = portalResult.triggerDescription;
+      this.applyHotkeyRegistrationResults({
+        activation: portalResult.actionResults.activation,
+        modeSelector: portalResult.actionResults["mode-selector"],
+        backendDiagnostics: portalResult.diagnostics
+      });
       return;
     }
 
     const nativeResult = await this.nativeHotkeys.register({
-      accelerator: settings.activationHotkey,
-      description: shortcutDescriptionForActivationMode(settings.activationMode),
-      activationMode: settings.activationMode,
-      onActivated: () => {
-        if (settings.activationMode === "push_to_talk") {
-          void this.handlePushToTalkActivated();
-        } else {
-          void this.handleActivationHotkey("toggle_global_hotkey");
-        }
-      },
-      onDeactivated: () => {
-        if (settings.activationMode === "push_to_talk") {
-          void this.handlePushToTalkDeactivated();
-        }
-      },
-      onPressedWithoutRelease: () => {
-        void this.handleActivationHotkey(`${settings.activationMode}_global_hotkey`);
-      }
+      actions: shortcutActions
     });
 
     if (generation !== this.hotkeyRegistrationGeneration) {
@@ -601,10 +675,11 @@ export class AppController {
 
     if (nativeResult.registered && nativeResult.backend) {
       this.hotkeyBackend = nativeResult.backend;
-      this.hotkeyRegistered = true;
-      this.hotkeyPushToTalkRelease = nativeResult.pushToTalkRelease;
-      this.hotkeyTriggerDescription = nativeResult.triggerDescription;
-      this.hotkeyDiagnostics = nativeResult.diagnostics;
+      this.applyHotkeyRegistrationResults({
+        activation: nativeResult.actionResults.activation,
+        modeSelector: nativeResult.actionResults["mode-selector"],
+        backendDiagnostics: nativeResult.diagnostics
+      });
       if (settings.activationMode === "push_to_talk" && !nativeResult.pushToTalkRelease) {
         this.hotkeyDiagnostics.push(
           `${this.hotkeyBackendLabel(nativeResult.backend)} does not expose key release events; push-to-talk uses press to start and stop recording.`
@@ -613,20 +688,55 @@ export class AppController {
       return;
     }
 
-    const fallbackDiagnostics = [...this.hotkeyDiagnostics, ...nativeResult.diagnostics];
-    this.hotkeyDiagnostics = [];
-
-    const activationOk = this.tryRegisterHotkey("activation", settings.activationHotkey, () => {
-      void this.handleActivationHotkey(`${settings.activationMode}_global_hotkey`);
-    });
-    const electronDiagnostics = this.hotkeyDiagnostics;
+    const fallbackActivationDiagnostics = [
+      ...portalResult.diagnostics,
+      ...portalResult.actionResults.activation.diagnostics,
+      ...nativeResult.diagnostics,
+      ...nativeResult.actionResults.activation.diagnostics
+    ];
+    const fallbackModeSelectorDiagnostics = [
+      ...portalResult.diagnostics,
+      ...portalResult.actionResults["mode-selector"].diagnostics,
+      ...nativeResult.diagnostics,
+      ...nativeResult.actionResults["mode-selector"].diagnostics
+    ];
+    const electronResult = registerElectronShortcutActions(globalShortcut, [
+      {
+        id: "activation",
+        label: "activation",
+        accelerator: settings.activationHotkey,
+        onActivated: () => {
+          void this.handleActivationHotkey(`${settings.activationMode}_global_hotkey`);
+        }
+      },
+      {
+        id: "mode-selector",
+        label: "mode selector",
+        accelerator: settings.modeSelectorHotkey,
+        onActivated: () => {
+          this.showModeSelectorWindow();
+        }
+      }
+    ]);
+    const activationResult = electronResult.actionResults.activation;
+    const modeSelectorResult = electronResult.actionResults["mode-selector"];
     this.hotkeyBackend = "electron_global_shortcut";
-    this.hotkeyRegistered = activationOk;
+    this.hotkeyRegistered = activationResult.registered;
     this.hotkeyPushToTalkRelease = false;
     this.hotkeyTriggerDescription = undefined;
-    this.hotkeyDiagnostics = activationOk ? [] : [...fallbackDiagnostics, ...electronDiagnostics];
+    this.hotkeyDiagnostics = activationResult.registered
+      ? []
+      : [...fallbackActivationDiagnostics, ...activationResult.diagnostics];
+    this.modeSelectorHotkeyRegistered = modeSelectorResult.registered;
+    this.modeSelectorHotkeyTriggerDescription = undefined;
+    this.modeSelectorHotkeyDiagnostics = modeSelectorResult.registered
+      ? []
+      : [...fallbackModeSelectorDiagnostics, ...modeSelectorResult.diagnostics];
 
-    if (!activationOk) this.hotkeyDiagnostics.push(`Global activation shortcut is not registered: ${settings.activationHotkey}.`);
+    if (!activationResult.registered) this.hotkeyDiagnostics.push(`Global activation shortcut is not registered: ${settings.activationHotkey}.`);
+    if (!modeSelectorResult.registered) {
+      this.modeSelectorHotkeyDiagnostics.push(`Global mode selector shortcut is not registered: ${settings.modeSelectorHotkey}.`);
+    }
     if (settings.activationMode === "push_to_talk") {
       this.hotkeyDiagnostics.push(
         "Electron globalShortcut does not expose key release events; push-to-talk uses press to start and stop recording."
@@ -640,6 +750,9 @@ export class AppController {
     this.hotkeyPushToTalkRelease = false;
     this.hotkeyTriggerDescription = undefined;
     this.hotkeyDiagnostics = [];
+    this.modeSelectorHotkeyRegistered = false;
+    this.modeSelectorHotkeyTriggerDescription = undefined;
+    this.modeSelectorHotkeyDiagnostics = [];
   }
 
   private hotkeyBackendLabel(backend: CapabilityReport["hotkeys"]["backend"]): string {
@@ -650,17 +763,22 @@ export class AppController {
     return "Electron globalShortcut";
   }
 
-  private tryRegisterHotkey(label: string, accelerator: string, callback: () => void): boolean {
-    try {
-      const registered = globalShortcut.register(accelerator, callback);
-      const isRegistered = registered && globalShortcut.isRegistered(accelerator);
-      if (!isRegistered) this.hotkeyDiagnostics.push(`Unable to register ${label} hotkey globally: ${accelerator}`);
-      return isRegistered;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.hotkeyDiagnostics.push(`Invalid ${label} hotkey "${accelerator}": ${message}`);
-      return false;
-    }
+  private applyHotkeyRegistrationResults(options: {
+    activation: { registered: boolean; pushToTalkRelease: boolean; triggerDescription?: string; diagnostics: string[] };
+    modeSelector: { registered: boolean; triggerDescription?: string; diagnostics: string[] };
+    backendDiagnostics: string[];
+  }): void {
+    this.hotkeyRegistered = options.activation.registered;
+    this.hotkeyPushToTalkRelease = options.activation.pushToTalkRelease;
+    this.hotkeyTriggerDescription = options.activation.triggerDescription;
+    this.hotkeyDiagnostics = options.activation.registered
+      ? options.activation.diagnostics
+      : [...options.backendDiagnostics, ...options.activation.diagnostics];
+    this.modeSelectorHotkeyRegistered = options.modeSelector.registered;
+    this.modeSelectorHotkeyTriggerDescription = options.modeSelector.triggerDescription;
+    this.modeSelectorHotkeyDiagnostics = options.modeSelector.registered
+      ? options.modeSelector.diagnostics
+      : [...options.backendDiagnostics, ...options.modeSelector.diagnostics];
   }
 
   private async handleActivationHotkey(trigger: string): Promise<AppStateSnapshot> {
@@ -1093,6 +1211,72 @@ export class AppController {
     return ["recording", "transcribing", "processing", "pasting"].includes(this.session.status);
   }
 
+  private showModeSelectorWindow(): void {
+    if (this.isModeSelectorBlocked()) return;
+
+    if (!this.modeSelectorWindow || this.modeSelectorWindow.isDestroyed()) {
+      this.createModeSelectorWindow();
+    }
+
+    const window = this.modeSelectorWindow;
+    if (!window || window.isDestroyed()) return;
+    this.configureModeSelectorWindow();
+    this.positionModeSelectorWindow();
+    window.webContents.send("mode-selector-state:changed", this.getModeSelectorSnapshot());
+    this.registerModeSelectorNavigationShortcuts();
+    window.show();
+    window.focus();
+    window.webContents.focus();
+  }
+
+  private hideModeSelectorWindow(): void {
+    this.unregisterModeSelectorNavigationShortcuts();
+    this.modeSelectorWindow?.hide();
+  }
+
+  private isModeSelectorBlocked(): boolean {
+    return ["recording", "transcribing", "processing", "pasting"].includes(this.session.status);
+  }
+
+  private selectModeFromSelector(modeId: string): AppStateSnapshot {
+    if (this.isModeSelectorBlocked()) return this.getSnapshot();
+
+    const state = this.storage.getState();
+    const mode = state.modes.find((candidate) => candidate.id === modeId);
+    if (!mode) return this.getSnapshot();
+
+    this.storage.updateSettings({ activeModeId: mode.id });
+    this.session = { ...this.session, modeId: mode.id };
+    this.broadcastState();
+    this.hideModeSelectorWindow();
+    return this.getSnapshot();
+  }
+
+  private moveModeSelectorSelection(delta: number): ModeSelectorStateSnapshot {
+    if (this.isModeSelectorBlocked()) {
+      this.hideModeSelectorWindow();
+      return this.getModeSelectorSnapshot();
+    }
+
+    const state = this.storage.getState();
+    if (state.modes.length === 0) return this.getModeSelectorSnapshot();
+
+    const activeIndex = Math.max(
+      0,
+      state.modes.findIndex((mode) => mode.id === state.settings.activeModeId)
+    );
+    const direction = Math.sign(delta);
+    const nextIndex = wrapIndex(activeIndex + (direction === 0 ? 1 : direction), state.modes.length);
+    const nextMode = state.modes[nextIndex];
+    if (!nextMode) return this.getModeSelectorSnapshot();
+
+    this.storage.updateSettings({ activeModeId: nextMode.id });
+    this.session = { ...this.session, modeId: nextMode.id };
+    this.broadcastState();
+    const snapshot = this.getModeSelectorSnapshot(this.getSnapshot());
+    return snapshot;
+  }
+
   private notifyPasteFallback(message: string): void {
     if (!Notification.isSupported()) return;
     new Notification({
@@ -1109,6 +1293,44 @@ export class AppController {
     this.pillWindow.setAlwaysOnTop(true);
     this.pillWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     this.positionPillWindow();
+  }
+
+  private configureModeSelectorWindow(): void {
+    if (!this.modeSelectorWindow) return;
+    this.modeSelectorWindow.setFocusable(true);
+    this.modeSelectorWindow.setSkipTaskbar(true);
+    this.modeSelectorWindow.setAlwaysOnTop(true);
+    this.modeSelectorWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    this.positionModeSelectorWindow();
+  }
+
+  private registerModeSelectorNavigationShortcuts(): void {
+    this.unregisterModeSelectorNavigationShortcuts();
+
+    const registration = registerModeSelectorNavigationShortcuts(globalShortcut, {
+      hide: () => {
+        this.hideModeSelectorWindow();
+      },
+      next: () => {
+        if (!this.modeSelectorWindow?.isVisible()) return;
+        this.moveModeSelectorSelection(1);
+      },
+      previous: () => {
+        if (!this.modeSelectorWindow?.isVisible()) return;
+        this.moveModeSelectorSelection(-1);
+      }
+    });
+
+    if (registration.diagnostics.length > 0) {
+      console.warn(`Mode selector navigation shortcuts were not fully registered: ${registration.diagnostics.join(" ")}`);
+    }
+
+    this.modeSelectorNavigationShortcutCleanup = registration.unregister;
+  }
+
+  private unregisterModeSelectorNavigationShortcuts(): void {
+    this.modeSelectorNavigationShortcutCleanup?.();
+    this.modeSelectorNavigationShortcutCleanup = null;
   }
 
   private positionPillWindow(): void {
@@ -1132,6 +1354,20 @@ export class AppController {
     });
   }
 
+  private positionModeSelectorWindow(): void {
+    if (!this.modeSelectorWindow) return;
+
+    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    const { x, y, width, height } = display.workArea;
+
+    this.modeSelectorWindow.setBounds({
+      x: Math.round(x + (width - modeSelectorWindowSize) / 2),
+      y: Math.round(y + (height - modeSelectorWindowSize) / 2),
+      width: modeSelectorWindowSize,
+      height: modeSelectorWindowSize
+    });
+  }
+
   private getSnapshot(): AppStateSnapshot {
     const state = this.storage.getState();
     return {
@@ -1149,6 +1385,16 @@ export class AppController {
     };
   }
 
+  private getModeSelectorSnapshot(snapshot?: AppStateSnapshot): ModeSelectorStateSnapshot {
+    const state = snapshot ?? this.getSnapshot();
+    return {
+      theme: state.settings.theme,
+      modes: state.modes,
+      activeModeId: state.settings.activeModeId,
+      session: this.session
+    };
+  }
+
   private getCapabilities(): CapabilityReport {
     const contextFlags = this.context.getCapabilityFlags();
     const pasteCapability = this.textAutomation.getCapability();
@@ -1162,7 +1408,12 @@ export class AppController {
         pushToTalkRelease: this.hotkeyPushToTalkRelease,
         registered: this.hotkeyRegistered,
         triggerDescription: this.hotkeyTriggerDescription,
-        diagnostics: this.hotkeyDiagnostics
+        diagnostics: this.hotkeyDiagnostics,
+        modeSelector: {
+          registered: this.modeSelectorHotkeyRegistered,
+          triggerDescription: this.modeSelectorHotkeyTriggerDescription,
+          diagnostics: this.modeSelectorHotkeyDiagnostics
+        }
       },
       context: {
         backend: contextFlags.appMetadata ? "desktop_metadata" : "clipboard_fallback",
@@ -1191,8 +1442,10 @@ export class AppController {
 
   private broadcastState(): void {
     const snapshot = this.getSnapshot();
+    if (this.isModeSelectorBlocked()) this.hideModeSelectorWindow();
     this.mainWindow?.webContents.send("state:changed", snapshot);
     this.pillWindow?.webContents.send("pill-state:changed", this.getPillSnapshot(snapshot));
+    this.modeSelectorWindow?.webContents.send("mode-selector-state:changed", this.getModeSelectorSnapshot(snapshot));
   }
 }
 
@@ -1221,4 +1474,17 @@ function countWords(text: string): number {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function rendererQueryFromSuffix(suffix: string): Record<string, string> | undefined {
+  if (!suffix) return undefined;
+  const params = new URLSearchParams(suffix.startsWith("?") ? suffix.slice(1) : suffix);
+  const query: Record<string, string> = {};
+  for (const [key, value] of params) query[key] = value;
+  return Object.keys(query).length > 0 ? query : undefined;
+}
+
+function wrapIndex(index: number, length: number): number {
+  if (length <= 0) return 0;
+  return ((index % length) + length) % length;
 }

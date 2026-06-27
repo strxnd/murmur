@@ -4,12 +4,20 @@ import type { AppStateSnapshot, SttRuntimeInstallState } from "../../../shared/t
 import {
   activeReadyLocalVoiceModel,
   defaultOnboardingVoiceModelId,
+  localVoiceModelActiveAndReady,
+  onboardingLocalVoiceModels,
+  onboardingStepIds,
   onboardingSttReady,
   onboardingVoiceModel,
+  runtimeIdForVoiceModel,
   shouldAutoOpenOnboarding
 } from "./onboarding";
 
 describe("renderer onboarding helpers", () => {
+  it("uses the redesigned four-step wizard order", () => {
+    expect(onboardingStepIds).toEqual(["microphone", "stt", "transcription", "ready"]);
+  });
+
   it("auto-opens for a first run without usable STT", () => {
     expect(shouldAutoOpenOnboarding(state())).toBe(true);
   });
@@ -35,6 +43,16 @@ describe("renderer onboarding helpers", () => {
     expect(onboardingVoiceModel(state())?.id).toBe(defaultOnboardingVoiceModelId);
   });
 
+  it("limits onboarding STT choices to downloadable whisper.cpp and Sherpa ONNX voice models", () => {
+    const options = onboardingLocalVoiceModels(state());
+
+    expect(options.map((item) => item.id)).toContain(defaultOnboardingVoiceModelId);
+    expect(options.map((item) => item.id)).toContain("nvidia-parakeet-tdt-ctc-110m");
+    expect(options.map((item) => item.id)).not.toContain("openai-gpt-4o-transcribe");
+    expect(options.every((item) => item.kind === "voice" && !item.isCloud && item.downloadStrategy !== "none")).toBe(true);
+    expect(new Set(options.map((item) => runtimeIdForVoiceModel(item)))).toEqual(new Set(["whisper.cpp", "sherpa-onnx"]));
+  });
+
   it("recognizes an active downloaded local voice model as ready", () => {
     const snapshot = state({ runtimeStatus: "ready" });
     snapshot.modelLibrary = {
@@ -52,6 +70,7 @@ describe("renderer onboarding helpers", () => {
 
     expect(activeReadyLocalVoiceModel(snapshot)?.id).toBe("whisper-base-en");
     expect(onboardingVoiceModel(snapshot)?.id).toBe("whisper-base-en");
+    expect(localVoiceModelActiveAndReady(snapshot, onboardingVoiceModel(snapshot)!)).toBe(true);
     expect(onboardingSttReady(snapshot)).toBe(true);
   });
 
@@ -124,7 +143,11 @@ function state({
         backend: "electron_global_shortcut",
         pushToTalkRelease: false,
         registered: true,
-        diagnostics: []
+        diagnostics: [],
+        modeSelector: {
+          registered: true,
+          diagnostics: []
+        }
       },
       context: {
         backend: "clipboard_fallback",

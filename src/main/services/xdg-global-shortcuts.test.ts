@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { acceleratorToPortalTrigger, shortcutDescriptionForActivationMode, shortcutPropertiesForPortalVersion } from "./xdg-global-shortcuts";
+import {
+  acceleratorToPortalTrigger,
+  shortcutDescriptionForActivationMode,
+  shortcutDescriptionForModeSelector,
+  shortcutPropertiesForPortalVersion
+} from "./xdg-global-shortcuts";
 
 describe("acceleratorToPortalTrigger", () => {
   it("maps supported Electron accelerators to portal triggers", () => {
@@ -9,6 +14,7 @@ describe("acceleratorToPortalTrigger", () => {
     expect(acceleratorToPortalTrigger("CommandOrControl+Left")).toBe("CTRL+Left");
     expect(acceleratorToPortalTrigger("Shift+Return")).toBe("SHIFT+Return");
     expect(acceleratorToPortalTrigger("Alt+,")).toBe("ALT+comma");
+    expect(acceleratorToPortalTrigger("Alt+Shift+K")).toBe("ALT+SHIFT+k");
   });
 
   it("rejects unsupported accelerators", () => {
@@ -33,6 +39,7 @@ describe("shortcutDescriptionForActivationMode", () => {
   it("chooses the portal description for each activation mode", () => {
     expect(shortcutDescriptionForActivationMode("push_to_talk")).toBe("Push to talk with Murmur");
     expect(shortcutDescriptionForActivationMode("toggle")).toBe("Toggle Murmur recording");
+    expect(shortcutDescriptionForModeSelector()).toBe("Show Murmur mode selector");
   });
 });
 

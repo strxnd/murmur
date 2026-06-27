@@ -6,6 +6,7 @@ import type {
   LlmProviderConfig,
   ModelDownloadState,
   ModelLibrarySnapshot,
+  ModeSelectorStateSnapshot,
   ModeConfig,
   PillStateSnapshot,
   ProviderValidationResult,
@@ -23,6 +24,7 @@ const { contextBridge, ipcRenderer } = require("electron") as typeof import("ele
 const api = {
   getState: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("app:get-state"),
   getPillState: (): Promise<PillStateSnapshot> => ipcRenderer.invoke("app:get-pill-state"),
+  getModeSelectorState: (): Promise<ModeSelectorStateSnapshot> => ipcRenderer.invoke("app:get-mode-selector-state"),
   updateSettings: (patch: Partial<AppSettings>): Promise<AppStateSnapshot> => ipcRenderer.invoke("settings:update", patch),
   beginHotkeyCapture: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("hotkeys:capture-start"),
   endHotkeyCapture: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("hotkeys:capture-end"),
@@ -69,6 +71,9 @@ const api = {
   clearHistory: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("history:clear"),
   reprocessHistoryItem: (id: string): Promise<AppStateSnapshot> => ipcRenderer.invoke("history:reprocess", id),
   clearLocalData: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("data:clear-local"),
+  hideModeSelector: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("mode-selector:hide"),
+  selectModeFromSelector: (modeId: string): Promise<AppStateSnapshot> => ipcRenderer.invoke("mode-selector:select-mode", modeId),
+  moveModeSelectorSelection: (delta: number): Promise<ModeSelectorStateSnapshot> => ipcRenderer.invoke("mode-selector:move-selection", delta),
   onStateChanged: (callback: (state: AppStateSnapshot) => void) => {
     const listener = (_event: IpcRendererEvent, state: AppStateSnapshot): void => callback(state);
     ipcRenderer.on("state:changed", listener);
@@ -81,6 +86,13 @@ const api = {
     ipcRenderer.on("pill-state:changed", listener);
     return () => {
       ipcRenderer.removeListener("pill-state:changed", listener);
+    };
+  },
+  onModeSelectorStateChanged: (callback: (state: ModeSelectorStateSnapshot) => void) => {
+    const listener = (_event: IpcRendererEvent, state: ModeSelectorStateSnapshot): void => callback(state);
+    ipcRenderer.on("mode-selector-state:changed", listener);
+    return () => {
+      ipcRenderer.removeListener("mode-selector-state:changed", listener);
     };
   },
   onRecordingStart: (callback: (payload: RecordingStartPayload) => void) => {

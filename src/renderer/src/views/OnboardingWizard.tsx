@@ -5,17 +5,15 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
-  ClipboardPaste,
   Download,
   Keyboard,
   Loader2,
   Mic,
-  MessageSquareText,
   X,
   type LucideIcon
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type RefObject } from "react";
-import type { AppStateSnapshot, SttRuntimeInstallState } from "../../../shared/types";
+import type { AppStateSnapshot, ModelCatalogItem, SttRuntimeInstallState } from "../../../shared/types";
 import { ShortcutRecorder } from "../components/ShortcutRecorder";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -29,8 +27,9 @@ import { murmurClient } from "../lib/murmur-client";
 import {
   downloadForModel,
   formatBytes,
+  localVoiceModelActiveAndReady,
+  onboardingLocalVoiceModels,
   onboardingStepIds,
-  onboardingSttReady,
   onboardingVoiceModel,
   progressValue,
   runtimeIdForVoiceModel,
@@ -43,10 +42,9 @@ type DictationTestStatus = "idle" | "starting" | "recording" | "waiting" | "pass
 
 const stepMeta: Record<OnboardingStepId, { title: string; label: string; icon: LucideIcon }> = {
   microphone: { title: "Microphone Permission", label: "Microphone", icon: Mic },
-  stt: { title: "Speech Model", label: "Model", icon: Download },
-  hotkey: { title: "Activation Hotkey", label: "Hotkey", icon: Keyboard },
-  paste: { title: "Paste Capability", label: "Paste", icon: ClipboardPaste },
-  dictation: { title: "Test Dictation", label: "Test", icon: MessageSquareText }
+  stt: { title: "STT Model", label: "STT Model", icon: Download },
+  transcription: { title: "Hotkey & Test", label: "Hotkey & Test", icon: Keyboard },
+  ready: { title: "READY TO GO", label: "Ready", icon: CheckCircle2 }
 };
 
 export function OnboardingWizard({
@@ -60,26 +58,23 @@ export function OnboardingWizard({
 }): JSX.Element {
   const updateSettings = useMurmurStore((store) => store.updateSettings);
   const setupBundledStt = useMurmurStore((store) => store.setupBundledStt);
-  const testPaste = useMurmurStore((store) => store.testPaste);
   const activateMode = useMurmurStore((store) => store.activateMode);
   const startDictation = useMurmurStore((store) => store.startDictation);
   const stopDictation = useMurmurStore((store) => store.stopDictation);
   const cancelDictation = useMurmurStore((store) => store.cancelDictation);
   const [stepIndex, setStepIndex] = useState(0);
   const currentStep = onboardingStepIds[stepIndex];
+  const initialVoiceModelId = onboardingVoiceModel(state)?.id ?? "";
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedInputId, setSelectedInputId] = useState(state.settings.preferredAudioInputId ?? "");
   const [micStatus, setMicStatus] = useState<ProbeStatus>("idle");
   const [micMessage, setMicMessage] = useState("");
+  const [selectedVoiceModelId, setSelectedVoiceModelId] = useState(initialVoiceModelId);
   const [isSettingUpStt, setIsSettingUpStt] = useState(false);
   const [sttError, setSttError] = useState<string | null>(null);
   const [hotkey, setHotkey] = useState(state.settings.activationHotkey);
   const [isSavingHotkey, setIsSavingHotkey] = useState(false);
   const [hotkeyError, setHotkeyError] = useState<string | null>(null);
-  const [pasteStatus, setPasteStatus] = useState<ProbeStatus>("idle");
-  const [pasteMessage, setPasteMessage] = useState("");
-  const [pasteValue, setPasteValue] = useState("");
-  const pasteTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [dictationStatus, setDictationStatus] = useState<DictationTestStatus>("idle");
   const [dictationMessage, setDictationMessage] = useState("");
   const [dictationValue, setDictationValue] = useState("");
@@ -105,14 +100,12 @@ export function OnboardingWizard({
 
     setStepIndex(0);
     setSelectedInputId(state.settings.preferredAudioInputId ?? "");
+    setSelectedVoiceModelId(onboardingVoiceModel(state)?.id ?? "");
     setHotkey(state.settings.activationHotkey);
     setMicStatus("idle");
     setMicMessage("");
     setSttError(null);
     setHotkeyError(null);
-    setPasteStatus("idle");
-    setPasteMessage("");
-    setPasteValue("");
     setDictationStatus("idle");
     setDictationMessage("");
     setDictationValue("");
@@ -120,25 +113,34 @@ export function OnboardingWizard({
     previousModeIdRef.current = null;
     historyLengthBeforeDictationRef.current = state.history.length;
     void refreshAudioDevices();
-  }, [open, refreshAudioDevices, state.history.length, state.settings.activationHotkey, state.settings.preferredAudioInputId]);
+  }, [open, refreshAudioDevices, state, state.history.length, state.settings.activationHotkey, state.settings.preferredAudioInputId]);
 
-  const voiceModel = useMemo(() => onboardingVoiceModel(state), [state]);
+  const voiceModels = useMemo(() => onboardingLocalVoiceModels(state), [state]);
+  const voiceModel = useMemo(
+    () => voiceModels.find((item) => item.id === selectedVoiceModelId) ?? onboardingVoiceModel(state),
+    [selectedVoiceModelId, state, voiceModels]
+  );
+
+  useEffect(() => {
+    if (!open || !voiceModels.length || voiceModels.some((item) => item.id === selectedVoiceModelId)) return;
+    setSelectedVoiceModelId(onboardingVoiceModel(state)?.id ?? voiceModels[0]?.id ?? "");
+  }, [open, selectedVoiceModelId, state, voiceModels]);
+
   const download = voiceModel ? downloadForModel(state, voiceModel.id) : undefined;
   const runtimeId = voiceModel ? runtimeIdForVoiceModel(voiceModel) : null;
   const runtime = runtimeId ? state.sttSetup.runtimes[runtimeId] : undefined;
-  const sttReady = onboardingSttReady(state);
+  const selectedSttReady = voiceModel ? localVoiceModelActiveAndReady(state, voiceModel) : false;
   const hotkeyChanged = hotkey !== state.settings.activationHotkey;
   const hotkeyCanProceed = !hotkeyChanged && !isSavingHotkey;
+  const readyStepComplete = micStatus === "passed" && selectedSttReady && hotkeyCanProceed && dictationStatus === "passed";
   const currentStepCanProceed =
     currentStep === "microphone"
       ? micStatus === "passed"
       : currentStep === "stt"
-        ? sttReady
-        : currentStep === "hotkey"
-          ? hotkeyCanProceed
-          : currentStep === "paste"
-            ? pasteStatus === "passed" || pasteStatus === "warning"
-            : dictationStatus === "passed";
+        ? selectedSttReady
+        : currentStep === "transcription"
+          ? hotkeyCanProceed && dictationStatus === "passed"
+          : readyStepComplete;
   const dictationCloseBlocked =
     dictationPendingRef.current || dictationStatus === "starting" || dictationStatus === "recording" || dictationStatus === "waiting" || isActiveSessionStatus(state.session.status);
 
@@ -182,7 +184,7 @@ export function OnboardingWizard({
   };
 
   const goNext = async (): Promise<void> => {
-    if (currentStep === "dictation" && dictationStatus === "passed") {
+    if (currentStep === "ready" && readyStepComplete) {
       await finishOnboarding();
       return;
     }
@@ -245,29 +247,13 @@ export function OnboardingWizard({
     }
   };
 
-  const runPasteTest = async (): Promise<void> => {
-    const probe = `Murmur paste test ${Date.now()}`;
-    setPasteStatus("checking");
-    setPasteMessage("");
-    setPasteValue("");
-    await nextFrame();
-    pasteTextareaRef.current?.focus();
-    pasteTextareaRef.current?.select();
-
-    try {
-      const result = await testPaste(probe);
-      const inserted = await waitForTextareaValue(pasteTextareaRef, probe, 900);
-      if (result.pasted && inserted) {
-        setPasteStatus("passed");
-        setPasteMessage("Paste automation inserted the probe text.");
-      } else {
-        setPasteStatus("warning");
-        setPasteMessage(result.message || "Output was copied to the clipboard.");
-      }
-    } catch (error) {
-      setPasteStatus("warning");
-      setPasteMessage(errorMessage(error));
-    }
+  const selectVoiceModel = (modelId: string): void => {
+    if (modelId === selectedVoiceModelId) return;
+    setSelectedVoiceModelId(modelId);
+    setSttError(null);
+    setDictationStatus("idle");
+    setDictationMessage("");
+    setDictationValue("");
   };
 
   const restorePreviousMode = useCallback(async (): Promise<void> => {
@@ -276,20 +262,37 @@ export function OnboardingWizard({
     if (previousModeId) await activateMode(previousModeId);
   }, [activateMode]);
 
+  const prepareTranscriptionMode = useCallback(async (): Promise<void> => {
+    if (state.settings.activeModeId === "voice_to_text") return;
+    if (previousModeIdRef.current === null) previousModeIdRef.current = state.settings.activeModeId;
+    await activateMode("voice_to_text");
+  }, [activateMode, state.settings.activeModeId]);
+
+  useEffect(() => {
+    if (!open || currentStep !== "transcription" || !hotkeyCanProceed || !selectedSttReady) return;
+    void prepareTranscriptionMode().catch((error) => {
+      setDictationStatus("error");
+      setDictationMessage(errorMessage(error));
+    });
+  }, [currentStep, hotkeyCanProceed, open, prepareTranscriptionMode, selectedSttReady]);
+
+  useEffect(() => {
+    if (open && currentStep === "transcription") return;
+    if (dictationPendingRef.current) return;
+    void restorePreviousMode();
+  }, [currentStep, open, restorePreviousMode]);
+
   const startTestDictation = async (): Promise<void> => {
     setDictationStatus("starting");
     setDictationMessage("");
     setDictationValue("");
     historyLengthBeforeDictationRef.current = state.history.length;
-    previousModeIdRef.current = state.settings.activeModeId;
     dictationPendingRef.current = true;
     await nextFrame();
     dictationTextareaRef.current?.focus();
 
     try {
-      if (state.settings.activeModeId !== "voice_to_text") {
-        await activateMode("voice_to_text");
-      }
+      await prepareTranscriptionMode();
       await startDictation();
       setDictationStatus("recording");
       setDictationMessage("Recording.");
@@ -308,7 +311,24 @@ export function OnboardingWizard({
   };
 
   useEffect(() => {
+    if (!open || currentStep !== "transcription") return;
+    if (dictationPendingRef.current || state.session.status !== "recording") return;
+    dictationPendingRef.current = true;
+    historyLengthBeforeDictationRef.current = state.history.length;
+    setDictationStatus("recording");
+    setDictationMessage("Recording.");
+    setDictationValue("");
+    dictationTextareaRef.current?.focus();
+  }, [currentStep, open, state.history.length, state.session.id, state.session.status]);
+
+  useEffect(() => {
     if (!dictationPendingRef.current) return;
+
+    if (state.session.status === "transcribing" || state.session.status === "processing" || state.session.status === "pasting") {
+      setDictationStatus("waiting");
+      setDictationMessage("Transcribing.");
+      return;
+    }
 
     const newHistoryItem =
       state.history.length > historyLengthBeforeDictationRef.current ? state.history[0] : undefined;
@@ -317,6 +337,7 @@ export function OnboardingWizard({
 
     if (newHistoryItem || state.session.status === "complete") {
       dictationPendingRef.current = false;
+      setDictationValue(completedText);
       setDictationStatus(completedText.trim().length > 0 ? "passed" : "error");
       setDictationMessage(completedText.trim().length > 0 ? "Dictation produced text." : "No text was produced.");
       void restorePreviousMode();
@@ -335,7 +356,7 @@ export function OnboardingWizard({
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/70" />
-        <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] flex max-h-[calc(100vh-2rem)] w-[min(calc(100vw-2rem),58rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-md border border-border bg-surface shadow-2xl outline-none">
+        <Dialog.Popup className="fixed inset-0 z-[80] flex h-dvh w-dvw flex-col overflow-hidden border border-border bg-surface outline-none">
           <header className="flex items-start justify-between gap-4 border-b border-border p-4">
             <div className="min-w-0">
               <Dialog.Title className="m-0 text-base font-semibold text-foreground">First-Time Setup</Dialog.Title>
@@ -365,7 +386,16 @@ export function OnboardingWizard({
                     >
                       <Icon size={16} />
                       <span className="truncate">{stepMeta[stepId].label}</span>
-                      <StepStateIcon state={stepState(stepId, { micStatus, sttReady, hotkeyReady: state.capabilities.hotkeys.registered, pasteStatus, dictationStatus })} />
+                      <StepStateIcon
+                        state={stepState(stepId, {
+                          micStatus,
+                          sttReady: selectedSttReady,
+                          hotkeyReady: hotkeyCanProceed,
+                          hotkeyRegistered: state.capabilities.hotkeys.registered,
+                          dictationStatus,
+                          ready: readyStepComplete
+                        })}
+                      />
                     </button>
                   );
                 })}
@@ -387,19 +417,24 @@ export function OnboardingWizard({
                 )}
                 {currentStep === "stt" && (
                   <SttStep
-                    ready={sttReady}
-                    modelName={voiceModel?.name ?? "Whisper Tiny English"}
-                    modelSize={voiceModel?.sizeBytes}
+                    models={voiceModels}
+                    selectedModelId={voiceModel?.id ?? selectedVoiceModelId}
+                    activeModelId={state.modelLibrary.activeModelIds.voice}
+                    downloads={state.modelLibrary.downloads}
+                    runtimes={state.sttSetup.runtimes}
+                    ready={selectedSttReady}
+                    selectedModel={voiceModel}
                     downloadStatus={download?.status ?? "not_downloaded"}
                     downloadProgress={download ? progressValue(download.progressBytes, download.totalBytes) : null}
                     runtime={runtime}
                     setupError={sttError}
                     isSettingUp={isSettingUpStt}
+                    onSelectModel={selectVoiceModel}
                     onSetup={() => void setupLocalStt()}
                   />
                 )}
-                {currentStep === "hotkey" && (
-                  <HotkeyStep
+                {currentStep === "transcription" && (
+                  <HotkeyTestStep
                     value={hotkey}
                     changed={hotkeyChanged}
                     saving={isSavingHotkey}
@@ -408,32 +443,29 @@ export function OnboardingWizard({
                     backend={state.capabilities.hotkeys.backend}
                     triggerDescription={state.capabilities.hotkeys.triggerDescription}
                     diagnostics={state.capabilities.hotkeys.diagnostics}
-                    onChange={setHotkey}
-                    onSave={() => void saveHotkey()}
-                  />
-                )}
-                {currentStep === "paste" && (
-                  <PasteStep
-                    status={pasteStatus}
-                    message={pasteMessage}
-                    value={pasteValue}
-                    textareaRef={pasteTextareaRef}
-                    capability={state.capabilities.paste}
-                    onChange={setPasteValue}
-                    onTest={() => void runPasteTest()}
-                  />
-                )}
-                {currentStep === "dictation" && (
-                  <DictationStep
-                    status={dictationStatus}
-                    message={dictationMessage}
-                    value={dictationValue}
+                    dictationStatus={dictationStatus}
+                    dictationMessage={dictationMessage}
+                    dictationValue={dictationValue}
                     sessionStatus={state.session.status}
                     textareaRef={dictationTextareaRef}
-                    onChange={setDictationValue}
+                    onChange={setHotkey}
+                    onSave={() => void saveHotkey()}
+                    onDictationChange={setDictationValue}
                     onStart={() => void startTestDictation()}
                     onStop={() => void stopTestDictation()}
                     onCancel={() => void cancelDictation()}
+                  />
+                )}
+                {currentStep === "ready" && (
+                  <ReadyStep
+                    microphoneReady={micStatus === "passed"}
+                    modelName={voiceModel?.name ?? "No local STT model selected"}
+                    modelReady={selectedSttReady}
+                    hotkey={state.settings.activationHotkey}
+                    hotkeyReady={hotkeyCanProceed}
+                    hotkeyRegistered={state.capabilities.hotkeys.registered}
+                    transcriptionReady={dictationStatus === "passed"}
+                    transcript={dictationValue}
                   />
                 )}
               </div>
@@ -449,7 +481,7 @@ export function OnboardingWizard({
                 <ArrowLeft size={16} /> Back
               </Button>
               <Button variant="primary" onClick={() => void goNext()} disabled={!currentStepCanProceed}>
-                {currentStep === "dictation" ? (
+                {currentStep === "ready" ? (
                   <>
                     <Check size={16} /> Finish
                   </>
@@ -500,34 +532,87 @@ function MicrophoneStep({
 }
 
 function SttStep({
+  models,
+  selectedModelId,
+  activeModelId,
+  downloads,
+  runtimes,
   ready,
-  modelName,
-  modelSize,
+  selectedModel,
   downloadStatus,
   downloadProgress,
   runtime,
   setupError,
   isSettingUp,
+  onSelectModel,
   onSetup
 }: {
+  models: ModelCatalogItem[];
+  selectedModelId: string;
+  activeModelId?: string;
+  downloads: AppStateSnapshot["modelLibrary"]["downloads"];
+  runtimes: AppStateSnapshot["sttSetup"]["runtimes"];
   ready: boolean;
-  modelName: string;
-  modelSize?: number;
+  selectedModel: ModelCatalogItem | null;
   downloadStatus: string;
   downloadProgress: number | null;
   runtime?: SttRuntimeInstallState;
   setupError: string | null;
   isSettingUp: boolean;
+  onSelectModel: (modelId: string) => void;
   onSetup: () => void;
 }): JSX.Element {
   const runtimeBusy = runtime?.status === "downloading" || runtime?.status === "installing";
+  const selectedModelName = selectedModel?.name ?? "No local STT model selected";
+  const setupLabel = downloadStatus === "downloaded" ? "Activate" : "Download and activate";
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="grid gap-2">
+        {models.map((item) => {
+          const itemDownload = downloads.find((candidate) => candidate.modelId === item.id);
+          const itemRuntimeId = runtimeIdForVoiceModel(item);
+          const itemRuntime = itemRuntimeId ? runtimes[itemRuntimeId] : undefined;
+          const selected = item.id === selectedModelId;
+          const active = activeModelId === item.id;
+          const itemProgress = itemDownload ? progressValue(itemDownload.progressBytes, itemDownload.totalBytes) : null;
+
+          return (
+            <button
+              key={item.id}
+              type="button"
+              aria-pressed={selected}
+              onClick={() => onSelectModel(item.id)}
+              className={cn(
+                "min-w-0 rounded-md border p-3 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-foreground/25",
+                selected ? "border-foreground bg-muted/60" : "border-border bg-muted/20 hover:bg-muted/40"
+              )}
+            >
+              <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="m-0 truncate text-sm font-medium text-foreground">{item.name}</p>
+                  {item.description && <p className="m-0 mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description}</p>}
+                </div>
+                <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                  {active && <Badge tone="success">Active</Badge>}
+                  <Badge>{providerLabelForVoiceModel(item)}</Badge>
+                  {item.sizeBytes && <Badge>{formatBytes(item.sizeBytes)}</Badge>}
+                  <Badge tone={itemDownload?.status === "downloaded" ? "success" : "neutral"}>
+                    {downloadStatusLabel(itemDownload?.status ?? "not_downloaded")}
+                  </Badge>
+                  {itemRuntime && <Badge tone={itemRuntime.status === "ready" ? "success" : "warning"}>{itemRuntime.status}</Badge>}
+                </div>
+              </div>
+              {itemDownload?.status === "downloading" && <ProgressBar value={itemProgress} label={`${item.name} download progress`} className="mt-3" />}
+            </button>
+          );
+        })}
+      </div>
+      {models.length === 0 && <StatusMessage status="error">No downloadable local STT models were found in the voice catalog.</StatusMessage>}
       <div className="grid grid-cols-3 gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm max-[760px]:grid-cols-1">
-        <Metric label="Model" value={modelName} />
+        <Metric label="Model" value={selectedModelName} />
         <Metric label="Download" value={downloadStatusLabel(downloadStatus)} />
-        <Metric label="Size" value={modelSize ? formatBytes(modelSize) : "Managed"} />
+        <Metric label="Size" value={selectedModel?.sizeBytes ? formatBytes(selectedModel.sizeBytes) : "Managed"} />
       </div>
       {runtime && (
         <div className="flex flex-col gap-2 rounded-md border border-border bg-muted/30 p-3">
@@ -539,11 +624,11 @@ function SttStep({
           {runtimeBusy && <ProgressBar value={progressValue(runtime.progressBytes, runtime.totalBytes)} label={`${runtime.label} runtime progress`} />}
         </div>
       )}
-      {downloadStatus === "downloading" && <ProgressBar value={downloadProgress} label={`${modelName} download progress`} />}
+      {downloadStatus === "downloading" && <ProgressBar value={downloadProgress} label={`${selectedModelName} download progress`} />}
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" onClick={onSetup} disabled={ready || isSettingUp}>
+        <Button variant="primary" onClick={onSetup} disabled={!selectedModel || ready || isSettingUp}>
           {isSettingUp ? <Loader2 className="animate-spin" size={18} /> : <Download size={18} />}
-          {ready ? "Ready" : isSettingUp ? "Setting up..." : "Download and activate"}
+          {ready ? "Ready" : isSettingUp ? "Setting up..." : setupLabel}
         </Button>
         <StatusBadge status={ready ? "passed" : setupError ? "error" : "idle"} />
       </div>
@@ -552,7 +637,7 @@ function SttStep({
   );
 }
 
-function HotkeyStep({
+function HotkeyTestStep({
   value,
   changed,
   saving,
@@ -561,8 +646,17 @@ function HotkeyStep({
   backend,
   triggerDescription,
   diagnostics,
+  dictationStatus,
+  dictationMessage,
+  dictationValue,
+  sessionStatus,
+  textareaRef,
   onChange,
-  onSave
+  onSave,
+  onDictationChange,
+  onStart,
+  onStop,
+  onCancel
 }: {
   value: string;
   changed: boolean;
@@ -572,9 +666,21 @@ function HotkeyStep({
   backend: AppStateSnapshot["capabilities"]["hotkeys"]["backend"];
   triggerDescription?: string;
   diagnostics: string[];
+  dictationStatus: DictationTestStatus;
+  dictationMessage: string;
+  dictationValue: string;
+  sessionStatus: AppStateSnapshot["session"]["status"];
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
   onChange: (value: string) => void;
   onSave: () => void;
+  onDictationChange: (value: string) => void;
+  onStart: () => void;
+  onStop: () => void;
+  onCancel: () => void;
 }): JSX.Element {
+  const recording = sessionStatus === "recording" || dictationStatus === "recording";
+  const busy = dictationStatus === "starting" || dictationStatus === "waiting" || ["transcribing", "processing", "pasting"].includes(sessionStatus);
+
   return (
     <div className="flex flex-col gap-4">
       <Field label="Activation shortcut">
@@ -600,85 +706,15 @@ function HotkeyStep({
       </div>
       {error && <StatusMessage status="error">{error}</StatusMessage>}
       {!registered && diagnostics.length > 0 && <StatusMessage status="warning">{diagnostics.join(" ")}</StatusMessage>}
-    </div>
-  );
-}
-
-function PasteStep({
-  status,
-  message,
-  value,
-  textareaRef,
-  capability,
-  onChange,
-  onTest
-}: {
-  status: ProbeStatus;
-  message: string;
-  value: string;
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
-  capability: AppStateSnapshot["capabilities"]["paste"];
-  onChange: (value: string) => void;
-  onTest: () => void;
-}): JSX.Element {
-  return (
-    <div className="flex flex-col gap-4">
-      <Textarea
-        ref={textareaRef}
-        value={value}
-        onChange={(event) => onChange(event.currentTarget.value)}
-        placeholder="Paste test target"
-        className="min-h-24"
-      />
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" onClick={onTest} disabled={status === "checking"}>
-          {status === "checking" ? <Loader2 className="animate-spin" size={18} /> : <ClipboardPaste size={18} />}
-          {status === "checking" ? "Testing..." : "Test paste"}
-        </Button>
-        <StatusBadge status={status} />
-      </div>
-      <div className="grid grid-cols-2 gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm max-[640px]:grid-cols-1">
-        <Metric label="Backend" value={backendLabel(capability.backend)} />
-        <Metric label="Automation" value={capability.automationAvailable ? "Available" : "Clipboard fallback"} />
-      </div>
-      {message && <StatusMessage status={status}>{message}</StatusMessage>}
-    </div>
-  );
-}
-
-function DictationStep({
-  status,
-  message,
-  value,
-  sessionStatus,
-  textareaRef,
-  onChange,
-  onStart,
-  onStop,
-  onCancel
-}: {
-  status: DictationTestStatus;
-  message: string;
-  value: string;
-  sessionStatus: AppStateSnapshot["session"]["status"];
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
-  onChange: (value: string) => void;
-  onStart: () => void;
-  onStop: () => void;
-  onCancel: () => void;
-}): JSX.Element {
-  const recording = sessionStatus === "recording" || status === "recording";
-  const busy = status === "starting" || status === "waiting" || ["transcribing", "processing", "pasting"].includes(sessionStatus);
-
-  return (
-    <div className="flex flex-col gap-4">
-      <Textarea
-        ref={textareaRef}
-        value={value}
-        onChange={(event) => onChange(event.currentTarget.value)}
-        placeholder="Dictation output target"
-        className="min-h-32"
-      />
+      <Field label="Transcript test">
+        <Textarea
+          ref={textareaRef}
+          value={dictationValue}
+          onChange={(event) => onDictationChange(event.currentTarget.value)}
+          placeholder="Transcription output"
+          className="min-h-32"
+        />
+      </Field>
       <div className="flex flex-wrap items-center gap-2">
         {recording ? (
           <>
@@ -690,14 +726,71 @@ function DictationStep({
             </Button>
           </>
         ) : (
-          <Button variant="primary" onClick={onStart} disabled={busy}>
+          <Button variant="primary" onClick={onStart} disabled={changed || saving || busy}>
             {busy ? <Loader2 className="animate-spin" size={18} /> : <Mic size={18} />}
             {busy ? "Working..." : "Start test"}
           </Button>
         )}
-        <StatusBadge status={status === "passed" ? "passed" : status === "error" ? "error" : busy || recording ? "checking" : "idle"} />
+        <StatusBadge status={dictationStatus === "passed" ? "passed" : dictationStatus === "error" ? "error" : busy || recording ? "checking" : "idle"} />
       </div>
-      {message && <StatusMessage status={status === "error" ? "error" : status === "passed" ? "passed" : "idle"}>{message}</StatusMessage>}
+      {dictationMessage && (
+        <StatusMessage status={dictationStatus === "error" ? "error" : dictationStatus === "passed" ? "passed" : "idle"}>
+          {dictationMessage}
+        </StatusMessage>
+      )}
+    </div>
+  );
+}
+
+function ReadyStep({
+  microphoneReady,
+  modelName,
+  modelReady,
+  hotkey,
+  hotkeyReady,
+  hotkeyRegistered,
+  transcriptionReady,
+  transcript
+}: {
+  microphoneReady: boolean;
+  modelName: string;
+  modelReady: boolean;
+  hotkey: string;
+  hotkeyReady: boolean;
+  hotkeyRegistered: boolean;
+  transcriptionReady: boolean;
+  transcript: string;
+}): JSX.Element {
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid gap-2">
+        <ReadyItem ready={microphoneReady} label="Microphone ready" />
+        <ReadyItem ready={modelReady} label={`STT model active: ${modelName}`} />
+        <ReadyItem ready={hotkeyReady} warning={!hotkeyRegistered} label={`Hotkey saved: ${hotkey}`} />
+        <ReadyItem ready={transcriptionReady} label="Transcription test produced text" />
+      </div>
+      {transcript.trim().length > 0 && (
+        <div className="rounded-md border border-border bg-muted/30 p-3">
+          <p className="m-0 text-xs font-medium text-muted-foreground">Transcript</p>
+          <p className="m-0 mt-1 whitespace-pre-wrap text-sm leading-6 text-foreground">{transcript}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReadyItem({ ready, warning = false, label }: { ready: boolean; warning?: boolean; label: string }): JSX.Element {
+  const status: "passed" | "warning" | "idle" = ready ? (warning ? "warning" : "passed") : "idle";
+  return (
+    <div className="flex min-w-0 items-center gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
+      {status === "passed" ? (
+        <CheckCircle2 size={14} className="shrink-0" />
+      ) : status === "warning" ? (
+        <AlertTriangle size={14} className="shrink-0" />
+      ) : (
+        <span className="h-2 w-2 shrink-0 rounded-full bg-current opacity-30" />
+      )}
+      <span className="min-w-0 flex-1 truncate text-foreground">{label}</span>
     </div>
   );
 }
@@ -745,15 +838,20 @@ function stepState(
     micStatus: ProbeStatus;
     sttReady: boolean;
     hotkeyReady: boolean;
-    pasteStatus: ProbeStatus;
+    hotkeyRegistered: boolean;
     dictationStatus: DictationTestStatus;
+    ready: boolean;
   }
 ): "idle" | "passed" | "warning" | "error" {
   if (stepId === "microphone") return state.micStatus === "passed" ? "passed" : state.micStatus === "error" ? "error" : "idle";
   if (stepId === "stt") return state.sttReady ? "passed" : "idle";
-  if (stepId === "hotkey") return state.hotkeyReady ? "passed" : "warning";
-  if (stepId === "paste") return state.pasteStatus === "passed" ? "passed" : state.pasteStatus === "warning" ? "warning" : "idle";
-  return state.dictationStatus === "passed" ? "passed" : state.dictationStatus === "error" ? "error" : "idle";
+  if (stepId === "transcription") {
+    if (state.dictationStatus === "error") return "error";
+    if (state.dictationStatus === "passed" && state.hotkeyReady) return state.hotkeyRegistered ? "passed" : "warning";
+    if (state.hotkeyReady && !state.hotkeyRegistered) return "warning";
+    return "idle";
+  }
+  return state.ready ? "passed" : "idle";
 }
 
 function downloadStatusLabel(status: string): string {
@@ -780,25 +878,18 @@ function backendLabel(backend: string): string {
   return labels[backend] ?? backend;
 }
 
+function providerLabelForVoiceModel(item: ModelCatalogItem): string {
+  if (item.defaultProviderConfig?.sttProviderType === "whisper_cpp") return "whisper.cpp";
+  if (item.defaultProviderConfig?.sttProviderType === "sherpa_onnx") return "Sherpa ONNX";
+  return item.provider;
+}
+
 function isActiveSessionStatus(status: AppStateSnapshot["session"]["status"]): boolean {
   return status === "recording" || status === "transcribing" || status === "processing" || status === "pasting";
 }
 
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
-}
-
-async function waitForTextareaValue(
-  textareaRef: RefObject<HTMLTextAreaElement | null>,
-  expected: string,
-  timeoutMs: number
-): Promise<boolean> {
-  const startedAt = performance.now();
-  while (performance.now() - startedAt < timeoutMs) {
-    if (textareaRef.current?.value.includes(expected)) return true;
-    await new Promise((resolve) => window.setTimeout(resolve, 40));
-  }
-  return Boolean(textareaRef.current?.value.includes(expected));
 }
 
 function errorMessage(error: unknown): string {

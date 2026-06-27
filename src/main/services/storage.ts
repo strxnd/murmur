@@ -83,6 +83,7 @@ const appSettingKeys = [
   "activeModeId",
   "activationMode",
   "activationHotkey",
+  "modeSelectorHotkey",
   "recordingPillPosition",
   "preferredAudioInputId",
   "typingBaselineWpm",

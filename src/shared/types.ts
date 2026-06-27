@@ -4,6 +4,7 @@ export type ModeIconKey = "mic" | "message-square" | "mail" | "notebook-pen" | "
 export type SttStreamingMode = "none" | "completed_audio_sse" | "live_realtime";
 export type ActivationMode = "toggle" | "push_to_talk";
 export type RecordingPillPosition = "bottom_left" | "bottom_center" | "bottom_right";
+export type GlobalShortcutActionId = "activation" | "mode-selector";
 
 export type TranscriptionProviderType =
   | "whisper_cpp"
@@ -227,6 +228,7 @@ export interface AppSettings {
   activeModeId: string;
   activationMode: ActivationMode;
   activationHotkey: string;
+  modeSelectorHotkey: string;
   recordingPillPosition: RecordingPillPosition;
   preferredAudioInputId?: string;
   typingBaselineWpm: number;
@@ -320,6 +322,19 @@ export interface PillStateSnapshot {
   theme: AppSettings["theme"];
 }
 
+export interface ModeSelectorStateSnapshot {
+  theme: AppSettings["theme"];
+  modes: ModeConfig[];
+  activeModeId: string;
+  session: DictationSession;
+}
+
+export interface HotkeyActionCapability {
+  registered: boolean;
+  triggerDescription?: string;
+  diagnostics: string[];
+}
+
 export interface CapabilityReport {
   sttRuntimes: Record<SttRuntimeId, SttRuntimeAvailability>;
   stt: {
@@ -331,6 +346,7 @@ export interface CapabilityReport {
     registered: boolean;
     triggerDescription?: string;
     diagnostics: string[];
+    modeSelector: HotkeyActionCapability;
   };
   context: {
     backend: "desktop_metadata" | "clipboard_fallback";

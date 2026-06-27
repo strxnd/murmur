@@ -32,6 +32,7 @@ Important settings:
 - `pasteMethod`: currently normalized to `clipboard_restore`.
 - `activationMode`: `toggle` or `push_to_talk`.
 - `activationHotkey`: Electron accelerator string.
+- `modeSelectorHotkey`: Electron accelerator string for the centered mode selector overlay.
 - `recordingPillPosition`: `bottom_left`, `bottom_center`, or `bottom_right`.
 
 ## Modes

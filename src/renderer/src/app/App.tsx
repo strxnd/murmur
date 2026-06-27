@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useState, type JSX } from "react";
-import type { AppSettings, PillStateSnapshot } from "../../../shared/types";
+import type { AppSettings, ModeSelectorStateSnapshot, PillStateSnapshot } from "../../../shared/types";
 import { useMurmurStore } from "../state/murmur-store";
 import { useRecordingBridge } from "../hooks/useRecordingBridge";
 import { murmurClient } from "../lib/murmur-client";
 import { AppShell } from "./AppShell";
+import { ModeSelectorOverlay } from "./ModeSelectorOverlay";
 import { RecordingPill } from "./RecordingPill";
 
 const systemDarkQuery = "(prefers-color-scheme: dark)";
@@ -13,6 +14,7 @@ let themeTransitionSuppressionFrame: number | null = null;
 export function App(): JSX.Element {
   const searchParams = new URLSearchParams(window.location.search);
 
+  if (searchParams.has("mode-selector")) return <ModeSelectorApp />;
   return searchParams.has("pill") ? <PillApp /> : <MainApp />;
 }
 
@@ -33,7 +35,7 @@ function MainApp(): JSX.Element {
     return applyTheme(snapshot.settings.theme);
   }, [snapshot?.settings.theme]);
 
-  useWindowKind(false);
+  useWindowKind("main");
   useRecordingBridge(true);
 
   if (status === "error") {
@@ -80,7 +82,7 @@ function PillApp(): JSX.Element {
     return applyTheme(snapshot.theme);
   }, [snapshot?.theme]);
 
-  useWindowKind(true);
+  useWindowKind("pill");
 
   if (error) {
     return <div className="grid min-h-screen place-items-center p-2 text-xs text-danger">{error}</div>;
@@ -93,19 +95,65 @@ function PillApp(): JSX.Element {
   return <RecordingPill state={snapshot} />;
 }
 
-function useWindowKind(isPill: boolean): void {
+function ModeSelectorApp(): JSX.Element {
+  const [snapshot, setSnapshot] = useState<ModeSelectorStateSnapshot | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = murmurClient.onModeSelectorStateChanged((state) => {
+      if (active) setSnapshot(state);
+    });
+
+    void murmurClient
+      .getModeSelectorState()
+      .then((state) => {
+        if (active) {
+          setSnapshot(state);
+          setError(null);
+        }
+      })
+      .catch((reason) => {
+        if (active) setError(errorMessage(reason));
+      });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!snapshot) return undefined;
+    return applyTheme(snapshot.theme);
+  }, [snapshot?.theme]);
+
+  useWindowKind("mode-selector");
+
+  if (error) {
+    return <div className="grid min-h-screen place-items-center p-2 text-xs text-danger">{error}</div>;
+  }
+
+  if (!snapshot) {
+    return <div className="grid min-h-screen place-items-center p-2 text-xs text-muted-foreground">Loading Murmur...</div>;
+  }
+
+  return <ModeSelectorOverlay state={snapshot} />;
+}
+
+function useWindowKind(kind: "main" | "pill" | "mode-selector"): void {
   useLayoutEffect(() => {
     const root = document.documentElement;
-    if (isPill) {
-      root.dataset.window = "pill";
-    } else if (root.dataset.window === "pill") {
+    if (kind === "main") {
       delete root.dataset.window;
+    } else {
+      root.dataset.window = kind;
     }
 
     return () => {
-      if (root.dataset.window === "pill") delete root.dataset.window;
+      if (root.dataset.window === kind) delete root.dataset.window;
     };
-  }, [isPill]);
+  }, [kind]);
 }
 
 function applyTheme(theme: AppSettings["theme"]): () => void {

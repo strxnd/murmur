@@ -3,9 +3,9 @@ import { hasUsableSttPath } from "./stt-setup";
 
 export const defaultOnboardingVoiceModelId = "whisper-tiny-en";
 
-export type OnboardingStepId = "microphone" | "stt" | "hotkey" | "paste" | "dictation";
+export type OnboardingStepId = "microphone" | "stt" | "transcription" | "ready";
 
-export const onboardingStepIds: OnboardingStepId[] = ["microphone", "stt", "hotkey", "paste", "dictation"];
+export const onboardingStepIds: OnboardingStepId[] = ["microphone", "stt", "transcription", "ready"];
 
 export function shouldAutoOpenOnboarding(state: AppStateSnapshot): boolean {
   if (state.settings.onboardingCompletedAt || state.settings.onboardingSkippedAt) return false;
@@ -15,11 +15,25 @@ export function shouldAutoOpenOnboarding(state: AppStateSnapshot): boolean {
 export function onboardingVoiceModel(state: AppStateSnapshot): ModelCatalogItem | null {
   const readyLocalModel = activeReadyLocalVoiceModel(state);
   if (readyLocalModel) return readyLocalModel;
-  return state.modelLibrary.catalog.find((item) => item.id === defaultOnboardingVoiceModelId) ?? null;
+  return onboardingLocalVoiceModels(state).find((item) => item.id === defaultOnboardingVoiceModelId) ?? onboardingLocalVoiceModels(state)[0] ?? null;
 }
 
 export function onboardingSttReady(state: AppStateSnapshot): boolean {
   return Boolean(activeReadyLocalVoiceModel(state)) || hasUsableSttPath(state);
+}
+
+export function onboardingLocalVoiceModels(state: AppStateSnapshot): ModelCatalogItem[] {
+  return state.modelLibrary.catalog.filter(isOnboardingLocalVoiceModel);
+}
+
+export function isOnboardingLocalVoiceModel(item: ModelCatalogItem): boolean {
+  return (
+    item.kind === "voice" &&
+    !item.isCloud &&
+    item.isOffline &&
+    item.downloadStrategy !== "none" &&
+    Boolean(runtimeIdForVoiceModel(item))
+  );
 }
 
 export function activeReadyLocalVoiceModel(state: AppStateSnapshot): ModelCatalogItem | null {
@@ -37,6 +51,10 @@ export function localVoiceModelReady(state: AppStateSnapshot, item: ModelCatalog
   if (runtimeId && !runtimeReady(state, runtimeId)) return false;
   if (item.downloadStrategy === "none") return true;
   return downloadForModel(state, item.id)?.status === "downloaded";
+}
+
+export function localVoiceModelActiveAndReady(state: AppStateSnapshot, item: ModelCatalogItem): boolean {
+  return state.modelLibrary.activeModelIds.voice === item.id && localVoiceModelReady(state, item);
 }
 
 export function runtimeIdForVoiceModel(item: ModelCatalogItem): SttRuntimeId | null {

@@ -32,6 +32,7 @@ const editableSettingsKeys = [
   "textRetentionDays",
   "activationMode",
   "activationHotkey",
+  "modeSelectorHotkey",
   "recordingPillPosition",
   "preferredAudioInputId",
   "typingBaselineWpm"
@@ -56,7 +57,7 @@ const recordingPillPositionItems: Array<SelectItem<ConfigurationFormValues["sett
   { value: "bottom_left", label: "Bottom left" }
 ];
 
-type ShortcutSettingPath = "settings.activationHotkey";
+type ShortcutSettingPath = "settings.activationHotkey" | "settings.modeSelectorHotkey";
 
 export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.Element {
   const updateSettings = useMurmurStore((store) => store.updateSettings);
@@ -81,7 +82,10 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
   const [clearDataConfirmation, setClearDataConfirmation] = useState("");
   const [isClearingLocalData, setIsClearingLocalData] = useState(false);
   const [clearDataError, setClearDataError] = useState<string | null>(null);
-  const actionableHotkeyDiagnostics = state.capabilities.hotkeys.diagnostics.filter(isActionableHotkeyDiagnostic);
+  const actionableHotkeyDiagnostics = [
+    ...state.capabilities.hotkeys.diagnostics,
+    ...state.capabilities.hotkeys.modeSelector.diagnostics
+  ].filter(isActionableHotkeyDiagnostic);
   const audioInputItems: Array<SelectItem<string>> = [
     { value: "", label: "System default" },
     ...devices.map((device) => ({
@@ -240,6 +244,9 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
               <Field label="Activation shortcut" error={form.formState.errors.settings?.activationHotkey?.message}>
                 <FormShortcutRecorder control={form.control} name="settings.activationHotkey" />
               </Field>
+              <Field label="Mode selector shortcut" error={form.formState.errors.settings?.modeSelectorHotkey?.message}>
+                <FormShortcutRecorder control={form.control} name="settings.modeSelectorHotkey" />
+              </Field>
               {actionableHotkeyDiagnostics.length > 0 && (
                 <p className="col-span-full m-0 text-xs leading-5 text-muted-foreground">
                   {actionableHotkeyDiagnostics.join(" ")}
@@ -324,6 +331,7 @@ function isActionableHotkeyDiagnostic(message: string): boolean {
 
   if (message === "Keyboard shortcut recording is active.") return true;
   if (message.startsWith("Global activation shortcut is not registered: ")) return true;
+  if (message.startsWith("Global mode selector shortcut is not registered: ")) return true;
   if (/^Unable to register .+ hotkey globally: /.test(message)) return true;
   if (/^Invalid .+ hotkey ".+": /.test(message)) return true;
   if (normalized.includes("does not support activation shortcut")) return true;
