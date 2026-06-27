@@ -13,6 +13,7 @@ import { modelCatalog } from "./model-catalog";
 export const defaultSettings: AppSettings = {
   theme: "dark",
   textRetentionDays: 90,
+  shareContextWithCloudLlm: false,
   selectedTextCapture: "clipboard_restore",
   pasteMethod: "clipboard_restore",
   activeModeId: "default",
@@ -22,6 +23,8 @@ export const defaultSettings: AppSettings = {
   recordingPillPosition: "bottom_center",
   typingBaselineWpm: 40
 };
+
+export const maxRecordingDurationMs = 10 * 60 * 1000;
 
 export const defaultSession: DictationSession = {
   id: "idle",

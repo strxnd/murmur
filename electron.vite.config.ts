@@ -33,11 +33,6 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(__dirname, "src/renderer"),
-    plugins: [react(), tailwindcss()],
-    resolve: {
-      alias: {
-        "next/font/local": resolve(__dirname, "src/renderer/src/lib/next-font-local.ts")
-      }
-    }
+    plugins: [react(), tailwindcss()]
   }
 });

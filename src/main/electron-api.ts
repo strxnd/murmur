@@ -10,4 +10,5 @@ export const nativeImage = electronApi.nativeImage;
 export const nativeTheme = electronApi.nativeTheme;
 export const Notification = electronApi.Notification;
 export const screen = electronApi.screen;
+export const safeStorage = electronApi.safeStorage;
 export const Tray = electronApi.Tray;

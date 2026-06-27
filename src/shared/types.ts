@@ -135,6 +135,7 @@ export interface ModelCatalogItem {
   downloadUrl?: string;
   filename?: string;
   extractDir?: string;
+  sha256?: string;
   ollamaModel?: string;
   discovery?: {
     providerId: string;
@@ -223,6 +224,7 @@ export interface VocabularyEntry {
 export interface AppSettings {
   theme: "system" | "light" | "dark";
   textRetentionDays: number;
+  shareContextWithCloudLlm: boolean;
   selectedTextCapture: "disabled" | "clipboard_restore";
   pasteMethod: "clipboard_restore" | "clipboard_only";
   activeModeId: string;

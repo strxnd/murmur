@@ -14,6 +14,7 @@ import { Field } from "../components/ui/Field";
 import { Input } from "../components/ui/Input";
 import { Panel } from "../components/ui/Panel";
 import { Select, type SelectItem } from "../components/ui/Select";
+import { Switch } from "../components/ui/Switch";
 import { useAudioDevices } from "../hooks/useAudioDevices";
 import { murmurClient } from "../lib/murmur-client";
 import { useMurmurStore } from "../state/murmur-store";
@@ -30,6 +31,7 @@ const clearLocalDataConfirmationPhrase = "CLEAR LOCAL DATA";
 const editableSettingsKeys = [
   "theme",
   "textRetentionDays",
+  "shareContextWithCloudLlm",
   "activationMode",
   "activationHotkey",
   "modeSelectorHotkey",
@@ -59,7 +61,13 @@ const recordingPillPositionItems: Array<SelectItem<ConfigurationFormValues["sett
 
 type ShortcutSettingPath = "settings.activationHotkey" | "settings.modeSelectorHotkey";
 
-export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.Element {
+export function ConfigurationView({
+  state,
+  onUnsavedChangesChange
+}: {
+  state: AppStateSnapshot;
+  onUnsavedChangesChange?: (hasUnsavedChanges: boolean) => void;
+}): JSX.Element {
   const updateSettings = useMurmurStore((store) => store.updateSettings);
   const clearLocalData = useMurmurStore((store) => store.clearLocalData);
   const devices = useAudioDevices();
@@ -98,6 +106,23 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
   };
   const hasUnsavedChanges = hasConfigurationChanges(currentValues, persistedValuesRef.current);
   const canClearLocalData = clearDataConfirmation.trim() === clearLocalDataConfirmationPhrase;
+
+  useEffect(() => {
+    onUnsavedChangesChange?.(hasUnsavedChanges);
+    return () => onUnsavedChangesChange?.(false);
+  }, [hasUnsavedChanges, onUnsavedChangesChange]);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return undefined;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent): void => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   useEffect(() => {
     if (hasUnsavedChanges) {
@@ -267,6 +292,18 @@ export function ConfigurationView({ state }: { state: AppStateSnapshot }): JSX.E
             <Field label="Typing baseline WPM" error={form.formState.errors.settings?.typingBaselineWpm?.message}>
               <Input type="number" min={1} {...form.register("settings.typingBaselineWpm", { valueAsNumber: true })} />
             </Field>
+            <Controller
+              control={form.control}
+              name="settings.shareContextWithCloudLlm"
+              render={({ field }) => (
+                <Switch
+                  className="col-span-full rounded-md border border-border bg-muted/30 px-3 py-2"
+                  label="Share context with cloud LLMs"
+                  checked={Boolean(field.value)}
+                  onCheckedChange={field.onChange}
+                />
+              )}
+            />
           </div>
         </Panel>
 

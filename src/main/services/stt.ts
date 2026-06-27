@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { isAbsolute, join } from "node:path";
 import type {
@@ -11,7 +11,8 @@ import type {
   TranscriptionResult
 } from "../../shared/types";
 import type { AppPaths } from "./app-paths";
-import { fetchWithTimeout, extractTextFromTranscriptionResponse, joinUrl, parseJsonOrText } from "./http";
+import { ensureOwnerOnlyDirectory, ensureOwnerOnlyFile, ownerOnlyFileMode } from "./app-paths";
+import { fetchWithTimeout, extractTextFromTranscriptionResponse, joinUrl, parseJsonOrText, readResponseBody, readResponseText } from "./http";
 import { SttRuntimeService, type ResolvedSttRuntime } from "./stt-runtime";
 
 interface TranscribeOptions {
@@ -37,7 +38,9 @@ interface WhisperServerProcess {
 
 const bundledWhisperCppRuntimeUrl = "murmur://runtime/whisper.cpp";
 const transcriptionTimeoutMs = 120000;
+const transcriptionIdleTimeoutMs = 30000;
 const whisperServerIdleShutdownMs = 10 * 60 * 1000;
+const maxRuntimeDiagnosticsChars = 16000;
 
 export class TranscriptionService {
   private whisperServer: WhisperServerProcess | null = null;
@@ -172,12 +175,14 @@ export class TranscriptionService {
     if (options.language && options.language !== "auto") form.append("language", options.language);
     if (options.vocabularyPrompt) form.append("prompt", options.vocabularyPrompt);
 
-    const response = await fetchWithTimeout(endpoint, { method: "POST", body: form }, transcriptionTimeoutMs);
+    const timeouts = transcriptionHttpTimeouts();
+    const response = await fetchWithTimeout(endpoint, { method: "POST", body: form }, timeouts.totalTimeoutMs);
     if (!response.ok) {
-      throw new Error(`whisper.cpp transcription failed with HTTP ${response.status}: ${await response.text()}`);
+      const body = await readResponseText(response, { ...timeouts, label: "whisper.cpp error" });
+      throw new Error(`whisper.cpp transcription failed with HTTP ${response.status}: ${body}`);
     }
 
-    const data = await parseJsonOrText(response);
+    const data = await parseJsonOrText(response, { ...timeouts, label: "whisper.cpp transcription" });
     return {
       text: extractTextFromTranscriptionResponse(data),
       providerId: options.provider.id,
@@ -227,6 +232,7 @@ export class TranscriptionService {
       form.append("stream", "true");
     }
 
+    const timeouts = transcriptionHttpTimeouts();
     const response = await fetchWithTimeout(
       endpoint,
       {
@@ -234,15 +240,16 @@ export class TranscriptionService {
         headers: this.authHeaders(options.provider),
         body: form
       },
-      transcriptionTimeoutMs
+      timeouts.totalTimeoutMs
     );
 
     if (!response.ok) {
-      throw new Error(`STT failed with HTTP ${response.status}: ${await response.text()}`);
+      const body = await readResponseText(response, { ...timeouts, label: "STT error" });
+      throw new Error(`STT failed with HTTP ${response.status}: ${body}`);
     }
 
     if (streamingMode === "completed_audio_sse" && response.body) {
-      const text = await this.readSseTranscript(response, options.onDelta);
+      const text = await this.readSseTranscript(response, options.onDelta, timeouts);
       return {
         text,
         providerId: options.provider.id,
@@ -251,7 +258,7 @@ export class TranscriptionService {
       };
     }
 
-    const data = await parseJsonOrText(response);
+    const data = await parseJsonOrText(response, { ...timeouts, label: "STT transcription" });
     return {
       text: extractTextFromTranscriptionResponse(data),
       providerId: options.provider.id,
@@ -274,15 +281,16 @@ export class TranscriptionService {
     const baseUrl = `http://127.0.0.1:${port}`;
     const args = buildWhisperServerArgs(port, modelPath);
     const child = spawn(runtime.binaryPath, args, { stdio: ["pipe", "pipe", "pipe"], env: runtime.env, cwd: runtime.cwd });
-    let output = "";
+    const stdout = new BoundedTextBuffer(maxRuntimeDiagnosticsChars);
+    const stderr = new BoundedTextBuffer(maxRuntimeDiagnosticsChars);
 
     child.stdout.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-      this.lastRuntimeDiagnostics = runtimeDiagnostics("whisper.cpp", output, "");
+      stdout.append(chunk.toString());
+      this.lastRuntimeDiagnostics = runtimeDiagnostics("whisper.cpp", stdout.text(), stderr.text());
     });
     child.stderr.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-      this.lastRuntimeDiagnostics = runtimeDiagnostics("whisper.cpp", "", output);
+      stderr.append(chunk.toString());
+      this.lastRuntimeDiagnostics = runtimeDiagnostics("whisper.cpp", stdout.text(), stderr.text());
     });
     child.on("close", () => {
       if (this.whisperServer?.process === child) this.whisperServer = null;
@@ -290,8 +298,8 @@ export class TranscriptionService {
 
     this.whisperServer = { key, runtimeId: "whisper.cpp", baseUrl, process: child };
     await waitForHttp(baseUrl, child, () => {
-      this.lastRuntimeDiagnostics = runtimeDiagnostics("whisper.cpp", output, output);
-      return output;
+      this.lastRuntimeDiagnostics = runtimeDiagnostics("whisper.cpp", stdout.text(), stderr.text());
+      return [stdout.text(), stderr.text()].filter(Boolean).join("\n");
     });
     this.scheduleWhisperServerIdleShutdown();
     return baseUrl;
@@ -327,9 +335,10 @@ export class TranscriptionService {
   }
 
   private writeTempAudio(audio: Uint8Array, extension: string): string {
-    mkdirSync(this.paths.tempDir, { recursive: true });
+    ensureOwnerOnlyDirectory(this.paths.tempDir);
     const path = join(this.paths.tempDir, `dictation-${Date.now()}-${randomUUID()}.${extension}`);
-    writeFileSync(path, audio);
+    writeFileSync(path, audio, { mode: ownerOnlyFileMode });
+    ensureOwnerOnlyFile(path);
     return path;
   }
 
@@ -342,21 +351,22 @@ export class TranscriptionService {
     return provider.streamingMode;
   }
 
-  private async readSseTranscript(response: Response, onDelta?: (delta: string) => void): Promise<string> {
-    const reader = response.body?.getReader();
-    if (!reader) return "";
-
+  private async readSseTranscript(
+    response: Response,
+    onDelta: ((delta: string) => void) | undefined,
+    timeouts: { totalTimeoutMs: number; idleTimeoutMs: number }
+  ): Promise<string> {
     const decoder = new TextDecoder();
     let buffer = "";
     let transcript = "";
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
+    const consumeEvents = (final = false): void => {
       const events = buffer.split("\n\n");
       buffer = events.pop() ?? "";
+      if (final && buffer.trim()) {
+        events.push(buffer);
+        buffer = "";
+      }
 
       for (const event of events) {
         const dataLines = event
@@ -382,7 +392,18 @@ export class TranscriptionService {
           }
         }
       }
-    }
+    };
+
+    await readResponseBody(
+      response,
+      (chunk) => {
+        buffer += decoder.decode(chunk, { stream: true });
+        consumeEvents();
+      },
+      { ...timeouts, label: "STT SSE" }
+    );
+    buffer += decoder.decode();
+    consumeEvents(true);
 
     return transcript.trim();
   }
@@ -400,6 +421,20 @@ export class TranscriptionService {
     if (mimeType.includes("ogg")) return "dictation.ogg";
     if (mimeType.includes("mp4")) return "dictation.m4a";
     return "dictation.webm";
+  }
+}
+
+export class BoundedTextBuffer {
+  private value = "";
+
+  constructor(private readonly limit: number) {}
+
+  append(chunk: string): void {
+    this.value = tail(`${this.value}${chunk}`, this.limit);
+  }
+
+  text(): string {
+    return this.value;
   }
 }
 
@@ -568,6 +603,18 @@ function runtimeReadyTimeoutMs(): number {
   return Number.isFinite(value) && value > 0 ? value : 45000;
 }
 
+function transcriptionHttpTimeouts(): { totalTimeoutMs: number; idleTimeoutMs: number } {
+  return {
+    totalTimeoutMs: envPositiveInteger("MURMUR_PROVIDER_RESPONSE_TIMEOUT_MS", transcriptionTimeoutMs),
+    idleTimeoutMs: envPositiveInteger("MURMUR_PROVIDER_RESPONSE_IDLE_TIMEOUT_MS", transcriptionIdleTimeoutMs)
+  };
+}
+
+function envPositiveInteger(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 function runtimeDiagnostics(label: string, stdout: string, stderr: string): string[] {
   return [
     stdout.trim() ? `${label} stdout: ${tail(stdout)}` : "",
@@ -575,6 +622,6 @@ function runtimeDiagnostics(label: string, stdout: string, stderr: string): stri
   ].filter(Boolean);
 }
 
-function tail(value: string): string {
-  return value.trim().slice(-2000);
+function tail(value: string, length = 2000): string {
+  return value.trim().slice(-length);
 }

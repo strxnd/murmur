@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   defaultAutoModeRules,
   defaultLlmProviders,
@@ -30,7 +30,8 @@ import type {
   TranscriptionProviderConfig,
   VocabularyEntry
 } from "../../shared/types";
-import type { AppPaths } from "./app-paths";
+import { ensureOwnerOnlyDirectory, ensureOwnerOnlyFile, ownerOnlyFileMode, type AppPaths } from "./app-paths";
+import { ProviderSecretStore, secretIdForProvider, type ProviderSecretCodec, type ProviderSecretKind } from "./provider-secrets";
 
 interface PersistedConfigState {
   settings: AppSettings;
@@ -60,6 +61,7 @@ interface LegacySettings extends Partial<AppSettings> {
 
 const removedSoundVolumeSettingKey = ["auto", "Increase", "Mic", "Volume"].join("");
 const require = createRequire(import.meta.url);
+const retentionDayMs = 24 * 60 * 60 * 1000;
 const removedLegacyModeIds = new Set(["meeting", "super", "custom"]);
 const legacyModeIdMap = new Map([["email", "mail"]]);
 const modeIconKeys = new Set<ModeIconKey>(["mic", "message-square", "mail", "notebook-pen", "sliders-horizontal"]);
@@ -78,6 +80,7 @@ const recordingPillPositions = new Set<RecordingPillPosition>(["bottom_left", "b
 const appSettingKeys = [
   "theme",
   "textRetentionDays",
+  "shareContextWithCloudLlm",
   "selectedTextCapture",
   "pasteMethod",
   "activeModeId",
@@ -112,18 +115,22 @@ const customModeDefaults: ModeConfig = {
 export class StorageService {
   private db: any | null = null;
   private backendDiagnostic = "";
+  private providerSecrets: ProviderSecretStore;
   backend: "sqlite" | "json" = "json";
 
   constructor(
     private paths: AppPaths,
-    private loadSqlite: () => { DatabaseSync: new (path: string) => any } = () => require("node:sqlite")
+    private loadSqlite: () => { DatabaseSync: new (path: string) => any } = () => require("node:sqlite"),
+    providerSecretCodec?: ProviderSecretCodec
   ) {
-    mkdirSync(paths.configDir, { recursive: true });
-    mkdirSync(paths.dataDir, { recursive: true });
-    mkdirSync(paths.cacheDir, { recursive: true });
-    mkdirSync(paths.tempDir, { recursive: true });
-    mkdirSync(paths.audioDir, { recursive: true });
+    this.providerSecrets = new ProviderSecretStore(paths.providerSecretsPath, providerSecretCodec);
+    ensureOwnerOnlyDirectory(paths.configDir);
+    ensureOwnerOnlyDirectory(paths.dataDir);
+    ensureOwnerOnlyDirectory(paths.cacheDir);
+    ensureOwnerOnlyDirectory(paths.tempDir);
+    ensureOwnerOnlyDirectory(paths.audioDir);
     this.open();
+    this.migrateProviderSecrets();
   }
 
   getDiagnostics(): string[] {
@@ -131,14 +138,22 @@ export class StorageService {
   }
 
   getState(): PersistedState {
-    const state = this.readState();
+    const state = this.normalizeState(this.readState());
+    const retention = this.applyTextRetention(state);
+    if (retention.removed.length > 0) {
+      return this.writeState(retention.state, retention.removed);
+    }
+    return retention.state;
+  }
+
+  private normalizeState(state: Partial<PersistedState>): PersistedState {
     const modes = this.normalizeModes(state.modes);
     const settings = this.normalizeSettings(state.settings, modes);
     return {
       settings,
       modes,
-      transcriptionProviders: this.normalizeTranscriptionProviders(state.transcriptionProviders),
-      llmProviders: this.normalizeLlmProviders(state.llmProviders),
+      transcriptionProviders: this.redactTranscriptionProviderSecrets(this.normalizeTranscriptionProviders(state.transcriptionProviders)),
+      llmProviders: this.redactLlmProviderSecrets(this.normalizeLlmProviders(state.llmProviders)),
       autoModeRules: this.normalizeAutoModeRules(state.autoModeRules ?? defaultAutoModeRules, modes),
       vocabulary: state.vocabulary ?? [],
       history: state.history ?? [],
@@ -156,50 +171,59 @@ export class StorageService {
   updateSettings(patch: Partial<AppSettings>): PersistedState {
     const state = this.getState();
     state.settings = { ...state.settings, ...patch };
-    this.writeState(state);
-    return state;
+    return this.writeState(state);
   }
 
   setModes(modes: ModeConfig[]): PersistedState {
     const state = this.getState();
     state.modes = modes;
-    this.writeState(state);
-    return state;
+    return this.writeState(state);
   }
 
   setTranscriptionProviders(providers: TranscriptionProviderConfig[]): PersistedState {
     const state = this.getState();
-    state.transcriptionProviders = this.normalizeTranscriptionProviders(providers);
-    this.writeState(state);
-    return state;
+    state.transcriptionProviders = this.redactTranscriptionProviderSecrets(this.normalizeTranscriptionProviders(providers));
+    this.providerSecrets.pruneKind(
+      "stt",
+      new Set(state.transcriptionProviders.map((provider) => provider.apiKeySecretId ?? secretIdForProvider("stt", provider.id)))
+    );
+    return this.writeState(state);
   }
 
   setLlmProviders(providers: LlmProviderConfig[]): PersistedState {
     const state = this.getState();
-    state.llmProviders = this.normalizeLlmProviders(providers);
-    this.writeState(state);
-    return state;
+    state.llmProviders = this.redactLlmProviderSecrets(this.normalizeLlmProviders(providers));
+    this.providerSecrets.pruneKind(
+      "llm",
+      new Set(state.llmProviders.map((provider) => provider.apiKeySecretId ?? secretIdForProvider("llm", provider.id)))
+    );
+    return this.writeState(state);
+  }
+
+  resolveTranscriptionProviderSecret(provider: TranscriptionProviderConfig): TranscriptionProviderConfig {
+    return this.resolveProviderSecret("stt", provider);
+  }
+
+  resolveLlmProviderSecret(provider: LlmProviderConfig): LlmProviderConfig {
+    return this.resolveProviderSecret("llm", provider);
   }
 
   setAutoModeRules(rules: AutoModeRule[]): PersistedState {
     const state = this.getState();
     state.autoModeRules = rules;
-    this.writeState(state);
-    return state;
+    return this.writeState(state);
   }
 
   setVocabulary(entries: VocabularyEntry[]): PersistedState {
     const state = this.getState();
     state.vocabulary = entries;
-    this.writeState(state);
-    return state;
+    return this.writeState(state);
   }
 
   setModelLibrary(modelLibrary: ModelLibrarySnapshot): PersistedState {
     const state = this.getState();
     state.modelLibrary = this.normalizeModelLibrary(modelLibrary);
-    this.writeState(state);
-    return state;
+    return this.writeState(state);
   }
 
   upsertModelDownload(download: ModelDownloadState): PersistedState {
@@ -210,8 +234,7 @@ export class StorageService {
       downloads: [download, ...downloads],
       activeModelIds: state.modelLibrary.activeModelIds
     });
-    this.writeState(state);
-    return state;
+    return this.writeState(state);
   }
 
   deleteModelDownload(modelId: string): PersistedState {
@@ -221,8 +244,7 @@ export class StorageService {
       downloads: state.modelLibrary.downloads.filter((download) => download.modelId !== modelId),
       activeModelIds: state.modelLibrary.activeModelIds
     });
-    this.writeState(state);
-    return state;
+    return this.writeState(state);
   }
 
   setActiveModel(kind: ModelKind, modelId: string | undefined): PersistedState {
@@ -234,54 +256,46 @@ export class StorageService {
         [kind]: modelId
       }
     });
-    this.writeState(state);
-    return state;
+    return this.writeState(state);
   }
 
   addHistory(item: DictationHistoryItem): PersistedState {
     const state = this.getState();
     state.history = [item, ...state.history].slice(0, 2000);
-    this.writeState(state);
-    return state;
+    return this.writeState(state);
   }
 
   updateHistoryItem(id: string, patch: Partial<DictationHistoryItem>): PersistedState {
     const state = this.getState();
     state.history = state.history.map((item) => (item.id === id ? { ...item, ...patch } : item));
-    this.writeState(state);
-    return state;
+    return this.writeState(state);
   }
 
   deleteHistory(id: string): PersistedState {
     const state = this.getState();
     const deleted = state.history.find((item) => item.id === id);
-    if (deleted) this.deleteRetainedAudio(deleted.audioPath);
     state.history = state.history.filter((item) => item.id !== id);
-    this.writeState(state);
-    return state;
+    return this.writeState(state, deleted ? [deleted] : []);
   }
 
   clearHistory(): PersistedState {
     const state = this.getState();
-    for (const item of state.history) {
-      this.deleteRetainedAudio(item.audioPath);
-    }
+    const removed = state.history;
     state.history = [];
-    this.writeState(state);
-    return state;
+    return this.writeState(state, removed);
   }
 
   clearLocalData(): PersistedState {
     const state: PersistedState = this.defaults();
     this.closeDatabase();
     rmSync(this.paths.configPath, { force: true });
+    this.providerSecrets.clear();
     rmSync(this.paths.historyDbPath, { force: true });
     rmSync(this.paths.historyJsonPath, { force: true });
     rmSync(this.paths.audioDir, { recursive: true, force: true });
-    mkdirSync(this.paths.audioDir, { recursive: true });
+    ensureOwnerOnlyDirectory(this.paths.audioDir);
     this.open();
-    this.writeState(state);
-    return state;
+    return this.writeState(state);
   }
 
   private open(): void {
@@ -289,6 +303,7 @@ export class StorageService {
     try {
       const { DatabaseSync } = this.loadSqlite();
       this.db = new DatabaseSync(this.paths.historyDbPath);
+      ensureOwnerOnlyFile(this.paths.historyDbPath);
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS dictations (
           id TEXT PRIMARY KEY,
@@ -365,48 +380,65 @@ export class StorageService {
     }
   }
 
-  private writeState(state: PersistedState): void {
-    this.writeConfig(toConfigState(state));
-    this.writeHistory(state.history);
+  private writeState(state: PersistedState, removedAfterWrite: DictationHistoryItem[] = []): PersistedState {
+    const retention = this.applyTextRetention(state);
+    this.writeConfig(toConfigState(retention.state));
+    this.writeHistory(retention.state.history);
+    for (const item of [...removedAfterWrite, ...retention.removed]) {
+      this.deleteRetainedAudio(item.audioPath);
+    }
+    return retention.state;
   }
 
   private writeConfig(state: PersistedConfigState): void {
-    mkdirSync(dirname(this.paths.configPath), { recursive: true });
-    writeFileSync(this.paths.configPath, JSON.stringify(state, null, 2));
+    ensureOwnerOnlyDirectory(dirname(this.paths.configPath));
+    writeJsonAtomic(this.paths.configPath, state);
+    ensureOwnerOnlyFile(this.paths.configPath);
   }
 
   private writeHistory(history: DictationHistoryItem[]): void {
     if (this.backend === "sqlite" && this.db) {
-      this.db.exec("DELETE FROM dictations; DELETE FROM dictations_fts;");
-      const insert = this.db.prepare(`
-        INSERT INTO dictations
-        (id, created_at, mode_name, app_name, window_title, raw_transcript, processed_output, data)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      const insertFts = this.db.prepare(`
-        INSERT INTO dictations_fts
-        (id, raw_transcript, processed_output, mode_name, app_name, window_title)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `);
-      for (const item of history) {
-        insert.run(
-          item.id,
-          item.createdAt,
-          item.modeName,
-          item.appName ?? "",
-          item.windowTitle ?? "",
-          item.rawTranscript,
-          item.processedOutput,
-          JSON.stringify(item)
-        );
-        insertFts.run(
-          item.id,
-          item.rawTranscript,
-          item.processedOutput,
-          item.modeName,
-          item.appName ?? "",
-          item.windowTitle ?? ""
-        );
+      this.db.exec("BEGIN IMMEDIATE;");
+      try {
+        this.db.exec("DELETE FROM dictations; DELETE FROM dictations_fts;");
+        const insert = this.db.prepare(`
+          INSERT INTO dictations
+          (id, created_at, mode_name, app_name, window_title, raw_transcript, processed_output, data)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        const insertFts = this.db.prepare(`
+          INSERT INTO dictations_fts
+          (id, raw_transcript, processed_output, mode_name, app_name, window_title)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `);
+        for (const item of history) {
+          insert.run(
+            item.id,
+            item.createdAt,
+            item.modeName,
+            item.appName ?? "",
+            item.windowTitle ?? "",
+            item.rawTranscript,
+            item.processedOutput,
+            JSON.stringify(item)
+          );
+          insertFts.run(
+            item.id,
+            item.rawTranscript,
+            item.processedOutput,
+            item.modeName,
+            item.appName ?? "",
+            item.windowTitle ?? ""
+          );
+        }
+        this.db.exec("COMMIT;");
+      } catch (error) {
+        try {
+          this.db.exec("ROLLBACK;");
+        } catch {
+          // Preserve the original write failure.
+        }
+        throw error;
       }
       return;
     }
@@ -415,8 +447,62 @@ export class StorageService {
   }
 
   private writeHistoryJson(history: DictationHistoryItem[]): void {
-    mkdirSync(dirname(this.paths.historyJsonPath), { recursive: true });
-    writeFileSync(this.paths.historyJsonPath, JSON.stringify(history, null, 2));
+    ensureOwnerOnlyDirectory(dirname(this.paths.historyJsonPath));
+    writeJsonAtomic(this.paths.historyJsonPath, history);
+    ensureOwnerOnlyFile(this.paths.historyJsonPath);
+  }
+
+  private migrateProviderSecrets(): void {
+    const config = this.readConfig();
+    const modes = this.normalizeModes(config.modes);
+    const nextConfig: PersistedConfigState = {
+      settings: this.normalizeSettings(config.settings, modes),
+      modes,
+      transcriptionProviders: this.redactTranscriptionProviderSecrets(this.normalizeTranscriptionProviders(config.transcriptionProviders)),
+      llmProviders: this.redactLlmProviderSecrets(this.normalizeLlmProviders(config.llmProviders)),
+      autoModeRules: this.normalizeAutoModeRules(config.autoModeRules ?? defaultAutoModeRules, modes),
+      vocabulary: config.vocabulary ?? [],
+      modelLibrary: this.normalizeModelLibrary(config.modelLibrary),
+      releaseNotes: this.normalizeReleaseNotes(config.releaseNotes)
+    };
+
+    if (config.transcriptionProviders || config.llmProviders) {
+      this.writeConfig(nextConfig);
+    }
+  }
+
+  private redactTranscriptionProviderSecrets(providers: TranscriptionProviderConfig[]): TranscriptionProviderConfig[] {
+    return providers.map((provider) => this.redactProviderSecret("stt", provider));
+  }
+
+  private redactLlmProviderSecrets(providers: LlmProviderConfig[]): LlmProviderConfig[] {
+    return providers.map((provider) => this.redactProviderSecret("llm", provider));
+  }
+
+  private redactProviderSecret<T extends TranscriptionProviderConfig | LlmProviderConfig>(kind: ProviderSecretKind, provider: T): T {
+    const secretId = provider.apiKeySecretId ?? secretIdForProvider(kind, provider.id);
+    const apiKey = typeof provider.apiKey === "string" ? provider.apiKey.trim() : undefined;
+
+    if (apiKey) {
+      this.providerSecrets.set(secretId, apiKey);
+      const redacted = { ...provider, apiKeySecretId: secretId };
+      delete redacted.apiKey;
+      return redacted;
+    }
+
+    if (provider.apiKey === "" && !provider.apiKeySecretId) {
+      this.providerSecrets.delete(secretId);
+    }
+
+    const redacted = { ...provider };
+    delete redacted.apiKey;
+    return redacted;
+  }
+
+  private resolveProviderSecret<T extends TranscriptionProviderConfig | LlmProviderConfig>(kind: ProviderSecretKind, provider: T): T {
+    if (provider.apiKey?.trim()) return provider;
+    const apiKey = this.providerSecrets.get(provider.apiKeySecretId ?? secretIdForProvider(kind, provider.id));
+    return apiKey ? { ...provider, apiKey } : provider;
   }
 
   private closeDatabase(): void {
@@ -435,6 +521,18 @@ export class StorageService {
     } catch {
       // Legacy linked audio cleanup should not block history mutations.
     }
+  }
+
+  private applyTextRetention(state: PersistedState): { state: PersistedState; removed: DictationHistoryItem[] } {
+    const { retained, removed } = retainHistoryItems(state.history, state.settings.textRetentionDays);
+    if (removed.length === 0) return { state, removed };
+    return {
+      state: {
+        ...state,
+        history: retained
+      },
+      removed
+    };
   }
 
   private defaults(): PersistedState {
@@ -479,6 +577,9 @@ export class StorageService {
     normalized.typingBaselineWpm = Number.isFinite(normalized.typingBaselineWpm)
       ? Math.max(1, normalized.typingBaselineWpm)
       : defaultSettings.typingBaselineWpm;
+    normalized.textRetentionDays = Number.isFinite(normalized.textRetentionDays)
+      ? Math.max(0, Math.floor(normalized.textRetentionDays))
+      : defaultSettings.textRetentionDays;
     return normalized;
   }
 
@@ -638,6 +739,68 @@ export class StorageService {
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function retainHistoryItems(
+  history: DictationHistoryItem[],
+  textRetentionDays: number
+): { retained: DictationHistoryItem[]; removed: DictationHistoryItem[] } {
+  if (!Number.isFinite(textRetentionDays)) return { retained: history, removed: [] };
+  if (textRetentionDays === 0) return { retained: [], removed: history };
+
+  const cutoff = Date.now() - Math.floor(textRetentionDays) * retentionDayMs;
+  const retained: DictationHistoryItem[] = [];
+  const removed: DictationHistoryItem[] = [];
+
+  for (const item of history) {
+    const createdAtMs = Date.parse(item.createdAt);
+    if (!Number.isFinite(createdAtMs) || createdAtMs >= cutoff) {
+      retained.push(item);
+    } else {
+      removed.push(item);
+    }
+  }
+
+  return { retained, removed };
+}
+
+function writeJsonAtomic(path: string, value: unknown): void {
+  const dir = dirname(path);
+  const tempPath = join(dir, `.${basename(path)}.${process.pid}.${Date.now()}.tmp`);
+  let fd: number | null = null;
+
+  try {
+    ensureOwnerOnlyDirectory(dir);
+    fd = openSync(tempPath, "w", ownerOnlyFileMode);
+    writeFileSync(fd, `${JSON.stringify(value, null, 2)}\n`);
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = null;
+    renameSync(tempPath, path);
+    fsyncDirectory(dir);
+  } catch (error) {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        // Preserve the original write failure.
+      }
+    }
+    rmSync(tempPath, { force: true });
+    throw error;
+  }
+}
+
+function fsyncDirectory(path: string): void {
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, "r");
+    fsyncSync(fd);
+  } catch {
+    // Directory fsync is a durability improvement where supported; rename atomicity is still preserved.
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
 }
 
 function toConfigState(state: PersistedState): PersistedConfigState {

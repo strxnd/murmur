@@ -27,6 +27,7 @@ import {
   applyLlmProviderType,
   applyTranscriptionProviderType,
   cloudCredentialApiKey,
+  cloudCredentialConfigured,
   cloudCredentialProviders,
   cloudCredentialValidationProviders,
   cloneProvidersFormValues,
@@ -489,7 +490,7 @@ function CloudCredentialRow({
   onDismissValidation: (providerId: CloudCredentialProviderId) => void;
 }): JSX.Element {
   const apiKey = cloudCredentialApiKey(provider.id, values);
-  const configured = apiKey.trim().length > 0;
+  const configured = cloudCredentialConfigured(provider.id, values);
 
   return (
     <div className="grid grid-cols-[minmax(10rem,13rem)_minmax(12rem,1fr)_auto] items-end gap-3 px-3 py-3 max-[760px]:grid-cols-1 max-[760px]:items-stretch">

@@ -1,4 +1,6 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -91,8 +93,14 @@ describe("ModelLibraryService", () => {
     const snapshot = await service.activateModel(item.id);
 
     expect(snapshot.activeModelIds.language).toBe(item.id);
-    expect(storage.getState().transcriptionProviders.find((provider) => provider.id === "openai-stt")?.apiKey).toBe("sk-test");
-    expect(storage.getState().llmProviders.find((provider) => provider.id === "openai-llm")?.apiKey).toBe("sk-test");
+    const sttProvider = storage.getState().transcriptionProviders.find((provider) => provider.id === "openai-stt");
+    const llmProvider = storage.getState().llmProviders.find((provider) => provider.id === "openai-llm");
+    expect(sttProvider?.apiKey).toBeUndefined();
+    expect(llmProvider?.apiKey).toBeUndefined();
+    expect(sttProvider?.apiKeySecretId).toBeTruthy();
+    expect(llmProvider?.apiKeySecretId).toBeTruthy();
+    expect(sttProvider ? storage.resolveTranscriptionProviderSecret(sttProvider).apiKey : undefined).toBe("sk-test");
+    expect(llmProvider ? storage.resolveLlmProviderSecret(llmProvider).apiKey : undefined).toBe("sk-test");
   });
 
   it("delete clears the active model", async () => {
@@ -114,7 +122,9 @@ describe("ModelLibraryService", () => {
     const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en");
     if (!item) throw new Error("Missing whisper-tiny-en catalog item.");
     const originalUrl = item.downloadUrl;
+    const originalSha256 = item.sha256;
     item.downloadUrl = server.url;
+    item.sha256 = sha256("model-bytes");
 
     try {
       const snapshot = await service.downloadModel("whisper-tiny-en");
@@ -126,6 +136,125 @@ describe("ModelLibraryService", () => {
       expect(readFileSync(expectedPath, "utf8")).toBe("model-bytes");
     } finally {
       item.downloadUrl = originalUrl;
+      item.sha256 = originalSha256;
+      await closeServer(server.server);
+    }
+  });
+
+  it("rejects direct file hash mismatches without activating partial artifacts", async () => {
+    const { service, paths } = setup("available");
+    const server = await modelServer("tampered-model-bytes");
+    const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en");
+    if (!item) throw new Error("Missing whisper-tiny-en catalog item.");
+    const originalUrl = item.downloadUrl;
+    const originalSha256 = item.sha256;
+    item.downloadUrl = server.url;
+    item.sha256 = sha256("expected-model-bytes");
+
+    try {
+      const snapshot = await service.downloadModel("whisper-tiny-en");
+      const download = snapshot.downloads.find((candidate) => candidate.modelId === "whisper-tiny-en");
+      const expectedPath = join(paths.modelDir, "ggml-tiny.en.bin");
+
+      expect(download?.status).toBe("error");
+      expect(download?.error).toContain("SHA-256 mismatch");
+      expect(existsSync(expectedPath)).toBe(false);
+      expect(existsSync(`${expectedPath}.part`)).toBe(false);
+    } finally {
+      item.downloadUrl = originalUrl;
+      item.sha256 = originalSha256;
+      await closeServer(server.server);
+    }
+  });
+
+  it("times out stalled direct file bodies after response headers", async () => {
+    const paths = testPaths();
+    const storage = new StorageService(paths);
+    const server = await stalledBodyServer(64);
+    const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en");
+    if (!item) throw new Error("Missing whisper-tiny-en catalog item.");
+    const originalUrl = item.downloadUrl;
+    item.downloadUrl = server.url;
+    const service = new ModelLibraryService(paths, storage, () => undefined, fakeRuntimeService("available"), {
+      downloadBodyTimeoutMs: 20
+    });
+
+    try {
+      const snapshot = await service.downloadModel("whisper-tiny-en");
+      const download = snapshot.downloads.find((candidate) => candidate.modelId === "whisper-tiny-en");
+      const expectedPath = join(paths.modelDir, "ggml-tiny.en.bin");
+
+      expect(download?.status).toBe("error");
+      expect(download?.error).toContain("response body");
+      expect(existsSync(expectedPath)).toBe(false);
+      expect(existsSync(`${expectedPath}.part`)).toBe(false);
+    } finally {
+      item.downloadUrl = originalUrl;
+      await closeServer(server.server);
+    }
+  });
+
+  it("throttles direct file download progress emissions", async () => {
+    const paths = testPaths();
+    const storage = new StorageService(paths);
+    const body = Array.from({ length: 64 }, () => "x").join("");
+    const server = await chunkedModelServer(body, 1);
+    const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en");
+    if (!item) throw new Error("Missing whisper-tiny-en catalog item.");
+    const originalUrl = item.downloadUrl;
+    const originalSha256 = item.sha256;
+    item.downloadUrl = server.url;
+    item.sha256 = sha256(body);
+    const progressEvents: number[] = [];
+    const service = new ModelLibraryService(
+      paths,
+      storage,
+      (download) => {
+        if (download.modelId === "whisper-tiny-en" && download.status === "downloading") {
+          progressEvents.push(download.progressBytes);
+        }
+      },
+      fakeRuntimeService("available"),
+      { progressEmitIntervalMs: 60_000 }
+    );
+
+    try {
+      const snapshot = await service.downloadModel("whisper-tiny-en");
+      const download = snapshot.downloads.find((candidate) => candidate.modelId === "whisper-tiny-en");
+
+      expect(download?.status).toBe("downloaded");
+      expect(progressEvents.length).toBeLessThan(64);
+      expect(progressEvents).toContain(64);
+    } finally {
+      item.downloadUrl = originalUrl;
+      item.sha256 = originalSha256;
+      await closeServer(server.server);
+    }
+  });
+
+  it("rejects archive downloads with unsafe member paths before extraction", async () => {
+    const { service, paths } = setup("available");
+    const archive = unsafeTarBz2();
+    const server = await binaryModelServer(archive);
+    const item = modelCatalog.find((candidate) => candidate.id === "nvidia-parakeet-tdt-ctc-110m");
+    if (!item) throw new Error("Missing Parakeet catalog item.");
+    const originalUrl = item.downloadUrl;
+    const originalSha256 = item.sha256;
+    item.downloadUrl = server.url;
+    item.sha256 = sha256(archive);
+
+    try {
+      const snapshot = await service.downloadModel(item.id);
+      const download = snapshot.downloads.find((candidate) => candidate.modelId === item.id);
+
+      expect(download?.status).toBe("error");
+      expect(download?.error).toContain("unsafe path");
+      expect(existsSync(join(paths.modelDir, item.extractDir!))).toBe(false);
+      expect(existsSync(join(paths.modelDir, item.filename!))).toBe(false);
+      expect(existsSync(join(paths.modelDir, `${item.filename!}.part`))).toBe(false);
+    } finally {
+      item.downloadUrl = originalUrl;
+      item.sha256 = originalSha256;
       await closeServer(server.server);
     }
   });
@@ -179,14 +308,22 @@ describe("ModelLibraryService", () => {
   it("marks existing cached files as downloaded", async () => {
     const paths = testPaths();
     touch(join(paths.modelDir, "ggml-tiny.en.bin"));
+    const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en");
+    if (!item) throw new Error("Missing whisper-tiny-en catalog item.");
+    const originalSha256 = item.sha256;
+    item.sha256 = sha256("");
     const storage = new StorageService(paths);
-    const service = new ModelLibraryService(paths, storage, () => undefined, fakeRuntimeService("available"));
 
-    const snapshot = service.snapshot();
-    const download = snapshot.downloads.find((candidate) => candidate.modelId === "whisper-tiny-en");
+    try {
+      const service = new ModelLibraryService(paths, storage, () => undefined, fakeRuntimeService("available"));
+      const snapshot = service.snapshot();
+      const download = snapshot.downloads.find((candidate) => candidate.modelId === "whisper-tiny-en");
 
-    expect(download?.status).toBe("downloaded");
-    expect(download?.localPath).toBe(join(paths.modelDir, "ggml-tiny.en.bin"));
+      expect(download?.status).toBe("downloaded");
+      expect(download?.localPath).toBe(join(paths.modelDir, "ggml-tiny.en.bin"));
+    } finally {
+      item.sha256 = originalSha256;
+    }
   });
 
   it("clears invalid downloaded state when cached files are missing", () => {
@@ -443,6 +580,60 @@ function modelServer(body: string): Promise<{ server: Server; url: string }> {
   });
 }
 
+function binaryModelServer(body: Buffer): Promise<{ server: Server; url: string }> {
+  return new Promise((resolve) => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200, {
+        "content-type": "application/octet-stream",
+        "content-length": body.byteLength
+      });
+      response.end(body);
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Could not start test server.");
+      resolve({ server, url: `http://127.0.0.1:${address.port}/model.tar.bz2` });
+    });
+  });
+}
+
+function stalledBodyServer(contentLength: number): Promise<{ server: Server; url: string }> {
+  return new Promise((resolve) => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200, {
+        "content-type": "application/octet-stream",
+        "content-length": contentLength
+      });
+      response.flushHeaders();
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Could not start test server.");
+      resolve({ server, url: `http://127.0.0.1:${address.port}/model.bin` });
+    });
+  });
+}
+
+function chunkedModelServer(body: string, chunkSize: number): Promise<{ server: Server; url: string }> {
+  return new Promise((resolve) => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200, {
+        "content-type": "application/octet-stream",
+        "content-length": Buffer.byteLength(body)
+      });
+      for (let index = 0; index < body.length; index += chunkSize) {
+        response.write(body.slice(index, index + chunkSize));
+      }
+      response.end();
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Could not start test server.");
+      resolve({ server, url: `http://127.0.0.1:${address.port}/model.bin` });
+    });
+  });
+}
+
 function slowModelServer(chunks: string[], delayMs: number): Promise<{ server: Server; url: string }> {
   return new Promise((resolve) => {
     const server = createServer((request, response) => {
@@ -473,6 +664,25 @@ function slowModelServer(chunks: string[], delayMs: number): Promise<{ server: S
       resolve({ server, url: `http://127.0.0.1:${address.port}/model.bin` });
     });
   });
+}
+
+function unsafeTarBz2(): Buffer {
+  const root = tempRoot();
+  const sourceDir = join(root, "archive-src");
+  const archivePath = join(root, "unsafe.tar.bz2");
+  mkdirSync(sourceDir, { recursive: true });
+  writeFileSync(join(sourceDir, "payload.txt"), "payload");
+  const result = spawnSync("tar", ["-cjf", archivePath, "--transform=s|payload.txt|../payload.txt|", "-C", sourceDir, "payload.txt"], {
+    encoding: "utf8"
+  });
+  if (result.status !== 0) {
+    throw new Error(`Could not create unsafe tar fixture: ${result.stderr}`);
+  }
+  return readFileSync(archivePath);
+}
+
+function sha256(value: string | Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 type JsonRouteResponse = { status: number; body: unknown };

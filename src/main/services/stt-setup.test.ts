@@ -1,4 +1,5 @@
 import { createServer, type Server } from "node:http";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -64,7 +65,9 @@ describe("SttSetupService", () => {
     const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en");
     if (!item) throw new Error("Missing whisper-tiny-en catalog item.");
     const originalUrl = item.downloadUrl;
+    const originalSha256 = item.sha256;
     item.downloadUrl = server.url;
+    item.sha256 = sha256("model");
 
     try {
       await setup.setupBundledStt("whisper-tiny-en");
@@ -75,6 +78,7 @@ describe("SttSetupService", () => {
       expect(state.settings.sttSetupCompletedAt).toBeTruthy();
     } finally {
       item.downloadUrl = originalUrl;
+      item.sha256 = originalSha256;
       await closeServer(server.server);
     }
   });
@@ -205,4 +209,8 @@ function closeServer(server: Server): Promise<void> {
       else resolve();
     });
   });
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }

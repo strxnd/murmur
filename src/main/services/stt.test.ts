@@ -1,15 +1,22 @@
+import { createServer, type Server, type ServerResponse } from "node:http";
+import type { Socket } from "node:net";
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SttRuntimeAvailability, SttRuntimeId, TranscriptionProviderConfig } from "../../shared/types";
 import { resolveAppPaths, type AppPaths } from "./app-paths";
-import { buildSherpaArgs, buildWhisperServerArgs, TranscriptionService } from "./stt";
+import { BoundedTextBuffer, buildSherpaArgs, buildWhisperServerArgs, TranscriptionService } from "./stt";
 import type { ResolvedSttRuntime, SttRuntimeService } from "./stt-runtime";
 
 let tempDirs: string[] = [];
+const servers: Array<() => Promise<void>> = [];
+const originalTotalTimeout = process.env.MURMUR_PROVIDER_RESPONSE_TIMEOUT_MS;
+const originalIdleTimeout = process.env.MURMUR_PROVIDER_RESPONSE_IDLE_TIMEOUT_MS;
 
-afterEach(() => {
+afterEach(async () => {
+  restoreTimeoutEnv();
+  await Promise.all(servers.splice(0).map((close) => close()));
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
   tempDirs = [];
 });
@@ -107,6 +114,33 @@ describe("STT runtime args", () => {
     expect(isAbsolute(relativeAudioPath)).toBe(false);
     expect(existsSync(audioPath)).toBe(false);
   });
+
+  it("rejects stalled OpenAI-compatible response bodies", async () => {
+    process.env.MURMUR_PROVIDER_RESPONSE_TIMEOUT_MS = "60";
+    process.env.MURMUR_PROVIDER_RESPONSE_IDLE_TIMEOUT_MS = "20";
+    const { url } = await startServer((response) => {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.write('{"text":');
+    });
+    const service = new TranscriptionService(testPaths(), fakeRuntimeService("available"));
+
+    await expect(
+      service.transcribe({
+        audio: new Uint8Array([1, 2, 3]),
+        mimeType: "audio/wav",
+        provider: openAiCompatibleProvider(url)
+      })
+    ).rejects.toThrow(/STT transcription response body/);
+  });
+
+  it("bounds retained runtime diagnostics text", () => {
+    const buffer = new BoundedTextBuffer(12);
+
+    buffer.append("1234567890");
+    buffer.append("abcdef");
+
+    expect(buffer.text()).toBe("567890abcdef");
+  });
 });
 
 function sherpaProvider(defaultModel: string): TranscriptionProviderConfig {
@@ -118,6 +152,22 @@ function sherpaProvider(defaultModel: string): TranscriptionProviderConfig {
     isCloud: false,
     isLocal: true,
     defaultModel,
+    streamingMode: "none",
+    enabled: true
+  };
+}
+
+function openAiCompatibleProvider(baseUrl: string): TranscriptionProviderConfig {
+  return {
+    id: "local-openai-stt",
+    type: "local_openai_compatible_stt",
+    name: "Local OpenAI-compatible STT",
+    baseUrl,
+    endpointPath: "/audio/transcriptions",
+    isCloud: false,
+    isLocal: true,
+    defaultModel: "test-model",
+    defaultLanguage: "auto",
     streamingMode: "none",
     enabled: true
   };
@@ -197,4 +247,45 @@ function tempRoot(): string {
 function touch(path: string): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, "");
+}
+
+function restoreTimeoutEnv(): void {
+  restoreEnvValue("MURMUR_PROVIDER_RESPONSE_TIMEOUT_MS", originalTotalTimeout);
+  restoreEnvValue("MURMUR_PROVIDER_RESPONSE_IDLE_TIMEOUT_MS", originalIdleTimeout);
+}
+
+function restoreEnvValue(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
+
+function startServer(handler: (response: ServerResponse) => void): Promise<{ url: string }> {
+  return new Promise((resolve, reject) => {
+    const sockets = new Set<Socket>();
+    const server = createServer((_request, response) => handler(response));
+    server.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+    });
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("Server did not bind to a TCP port."));
+        return;
+      }
+      servers.push(() => closeServer(server, sockets));
+      resolve({ url: `http://127.0.0.1:${address.port}` });
+    });
+  });
+}
+
+function closeServer(server: Server, sockets: Set<Socket>): Promise<void> {
+  for (const socket of sockets) socket.destroy();
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
 }
