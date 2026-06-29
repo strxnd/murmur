@@ -131,9 +131,15 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search model name, provider, or tags"
+              aria-label="Search models"
             />
           </label>
-          <Select items={providers} value={provider} onValueChange={(value) => setProvider(value as "all" | ModelProvider)} />
+          <Select
+            aria-label="Model provider"
+            items={providers}
+            value={provider}
+            onValueChange={(value) => setProvider(value as "all" | ModelProvider)}
+          />
           <Select
             aria-label="STT acceleration"
             items={accelerationItems}
@@ -588,6 +594,7 @@ function FilterButton({
         active ? "border-foreground bg-foreground text-background" : "border-border bg-surface-raised text-foreground"
       )}
       onClick={onClick}
+      aria-pressed={active}
     >
       {children}
     </Button>

@@ -7,6 +7,7 @@ The public renderer API is exposed as `window.murmur` by [`src/preload/index.ts`
 | Method | IPC channel | Returns |
 | --- | --- | --- |
 | `getState()` | `app:get-state` | `AppStateSnapshot` |
+| `getPillState()` | `app:get-pill-state` | `PillStateSnapshot` |
 | `getModeSelectorState()` | `app:get-mode-selector-state` | `ModeSelectorStateSnapshot` |
 | `updateSettings(patch)` | `settings:update` | `AppStateSnapshot` |
 | `clearLocalData()` | `data:clear-local` | `AppStateSnapshot` |
@@ -14,6 +15,7 @@ The public renderer API is exposed as `window.murmur` by [`src/preload/index.ts`
 | `selectModeFromSelector(modeId)` | `mode-selector:select-mode` | `AppStateSnapshot` |
 | `moveModeSelectorSelection(delta)` | `mode-selector:move-selection` | `ModeSelectorStateSnapshot` |
 | `onStateChanged(callback)` | `state:changed` | unsubscribe function |
+| `onPillStateChanged(callback)` | `pill-state:changed` | unsubscribe function |
 | `onModeSelectorStateChanged(callback)` | `mode-selector-state:changed` | unsubscribe function |
 
 ## Hotkeys, Modes, and Rules

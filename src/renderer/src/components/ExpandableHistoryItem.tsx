@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, Clipboard, Copy, Trash2, Wand2 } from "lucide-react";
-import type { JSX } from "react";
+import { useId, type JSX } from "react";
 import type { DictationHistoryItem } from "../../../shared/types";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { useMurmurStore } from "../state/murmur-store";
@@ -19,19 +19,24 @@ export function ExpandableHistoryItem({ item, expanded, onToggle }: ExpandableHi
   const reprocessHistoryItem = useMurmurStore((store) => store.reprocessHistoryItem);
   const deleteHistoryItem = useMurmurStore((store) => store.deleteHistoryItem);
   const detailParent = useAutoAnimateRef<HTMLDivElement>();
+  const toggleId = useId();
+  const detailRegionId = useId();
 
   return (
     <article className="rounded-md border border-border bg-surface">
       <Button
+        id={toggleId}
         variant="ghost"
         className="flex h-auto min-h-0 w-full items-start justify-start gap-3 rounded-b-none rounded-t-md border-0 p-4 text-left text-foreground hover:bg-muted"
+        aria-expanded={expanded}
+        aria-controls={detailRegionId}
         onClick={onToggle}
       >
         <span className="mt-0.5 text-muted-foreground">{expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}</span>
         <span className="m-0 whitespace-pre-wrap text-sm font-normal leading-6 text-foreground">{item.rawTranscript || "No transcript."}</span>
       </Button>
 
-      <div ref={detailParent}>
+      <div id={detailRegionId} ref={detailParent} aria-labelledby={toggleId}>
         {expanded && (
           <div className="border-t border-border p-4">
             <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 max-[760px]:grid-cols-1">

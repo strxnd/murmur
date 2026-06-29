@@ -13,7 +13,7 @@ Cloud STT and LLM providers are opt-in through provider configuration. They are 
 
 ## API Keys
 
-Provider configs include optional `apiKey` and `apiKeySecretId` fields. Current storage persists provider config in `murmur-config.json`; do not commit local config files or secrets.
+Provider configs include optional `apiKey` and `apiKeySecretId` fields. Current storage migrates raw provider API keys out of `murmur-config.json` into `murmur-provider-secrets.json`, then persists redacted provider configs with `apiKeySecretId`. The secret store uses Electron safe storage when available and falls back to owner-only plaintext storage otherwise. Do not commit local config files or secret files.
 
 ## Audio and History
 

@@ -8,10 +8,11 @@ Paths are resolved by [`resolveAppPaths()`](../../src/main/services/app-paths.ts
 | `dataDir` | `$HOME/.local/share/murmur` | Data directory. |
 | `cacheDir` | `$HOME/.cache/murmur` | Cache directory. |
 | `tempDir` | `<electron temp>/murmur` | Temporary audio and runtime work files. |
-| `audioDir` | `$HOME/.local/share/murmur/audio` | Retained recording audio. |
+| `audioDir` | `$HOME/.local/share/murmur/audio` | Legacy linked recording audio cleanup location. Completed recordings are not stored here by current dictation flow. |
 | `modelDir` | `$HOME/.cache/murmur/models/stt` | Downloaded STT models. |
 | `runtimeDir` | `$HOME/.cache/murmur/runtimes/stt` | Development-managed STT runtime installs. |
 | `configPath` | `$HOME/.config/murmur/murmur-config.json` | Persisted settings and config. |
+| `providerSecretsPath` | `$HOME/.config/murmur/murmur-provider-secrets.json` | Out-of-band provider API key storage. |
 | `historyDbPath` | `$HOME/.local/share/murmur/murmur-history.sqlite` | SQLite history database. |
 | `historyJsonPath` | `$HOME/.local/share/murmur/murmur-history.json` | JSON history fallback. |
 

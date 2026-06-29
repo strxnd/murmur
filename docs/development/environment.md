@@ -15,7 +15,7 @@ The pinned Node version is `25.9.0` in `.mise.toml`. `mise run install` runs `np
 mise run dev
 ```
 
-This starts Electron through Electron Vite. In development, `AppController.loadRenderer()` reads `ELECTRON_RENDERER_URL` and loads the Vite renderer URL when it is present; otherwise it loads the built renderer HTML.
+This starts Electron through Electron Vite. In non-packaged development builds, `AppController.loadRenderer()` reads `ELECTRON_RENDERER_URL` and loads that Vite renderer URL when it is a trusted localhost URL; otherwise it loads the built renderer HTML. Packaged builds ignore `ELECTRON_RENDERER_URL`.
 
 ## Common Tasks
 
@@ -34,6 +34,7 @@ This starts Electron through Electron Vite. In development, `AppController.loadR
 | `mise run runtimes:stage` | Stage prepared current-platform STT runtimes for app packaging. |
 | `mise run runtimes:doctor` | Check current-platform runtime readiness. |
 | `mise run runtimes:manifest-check` | Validate runtime archive metadata. |
+| `mise run runtimes:manifest-check:release` | Validate configured runtime release URLs are reachable. |
 | `mise run linux-helper:build` | Build the optional native Linux keyboard helper. |
 
 ## Generated Output

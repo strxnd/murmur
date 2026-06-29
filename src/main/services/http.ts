@@ -10,20 +10,25 @@ const defaultBodyTimeoutMs = 15000;
 export async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 15000): Promise<Response> {
   const controller = new AbortController();
   let timedOut = false;
+  const abort = (): void => controller.abort();
   const timeout = setTimeout(() => {
     timedOut = true;
     controller.abort();
   }, timeoutMs);
   unrefTimer(timeout);
+  init.signal?.addEventListener("abort", abort, { once: true });
   try {
+    if (init.signal?.aborted) throw abortError();
     return await fetch(input, { ...init, signal: controller.signal });
   } catch (error) {
+    if (init.signal?.aborted) throw abortError();
     if (timedOut) {
       throw new Error(`Request timed out after ${timeoutMs}ms.`);
     }
     throw error;
   } finally {
     clearTimeout(timeout);
+    init.signal?.removeEventListener("abort", abort);
   }
 }
 
@@ -120,6 +125,10 @@ function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
   if (typeof timer === "object" && "unref" in timer && typeof timer.unref === "function") {
     timer.unref();
   }
+}
+
+function abortError(): Error {
+  return new DOMException("The operation was aborted.", "AbortError");
 }
 
 export function extractTextFromTranscriptionResponse(data: any): string {

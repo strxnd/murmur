@@ -14,7 +14,11 @@ This page lists environment variables used by current code paths.
 | `MURMUR_STT_THREADS` | STT runtime args | Thread count passed to `whisper-server` and `sherpa-onnx-offline`. Defaults to `4`. |
 | `MURMUR_STT_GPU_DEVICE` | STT runtime args | Optional GPU device id passed to `whisper-server` GPU variants. |
 | `MURMUR_ROCM_TARGETS` | `scripts/prepare-runtimes.mjs` | Optional AMD GPU target list passed to HIP whisper.cpp builds as `AMDGPU_TARGETS`. |
+| `MURMUR_RUNTIME_VENDOR_ROOT` | `scripts/stage-bundled-runtimes.mjs` | Override the prepared runtime input root. Defaults to `vendor/runtimes`. |
+| `MURMUR_RUNTIME_STAGING_ROOT` | `scripts/stage-bundled-runtimes.mjs` | Override the packaged runtime staging root. Defaults to `.cache/bundled-runtimes/runtimes`. |
 | `MURMUR_RUNTIME_READY_TIMEOUT_MS` | `TranscriptionService` | Timeout for `whisper-server` readiness. Defaults to `45000`. |
+| `MURMUR_PROVIDER_RESPONSE_TIMEOUT_MS` | `TranscriptionService`, `LlmService` | Total response timeout for STT and LLM HTTP provider calls. |
+| `MURMUR_PROVIDER_RESPONSE_IDLE_TIMEOUT_MS` | `TranscriptionService`, `LlmService` | Idle response timeout for STT and LLM HTTP provider calls. |
 | `MURMUR_LINUX_FAST_PASTE` | `LinuxTextAutomationService` | Path to the optional native Linux text automation helper. |
 | `MURMUR_XWAYLAND_RELAUNCHED` | Main startup and packaged launcher | Internal guard indicating the Linux Wayland app has already been relaunched under XWayland. |
 
@@ -22,7 +26,7 @@ This page lists environment variables used by current code paths.
 
 | Variable | Used by | Effect |
 | --- | --- | --- |
-| `ELECTRON_RENDERER_URL` | `AppController.loadRenderer()` | Loads the renderer from a dev server instead of built HTML. |
+| `ELECTRON_RENDERER_URL` | `AppController.loadRenderer()` | In non-packaged builds, loads the renderer from a trusted localhost dev server instead of built HTML. Ignored in packaged builds. |
 | `CC` | `scripts/build-linux-fast-paste.mjs` | C compiler for the optional native Linux helper. Defaults to `cc`. |
 
 ## XDG Paths

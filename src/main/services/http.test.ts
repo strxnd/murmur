@@ -10,6 +10,18 @@ afterEach(async () => {
 });
 
 describe("HTTP response body timeouts", () => {
+  it("honors a caller-provided abort signal while waiting for response headers", async () => {
+    const { url } = await startServer(() => {
+      // Keep the request open so cancellation has to come from the caller signal.
+    });
+    const controller = new AbortController();
+
+    const request = fetchWithTimeout(url, { signal: controller.signal }, 500);
+    controller.abort();
+
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("rejects when a response body stalls after headers", async () => {
     const { url } = await startServer((response) => {
       response.writeHead(200, { "Content-Type": "application/json" });

@@ -51,11 +51,12 @@ Package after runtimes are present:
 mise run runtimes:stage
 mise run runtimes:package
 mise run runtimes:manifest-check
-npm run runtimes:manifest-check:release
+mise run runtimes:manifest-check:release
 ```
 
 `runtimes:stage` copies exactly one prepared platform from `vendor/runtimes/<platform-key>/` into `.cache/bundled-runtimes/runtimes/<platform-key>/` for `electron-builder` to place under `<process.resourcesPath>/runtimes/`.
 Only CPU runtimes are staged into packaged app resources. GPU variants are optional installs and may download in packaged builds only when their Murmur release URL, size, and SHA-256 are configured.
+Set `MURMUR_RUNTIME_VENDOR_ROOT` or `MURMUR_RUNTIME_STAGING_ROOT` to override those source and staging roots when testing the staging script.
 
 For explicit-target packaging, pass the requested target:
 

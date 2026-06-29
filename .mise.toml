@@ -53,6 +53,10 @@ run = "npm run runtimes:doctor"
 description = "Validate pinned STT runtime archive metadata."
 run = "npm run runtimes:manifest-check"
 
+[tasks."runtimes:manifest-check:release"]
+description = "Validate configured STT runtime release URLs are reachable."
+run = "npm run runtimes:manifest-check:release"
+
 [tasks."linux-helper:build"]
 description = "Build the optional native Linux keyboard helper."
 run = "npm run linux-helper:build"

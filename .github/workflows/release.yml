@@ -62,6 +62,9 @@ jobs:
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=moderate
 
+      - name: Check runtime release URLs
+        run: mise run runtimes:manifest-check:release
+
       - name: Prepare STT runtimes
         run: |
           mise run runtimes:prepare

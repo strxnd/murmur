@@ -52,7 +52,7 @@ Built-in mode ids are `default`, `voice_to_text`, `message`, `mail`, and `note`.
 
 ## Providers
 
-`TranscriptionProviderConfig` includes `type`, `baseUrl`, optional `endpointPath`, optional `apiKey`, cloud/local flags, default model and language, `streamingMode`, and `enabled`.
+`TranscriptionProviderConfig` includes `type`, `baseUrl`, optional `endpointPath`, optional `apiKeySecretId`, cloud/local flags, default model and language, `streamingMode`, and `enabled`. Raw `apiKey` values are accepted during updates and migrated into the provider secret store.
 
 STT provider types:
 
@@ -62,7 +62,7 @@ STT provider types:
 - `cloud_openai`
 - `cloud_openai_compatible_stt`
 
-`LlmProviderConfig` includes `type`, optional `baseUrl`, optional `apiKey`, cloud flag, default model, and `enabled`.
+`LlmProviderConfig` includes `type`, optional `baseUrl`, optional `apiKeySecretId`, cloud flag, default model, and `enabled`. Raw `apiKey` values are accepted during updates and migrated into the provider secret store.
 
 LLM provider types:
 

@@ -34,6 +34,7 @@ flowchart TD
   RuntimeManifest --> Prepare --> Doctor --> PackageRuntime --> RuntimeArchives
   RuntimeCatalog --> PackageRuntime
   RuntimeCatalog --> ManifestCheck
+  ManifestCheck --> DraftRelease
   RuntimeCatalog --> Stage
 ```
 
@@ -90,7 +91,7 @@ git tag 0.1.0
 git push origin 0.1.0
 ```
 
-The workflow verifies that the tag matches `package.json`, requires the release notes file, runs lint/tests/audit, prepares bundled STT runtimes, builds `AppImage`, `deb`, and `rpm`, generates `SHA256SUMS-linux.txt`, verifies the checksums, and creates a draft release with those files attached.
+The workflow verifies that the tag matches `package.json`, requires the release notes file, runs lint/tests/audit, checks configured runtime release URL reachability, prepares bundled STT runtimes, builds `AppImage`, `deb`, and `rpm`, generates `SHA256SUMS-linux.txt`, verifies the checksums, and creates a draft release with those files attached.
 
 ## Linux Checksums and Signing
 

@@ -5,7 +5,7 @@ This page is a maintainer-oriented checklist for common failure areas.
 ## Startup
 
 - On Linux Wayland, confirm the app relaunched with `--ozone-platform=x11` or `MURMUR_XWAYLAND_RELAUNCHED=1`.
-- If the renderer fails to load in development, confirm `ELECTRON_RENDERER_URL` points at the Vite dev server.
+- If the renderer fails to load in development, confirm `ELECTRON_RENDERER_URL` points at the trusted localhost Vite dev server. Packaged builds ignore this variable.
 - If a second instance does not show the window, check single-instance lock handling in `app-main.ts`.
 
 ## Hotkeys

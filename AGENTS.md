@@ -42,11 +42,12 @@ Animations are important to Murmur's user experience. Use purposeful, restrained
 
 ## Testing Guidelines
 
-Tests are not scaffolded yet. When adding tests, keep them close to the behavior being verified:
+The current test suite uses Vitest. Keep new tests close to the behavior being verified:
 
-- Shared logic: unit tests for prompt building and auto-mode matching.
-- Main services: integration tests with mocked STT/LLM HTTP endpoints.
-- Renderer flows: Electron or Playwright tests for recording, provider settings, and history actions.
+- Shared logic: unit tests for prompt building, model activation, and auto-mode matching.
+- Main services: tests with mocked filesystem, STT/LLM HTTP endpoints, and desktop dependencies.
+- Renderer helpers: unit tests near the relevant library or hook.
+- Renderer flows: add Electron or Playwright tests only when the behavior needs real process or renderer integration.
 
 Name tests after behavior, for example `auto-mode.test.ts` or `prompts.test.ts`.
 
