@@ -383,7 +383,7 @@ interface AccelerationRow {
   progress: number | null;
 }
 
-const accelerationOrder: SttRuntimeAccelerator[] = ["cpu", "cuda", "hip"];
+const accelerationOrder: SttRuntimeAccelerator[] = ["cpu", "cuda"];
 
 function AccelerationPanel({ state }: { state: AppStateSnapshot }): JSX.Element {
   const detectedAccelerators = detectedGpuAccelerators(state);

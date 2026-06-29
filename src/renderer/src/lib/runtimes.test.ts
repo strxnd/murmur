@@ -24,12 +24,10 @@ describe("renderer runtime helpers", () => {
 
   it("prompts for installable CUDA runtimes when NVIDIA is detected", () => {
     const cuda = runtime("whisper.cpp", "cuda", "not_installed", true);
-    const hip = runtime("whisper.cpp", "hip", "not_installed", true);
     const snapshot = state({
       nvidia: true,
       runtimes: {
-        [cuda.variantKey]: cuda,
-        [hip.variantKey]: hip
+        [cuda.variantKey]: cuda
       }
     });
 
@@ -40,35 +38,19 @@ describe("renderer runtime helpers", () => {
     expect(prompt?.installable.map((item) => item.variantKey)).toEqual([cuda.variantKey]);
   });
 
-  it("prompts for detected GPU variants even before downloads are available", () => {
-    const hip = runtime("whisper.cpp", "hip", "not_installed", false);
-    const snapshot = state({
-      amd: true,
-      runtimes: {
-        [hip.variantKey]: hip
-      }
-    });
-
-    const prompt = gpuRuntimePromptState(snapshot);
-
-    expect(prompt?.accelerators).toEqual(["hip"]);
-    expect(prompt?.candidates.map((item) => item.variantKey)).toEqual([hip.variantKey]);
-    expect(prompt?.installable).toEqual([]);
-  });
-
   it("keeps the prompt visible while a detected GPU runtime is installing", () => {
-    const hip = runtime("whisper.cpp", "hip", "downloading", false);
+    const cuda = runtime("whisper.cpp", "cuda", "downloading", false);
     const snapshot = state({
-      amd: true,
+      nvidia: true,
       runtimes: {
-        [hip.variantKey]: hip
+        [cuda.variantKey]: cuda
       }
     });
 
     const prompt = gpuRuntimePromptState(snapshot);
 
-    expect(prompt?.accelerators).toEqual(["hip"]);
-    expect(prompt?.candidates.map((item) => item.variantKey)).toEqual([hip.variantKey]);
+    expect(prompt?.accelerators).toEqual(["cuda"]);
+    expect(prompt?.candidates.map((item) => item.variantKey)).toEqual([cuda.variantKey]);
     expect(prompt?.installable).toEqual([]);
   });
 
@@ -89,12 +71,10 @@ describe("renderer runtime helpers", () => {
 function state({
   runtimes,
   nvidia = false,
-  amd = false,
   dismissed = false
 }: {
   runtimes: Record<string, SttRuntimeInstallState>;
   nvidia?: boolean;
-  amd?: boolean;
   dismissed?: boolean;
 }): AppStateSnapshot {
   return {
@@ -123,7 +103,6 @@ function state({
         diagnostics: [],
         gpuProbe: {
           nvidia: { available: nvidia, devices: nvidia ? ["Test NVIDIA GPU"] : [], diagnostics: [] },
-          amd: { available: amd, devices: amd ? ["Test AMD GPU"] : [], diagnostics: [] },
           diagnostics: []
         }
       },

@@ -54,8 +54,8 @@ function readAcceleratorArg(args) {
   const index = args.indexOf("--accelerator");
   if (index === -1) return "cpu";
   const value = args[index + 1];
-  if (!value) throw new Error("--accelerator needs a value: cpu, cuda, hip, or all.");
-  if (!["cpu", "cuda", "hip", "all"].includes(value)) throw new Error(`Unsupported accelerator ${value}.`);
+  if (!value) throw new Error("--accelerator needs a value: cpu, cuda, or all.");
+  if (!["cpu", "cuda", "all"].includes(value)) throw new Error(`Unsupported accelerator ${value}.`);
   return value;
 }
 

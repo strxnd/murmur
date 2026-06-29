@@ -70,8 +70,7 @@ const filters: Array<{ id: ModelFilter; label: string }> = [
 const accelerationItems: Array<{ value: SttAccelerationPreference; label: string }> = [
   { value: "auto", label: "Auto acceleration" },
   { value: "cpu", label: "CPU" },
-  { value: "cuda", label: "CUDA" },
-  { value: "hip", label: "HIP/ROCm" }
+  { value: "cuda", label: "CUDA" }
 ];
 
 export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.Element {

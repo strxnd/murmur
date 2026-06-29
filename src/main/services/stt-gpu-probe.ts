@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { GpuProbeAdapterReport, SttGpuProbeReport } from "../../shared/types";
 
@@ -10,20 +10,16 @@ export class SttGpuProbeService {
     if (process.platform !== "linux") {
       return {
         nvidia: emptyAdapter("NVIDIA probe is Linux-only."),
-        amd: emptyAdapter("AMD ROCm probe is Linux-only."),
         diagnostics: ["STT GPU acceleration is currently probed only on Linux."]
       };
     }
 
     const nvidia = probeNvidia();
-    const amd = probeAmd();
     return {
       nvidia,
-      amd,
       diagnostics: [
         "GPU probe is advisory only; runtime launch and transcription success decide readiness.",
-        ...nvidia.diagnostics,
-        ...amd.diagnostics
+        ...nvidia.diagnostics
       ]
     };
   }
@@ -49,65 +45,8 @@ function probeNvidia(): GpuProbeAdapterReport {
   return { available, devices, diagnostics };
 }
 
-function probeAmd(): GpuProbeAdapterReport {
-  const devices: string[] = [];
-  const diagnostics: string[] = [];
-
-  const renderDevices = listRenderDevices();
-  if (renderDevices.length > 0) {
-    diagnostics.push(`Found DRM render devices: ${renderDevices.join(", ")}.`);
-  }
-
-  const rocm = run("rocminfo", []);
-  if (rocm.ok) {
-    devices.push(...extractRocmDeviceNames(rocm.stdout));
-  } else if (rocm.reason) {
-    diagnostics.push(`rocminfo unavailable: ${rocm.reason}`);
-  }
-
-  const smi = run("rocm-smi", ["--showproductname"]);
-  if (smi.ok) {
-    devices.push(...extractRocmSmiDeviceNames(smi.stdout));
-  } else if (smi.reason) {
-    diagnostics.push(`rocm-smi unavailable: ${smi.reason}`);
-  }
-
-  const uniqueDevices = Array.from(new Set(devices));
-  const available = uniqueDevices.length > 0 || renderDevices.some((device) => device.includes("renderD"));
-  if (!available) diagnostics.push("No AMD ROCm/HIP-capable device was detected.");
-  return { available, devices: uniqueDevices, diagnostics };
-}
-
 function emptyAdapter(message: string): GpuProbeAdapterReport {
   return { available: false, devices: [], diagnostics: [message] };
-}
-
-function listRenderDevices(): string[] {
-  try {
-    return readdirSync("/dev/dri")
-      .filter((entry) => entry.startsWith("renderD"))
-      .map((entry) => join("/dev/dri", entry));
-  } catch {
-    return [];
-  }
-}
-
-function extractRocmDeviceNames(output: string): string[] {
-  return output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("Name:"))
-    .map((line) => line.slice("Name:".length).trim())
-    .filter(Boolean);
-}
-
-function extractRocmSmiDeviceNames(output: string): string[] {
-  return output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => /GPU\[\d+\]/.test(line) && /Card series/i.test(line))
-    .map((line) => line.replace(/^GPU\[\d+\]\s*:\s*/i, "").trim())
-    .filter(Boolean);
 }
 
 function run(command: string, args: string[]): { ok: true; stdout: string } | { ok: false; reason: string } {

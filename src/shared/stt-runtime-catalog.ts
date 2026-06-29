@@ -25,7 +25,7 @@ export interface SttRuntimeCatalogEntry {
 }
 
 export const supportedSttRuntimePlatformKeys = ["linux-x64"] as const;
-export const sttRuntimeAccelerators = ["cpu", "cuda", "hip"] as const satisfies SttRuntimeAccelerator[];
+export const sttRuntimeAccelerators = ["cpu", "cuda"] as const satisfies SttRuntimeAccelerator[];
 export const sttGpuRuntimeReleaseVersion = "0.1.0";
 export const sttGpuRuntimeReleaseTag = `stt-runtimes-${sttGpuRuntimeReleaseVersion}`;
 
@@ -39,8 +39,7 @@ export const sttRuntimeCatalog: Record<SttRuntimeId, SttRuntimeCatalogEntry> = {
     envVar: "MURMUR_WHISPER_CPP_SERVER",
     acceleratorEnvVars: {
       cpu: "MURMUR_WHISPER_CPP_SERVER",
-      cuda: "MURMUR_WHISPER_CPP_CUDA_SERVER",
-      hip: "MURMUR_WHISPER_CPP_HIP_SERVER"
+      cuda: "MURMUR_WHISPER_CPP_CUDA_SERVER"
     },
     upstreamVersion: "1.8.6",
     version: "0.1.0",
@@ -64,11 +63,7 @@ export const sttRuntimeCatalog: Record<SttRuntimeId, SttRuntimeCatalogEntry> = {
             abi: "CUDA",
             runtimeDir: "whisper.cpp-cuda"
           }
-        ),
-        hip: runtimeAsset("murmur-stt-runtime-whisper.cpp-1.8.6-linux-x64-hip-0.1.0.tar.gz", undefined, undefined, {
-          abi: "HIP/ROCm",
-          runtimeDir: "whisper.cpp-hip"
-        })
+        )
       }
     }
   },
@@ -195,5 +190,5 @@ function isSttRuntimeId(value: string): value is SttRuntimeId {
 }
 
 function isSttRuntimeAccelerator(value: string): value is SttRuntimeAccelerator {
-  return value === "cpu" || value === "cuda" || value === "hip";
+  return value === "cpu" || value === "cuda";
 }

@@ -34,7 +34,7 @@ Important settings:
 - `activationHotkey`: Electron accelerator string.
 - `modeSelectorHotkey`: Electron accelerator string for the centered mode selector overlay.
 - `recordingPillPosition`: `bottom_left`, `bottom_center`, or `bottom_right`.
-- `sttAccelerationPreference`: `auto`, `cpu`, `cuda`, or `hip` for Murmur-managed local STT runtimes only.
+- `sttAccelerationPreference`: `auto`, `cpu`, or `cuda` for Murmur-managed local STT runtimes only.
 - `gpuRuntimeInstallPromptDismissedAt`: timestamp recorded when the first-entry GPU runtime install prompt is dismissed.
 
 ## Modes

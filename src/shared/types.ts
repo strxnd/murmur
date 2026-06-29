@@ -36,7 +36,7 @@ export type ModelProvider =
 export type ModelDownloadStrategy = "direct_file" | "archive" | "ollama_pull" | "none";
 export type ModelDownloadStatus = "not_downloaded" | "downloading" | "downloaded" | "error";
 export type SttRuntimeId = "whisper.cpp" | "sherpa-onnx";
-export type SttRuntimeAccelerator = "cpu" | "cuda" | "hip";
+export type SttRuntimeAccelerator = "cpu" | "cuda";
 export type SttAccelerationPreference = "auto" | SttRuntimeAccelerator;
 export type SttRuntimeVariantKey = string;
 export type SttRuntimeActionTarget =
@@ -365,7 +365,6 @@ export interface GpuProbeAdapterReport {
 
 export interface SttGpuProbeReport {
   nvidia: GpuProbeAdapterReport;
-  amd: GpuProbeAdapterReport;
   diagnostics: string[];
 }
 

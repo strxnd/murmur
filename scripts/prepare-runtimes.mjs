@@ -37,11 +37,7 @@ const currentKey = currentPlatformKey();
 for (const platformKey of platformKeys) {
   console.log(`Preparing STT runtimes for ${platformKey}`);
   for (const accelerator of accelerators) {
-    if (accelerator === "hip") {
-      console.warn("Skipping Sherpa ONNX HIP; Sherpa ONNX has no HIP/ROCm runtime in this Murmur version.");
-    } else {
-      await prepareSherpaOnnx(platformKey, accelerator);
-    }
+    await prepareSherpaOnnx(platformKey, accelerator);
     if (platformKey === currentKey) {
       await prepareWhisperCpp(platformKey, accelerator);
     } else if (platformArg === "all") {
@@ -64,13 +60,13 @@ function readAcceleratorArg(args) {
   const index = args.indexOf("--accelerator");
   if (index === -1) return "cpu";
   const value = args[index + 1];
-  if (!value) throw new Error("--accelerator needs a value: cpu, cuda, hip, or all.");
-  if (!["cpu", "cuda", "hip", "all"].includes(value)) throw new Error(`Unsupported accelerator ${value}.`);
+  if (!value) throw new Error("--accelerator needs a value: cpu, cuda, or all.");
+  if (!["cpu", "cuda", "all"].includes(value)) throw new Error(`Unsupported accelerator ${value}.`);
   return value;
 }
 
 function resolveAccelerators(value) {
-  if (value === "all") return ["cpu", "cuda", "hip"];
+  if (value === "all") return ["cpu", "cuda"];
   return [value];
 }
 
@@ -157,10 +153,6 @@ async function prepareWhisperCpp(platformKey, accelerator) {
       "-DGGML_NATIVE=OFF"
     ];
     if (accelerator === "cuda") cmakeArgs.push("-DGGML_CUDA=ON");
-    if (accelerator === "hip") {
-      cmakeArgs.push("-DGGML_HIP=ON");
-      if (process.env.MURMUR_ROCM_TARGETS) cmakeArgs.push(`-DAMDGPU_TARGETS=${process.env.MURMUR_ROCM_TARGETS}`);
-    }
     await run("cmake", cmakeArgs);
     await run("cmake", ["--build", buildDir, "--config", "Release", "--target", "whisper-server"]);
 

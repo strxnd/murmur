@@ -77,7 +77,7 @@ const builtInModeIds = new Set(builtInModeDefaults.map((mode) => mode.id));
 const removedReleaseNoteIds = new Set(["initial-prototype"]);
 const activationModes = new Set<ActivationMode>(["toggle", "push_to_talk"]);
 const recordingPillPositions = new Set<RecordingPillPosition>(["bottom_left", "bottom_center", "bottom_right"]);
-const sttAccelerationPreferences = new Set<AppSettings["sttAccelerationPreference"]>(["auto", "cpu", "cuda", "hip"]);
+const sttAccelerationPreferences = new Set<AppSettings["sttAccelerationPreference"]>(["auto", "cpu", "cuda"]);
 const appSettingKeys = [
   "theme",
   "textRetentionDays",

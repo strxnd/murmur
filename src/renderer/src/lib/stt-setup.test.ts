@@ -167,7 +167,6 @@ function runtime(id: "whisper.cpp" | "sherpa-onnx", status: SttRuntimeInstallSta
 function emptyGpuProbe() {
   return {
     nvidia: { available: false, devices: [], diagnostics: [] },
-    amd: { available: false, devices: [], diagnostics: [] },
     diagnostics: []
   };
 }

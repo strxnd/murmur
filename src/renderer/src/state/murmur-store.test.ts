@@ -112,7 +112,6 @@ function testSnapshot(): AppStateSnapshot {
         diagnostics: [],
         gpuProbe: {
           nvidia: { available: false, devices: [], diagnostics: [] },
-          amd: { available: false, devices: [], diagnostics: [] },
           diagnostics: []
         }
       },

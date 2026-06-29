@@ -15,7 +15,7 @@ Sherpa ONNX source assets:
 
 - `linux-x64` CPU: `sherpa-onnx-v1.13.2-linux-x64-shared-no-tts.tar.bz2`
 
-GPU runtime assets published for app download must be Murmur `tar.gz` archives with pinned SHA-256 metadata in `src/shared/stt-runtime-catalog.ts`. Publish CUDA/HIP runtime archives on runtime-only GitHub releases, not app release tags. Do not catalog Sherpa upstream `tar.bz2` GPU archives directly for app downloads; repackage them deterministically as Murmur `tar.gz` assets first.
+GPU runtime assets published for app download must be Murmur `tar.gz` archives with pinned SHA-256 metadata in `src/shared/stt-runtime-catalog.ts`. Publish CUDA runtime archives on runtime-only GitHub releases, not app release tags. Do not catalog Sherpa upstream `tar.bz2` GPU archives directly for app downloads; repackage them deterministically as Murmur `tar.gz` assets first.
 
 ## Whisper Patch
 
@@ -35,7 +35,6 @@ Prepare optional whisper.cpp GPU variants on compatible Linux hosts:
 
 ```sh
 npm run runtimes:prepare -- --accelerator cuda
-MURMUR_ROCM_TARGETS=gfx1100 npm run runtimes:prepare -- --accelerator hip
 ```
 
 Check current-platform runtime readiness:
@@ -70,7 +69,6 @@ To package an optional GPU runtime after preparing it:
 
 ```sh
 npm run runtimes:package -- --accelerator cuda
-npm run runtimes:package -- --accelerator hip
 ```
 
 Murmur app releases should publish only the Electron app artifacts from `mise run dist`. Optional GPU runtime archives referenced by `src/shared/stt-runtime-catalog.ts` live on separate runtime-only releases, such as `stt-runtimes-0.1.0`. Runtime release versions, runtime bundle versions, and upstream runtime versions are SemVer values without a leading `v`; external source tags may still include their upstream prefix.
@@ -82,7 +80,7 @@ gh release create stt-runtimes-0.1.0 \
   dist/runtimes/murmur-stt-runtime-*-cuda-0.1.0.tar.gz \
   --repo strxnd/murmur \
   --title "Murmur STT GPU runtimes 0.1.0" \
-  --notes "Optional CUDA/HIP STT runtime archives for Murmur."
+  --notes "Optional CUDA STT runtime archives for Murmur."
 ```
 
 If the runtime release already exists:
@@ -90,8 +88,6 @@ If the runtime release already exists:
 ```sh
 gh release upload stt-runtimes-0.1.0 dist/runtimes/murmur-stt-runtime-*-cuda-0.1.0.tar.gz --repo strxnd/murmur
 ```
-
-Upload HIP/ROCm archives to the same runtime release after they are built and cataloged.
 
 CPU runtime files are staged into packaged app resources; GPU runtime archives are downloaded into the user cache only after their runtime release URL, size, and SHA-256 are pinned.
 
@@ -143,10 +139,10 @@ Use single-channel 16-bit PCM WAV input for bundled runtime smoke tests.
 
 ## GPU Scope
 
-- CUDA and HIP/ROCm apply only to Murmur-managed local STT runtimes.
+- CUDA applies only to Murmur-managed local STT runtimes.
 - Local LLM GPU execution remains owned by Ollama and LM Studio.
-- Sherpa ONNX has a CUDA provider path in this version; AMD uses the CPU Sherpa runtime.
-- Vulkan is explicitly deferred until CUDA/HIP selection and packaging are proven.
+- Sherpa ONNX has a CUDA provider path in this version.
+- Vulkan is explicitly deferred until CUDA selection and packaging are proven.
 - GPU probe output is advisory. Runtime launch and transcription success decide readiness, and `auto` retries CPU once after a GPU failure.
 
 ## Troubleshooting

@@ -6,10 +6,10 @@ import type {
   SttRuntimeInstallState
 } from "../../../shared/types";
 
-export type DetectedGpuAccelerator = Extract<SttRuntimeAccelerator, "cuda" | "hip">;
+export type DetectedGpuAccelerator = Extract<SttRuntimeAccelerator, "cuda">;
 
 const runtimeOrder: SttRuntimeId[] = ["whisper.cpp", "sherpa-onnx"];
-const acceleratorOrder: SttRuntimeAccelerator[] = ["cpu", "cuda", "hip"];
+const acceleratorOrder: SttRuntimeAccelerator[] = ["cpu", "cuda"];
 
 export interface GpuRuntimePromptState {
   accelerators: DetectedGpuAccelerator[];
@@ -28,7 +28,6 @@ export function uniqueRuntimeInstallStates(state: AppStateSnapshot): SttRuntimeI
 export function detectedGpuAccelerators(state: AppStateSnapshot): DetectedGpuAccelerator[] {
   const detected: DetectedGpuAccelerator[] = [];
   if (state.capabilities.stt.gpuProbe.nvidia.available) detected.push("cuda");
-  if (state.capabilities.stt.gpuProbe.amd.available) detected.push("hip");
   return detected;
 }
 
@@ -92,7 +91,6 @@ export function userRuntimeStatusMessage(runtime: SttRuntimeInstallState): strin
 
 export function acceleratorLabel(accelerator: SttRuntimeAccelerator): string {
   if (accelerator === "cuda") return "CUDA";
-  if (accelerator === "hip") return "HIP";
   return "CPU";
 }
 
@@ -126,10 +124,7 @@ function unsupportedRuntimeState(
 ): SttRuntimeInstallState {
   const label = runtimeId === "whisper.cpp" ? "whisper.cpp" : "Sherpa ONNX";
   const unsupportedVersion = "0.0.0-unsupported";
-  const message =
-    runtimeId === "sherpa-onnx" && accelerator === "hip"
-      ? "Sherpa ONNX HIP is not available in this version; Parakeet uses CPU on AMD."
-      : `${label} ${acceleratorLabel(accelerator)} acceleration is not configured for this platform.`;
+  const message = `${label} ${acceleratorLabel(accelerator)} acceleration is not configured for this platform.`;
   return {
     id: runtimeId,
     variantKey: `${runtimeId}|${fallback?.platformKey ?? "linux-x64"}|${accelerator}|${unsupportedVersion}`,

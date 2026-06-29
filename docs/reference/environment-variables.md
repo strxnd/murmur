@@ -8,12 +8,10 @@ This page lists environment variables used by current code paths.
 | --- | --- | --- |
 | `MURMUR_WHISPER_CPP_SERVER` | `SttRuntimeService` | Path to a `whisper-server` binary. Highest-priority `whisper.cpp` runtime candidate. |
 | `MURMUR_WHISPER_CPP_CUDA_SERVER` | `SttRuntimeService` | Path to a CUDA-enabled `whisper-server` binary. Highest-priority `whisper.cpp` CUDA candidate. |
-| `MURMUR_WHISPER_CPP_HIP_SERVER` | `SttRuntimeService` | Path to a HIP/ROCm-enabled `whisper-server` binary. Highest-priority `whisper.cpp` HIP candidate. |
 | `MURMUR_SHERPA_ONNX_OFFLINE` | `SttRuntimeService` | Path to a `sherpa-onnx-offline` binary. Highest-priority Sherpa ONNX runtime candidate. |
 | `MURMUR_SHERPA_ONNX_CUDA_OFFLINE` | `SttRuntimeService` | Path to a CUDA/cuDNN-enabled `sherpa-onnx-offline` binary. Highest-priority Sherpa ONNX CUDA candidate. |
 | `MURMUR_STT_THREADS` | STT runtime args | Thread count passed to `whisper-server` and `sherpa-onnx-offline`. Defaults to `4`. |
 | `MURMUR_STT_GPU_DEVICE` | STT runtime args | Optional GPU device id passed to `whisper-server` GPU variants. |
-| `MURMUR_ROCM_TARGETS` | `scripts/prepare-runtimes.mjs` | Optional AMD GPU target list passed to HIP whisper.cpp builds as `AMDGPU_TARGETS`. |
 | `MURMUR_RUNTIME_VENDOR_ROOT` | `scripts/stage-bundled-runtimes.mjs` | Override the prepared runtime input root. Defaults to `vendor/runtimes`. |
 | `MURMUR_RUNTIME_STAGING_ROOT` | `scripts/stage-bundled-runtimes.mjs` | Override the packaged runtime staging root. Defaults to `.cache/bundled-runtimes/runtimes`. |
 | `MURMUR_RUNTIME_READY_TIMEOUT_MS` | `TranscriptionService` | Timeout for `whisper-server` readiness. Defaults to `45000`. |
