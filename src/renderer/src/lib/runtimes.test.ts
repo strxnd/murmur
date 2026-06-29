@@ -9,12 +9,11 @@ import type {
 import { gpuRuntimePromptState, uniqueRuntimeInstallStates } from "./runtimes";
 
 describe("renderer runtime helpers", () => {
-  it("deduplicates legacy CPU runtime aliases by variant key", () => {
+  it("sorts variant-keyed runtime states", () => {
     const cpu = runtime("whisper.cpp", "cpu", "ready");
     const cuda = runtime("whisper.cpp", "cuda", "not_installed", true);
     const snapshot = state({
       runtimes: {
-        "whisper.cpp": cpu,
         [cpu.variantKey]: cpu,
         [cuda.variantKey]: cuda
       }

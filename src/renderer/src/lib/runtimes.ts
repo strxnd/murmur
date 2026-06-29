@@ -60,7 +60,7 @@ export function runtimeInstallForModel(state: AppStateSnapshot, item: ModelCatal
   const runtimeId = runtimeIdForModel(item);
   if (!runtimeId) return undefined;
   const variants = runtimeVariantsForModel(state, runtimeId);
-  const cpu = variants.find((runtime) => runtime.accelerator === "cpu") ?? state.sttSetup.runtimes[runtimeId];
+  const cpu = variants.find((runtime) => runtime.accelerator === "cpu");
   const preference = state.settings.sttAccelerationPreference;
 
   if (preference !== "auto") {

@@ -55,7 +55,7 @@ The public renderer API is exposed as `window.murmur` by [`src/preload/index.ts`
 | `onModelDownloadProgress(callback)` | `models:download-progress` | unsubscribe function |
 | `onSttRuntimeProgress(callback)` | `stt-runtime:progress` | unsubscribe function |
 
-Runtime action `target` accepts a legacy `SttRuntimeId` for the CPU variant or a variant key from `SttRuntimeInstallState.variantKey`.
+Runtime action `target` accepts a variant key from `SttRuntimeInstallState.variantKey` or an explicit target object with runtime id and accelerator.
 
 ## Dictation and Recording
 

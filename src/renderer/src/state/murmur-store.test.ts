@@ -58,7 +58,7 @@ function testSnapshot(): AppStateSnapshot {
       completed: false,
       needsSetup: false,
       runtimes: {
-        "whisper.cpp": {
+        "whisper.cpp|linux-x64|cpu|0.0.0-test": {
           id: "whisper.cpp",
           variantKey: "whisper.cpp|linux-x64|cpu|0.0.0-test",
           accelerator: "cpu",
@@ -71,7 +71,7 @@ function testSnapshot(): AppStateSnapshot {
           canDownload: false,
           canRepair: false
         },
-        "sherpa-onnx": {
+        "sherpa-onnx|linux-x64|cpu|0.0.0-test": {
           id: "sherpa-onnx",
           variantKey: "sherpa-onnx|linux-x64|cpu|0.0.0-test",
           accelerator: "cpu",
@@ -89,7 +89,7 @@ function testSnapshot(): AppStateSnapshot {
     session: defaultSession,
     capabilities: {
       sttRuntimes: {
-        "whisper.cpp": {
+        "whisper.cpp|linux-x64|cpu|0.0.0-test": {
           id: "whisper.cpp",
           variantKey: "whisper.cpp|linux-x64|cpu|0.0.0-test",
           accelerator: "cpu",
@@ -98,7 +98,7 @@ function testSnapshot(): AppStateSnapshot {
           platformKey: "linux-x64",
           message: "Ready"
         },
-        "sherpa-onnx": {
+        "sherpa-onnx|linux-x64|cpu|0.0.0-test": {
           id: "sherpa-onnx",
           variantKey: "sherpa-onnx|linux-x64|cpu|0.0.0-test",
           accelerator: "cpu",

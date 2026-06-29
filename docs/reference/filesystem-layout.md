@@ -23,11 +23,10 @@ Development-managed STT runtimes install under:
 <runtimeDir>/<platform-key>/<runtime-id>/<accelerator>/<runtime-bundle-semver>/
 ```
 
-Each valid cache install includes a `runtime.json` receipt. Development fallbacks are read from:
+Each valid cache install includes a `runtime.json` receipt. Development runtime artifacts are read from:
 
 ```text
 vendor/runtimes/<platform-key>/<runtime-dir>/
-vendor/runtimes/<runtime-dir>/
 ```
 
 ## Packaged Resources

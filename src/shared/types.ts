@@ -40,11 +40,10 @@ export type SttRuntimeAccelerator = "cpu" | "cuda" | "hip";
 export type SttAccelerationPreference = "auto" | SttRuntimeAccelerator;
 export type SttRuntimeVariantKey = string;
 export type SttRuntimeActionTarget =
-  | SttRuntimeId
   | SttRuntimeVariantKey
   | {
       id: SttRuntimeId;
-      accelerator?: SttRuntimeAccelerator;
+      accelerator: SttRuntimeAccelerator;
       variantKey?: SttRuntimeVariantKey;
     };
 export type RuntimeAvailabilityStatus = "available" | "missing" | "unsupported";
@@ -56,7 +55,7 @@ export type SttRuntimeInstallStatus =
   | "repairable"
   | "error"
   | "unsupported";
-export type SttRuntimeSource = "env" | "resources" | "cache" | "vendor" | "legacy_vendor";
+export type SttRuntimeSource = "env" | "resources" | "cache" | "vendor";
 
 export interface SttRuntimeAvailability {
   id: SttRuntimeId;

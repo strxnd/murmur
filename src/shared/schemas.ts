@@ -39,11 +39,10 @@ export const sttRuntimeVariantKeySchema = z
   .string()
   .regex(new RegExp(`^(whisper\\.cpp|sherpa-onnx)\\|[^|]+\\|(cpu|cuda|hip)\\|${semverPatternSource}$`));
 export const sttRuntimeActionTargetSchema = z.union([
-  sttRuntimeIdSchema,
   sttRuntimeVariantKeySchema,
   z.object({
     id: sttRuntimeIdSchema,
-    accelerator: sttRuntimeAcceleratorSchema.optional(),
+    accelerator: sttRuntimeAcceleratorSchema,
     variantKey: sttRuntimeVariantKeySchema.optional()
   })
 ]);
@@ -57,7 +56,7 @@ export const sttRuntimeInstallStatusSchema = z.enum([
   "error",
   "unsupported"
 ]);
-export const sttRuntimeSourceSchema = z.enum(["env", "resources", "cache", "vendor", "legacy_vendor"]);
+export const sttRuntimeSourceSchema = z.enum(["env", "resources", "cache", "vendor"]);
 
 const optionalStringSchema = z.string().optional();
 

@@ -24,7 +24,7 @@ import { Select, type SelectItem } from "../components/ui/Select";
 import { Textarea } from "../components/ui/Textarea";
 import { cn } from "../lib/cn";
 import { murmurClient } from "../lib/murmur-client";
-import { runtimeStatusLabel, userRuntimeStatusMessage } from "../lib/runtimes";
+import { runtimeInstallForModel, runtimeStatusLabel, userRuntimeStatusMessage } from "../lib/runtimes";
 import {
   downloadForModel,
   formatBytes,
@@ -128,8 +128,7 @@ export function OnboardingWizard({
   }, [open, selectedVoiceModelId, state, voiceModels]);
 
   const download = voiceModel ? downloadForModel(state, voiceModel.id) : undefined;
-  const runtimeId = voiceModel ? runtimeIdForVoiceModel(voiceModel) : null;
-  const runtime = runtimeId ? state.sttSetup.runtimes[runtimeId] : undefined;
+  const runtime = voiceModel ? runtimeInstallForModel(state, voiceModel) : undefined;
   const selectedSttReady = voiceModel ? localVoiceModelActiveAndReady(state, voiceModel) : false;
   const hotkeyChanged = hotkey !== state.settings.activationHotkey;
   const hotkeyCanProceed = !hotkeyChanged && !isSavingHotkey;
@@ -571,7 +570,9 @@ function SttStep({
         {models.map((item) => {
           const itemDownload = downloads.find((candidate) => candidate.modelId === item.id);
           const itemRuntimeId = runtimeIdForVoiceModel(item);
-          const itemRuntime = itemRuntimeId ? runtimes[itemRuntimeId] : undefined;
+          const itemRuntime = itemRuntimeId
+            ? Object.values(runtimes).find((candidate) => candidate.id === itemRuntimeId && candidate.accelerator === "cpu")
+            : undefined;
           const selected = item.id === selectedModelId;
           const active = activeModelId === item.id;
           const itemProgress = itemDownload ? progressValue(itemDownload.progressBytes, itemDownload.totalBytes) : null;

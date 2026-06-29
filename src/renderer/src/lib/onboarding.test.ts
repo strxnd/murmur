@@ -116,14 +116,14 @@ function state({
       completed: false,
       needsSetup: true,
       runtimes: {
-        "whisper.cpp": runtime("whisper.cpp", runtimeStatus),
-        "sherpa-onnx": runtime("sherpa-onnx", "not_installed")
+        "whisper.cpp|linux-x64|cpu|0.0.0-test": runtime("whisper.cpp", runtimeStatus),
+        "sherpa-onnx|linux-x64|cpu|0.0.0-test": runtime("sherpa-onnx", "not_installed")
       }
     },
     session: defaultSession,
     capabilities: {
       sttRuntimes: {
-        "whisper.cpp": {
+        "whisper.cpp|linux-x64|cpu|0.0.0-test": {
           id: "whisper.cpp",
           variantKey: "whisper.cpp|linux-x64|cpu|0.0.0-test",
           accelerator: "cpu",
@@ -132,7 +132,7 @@ function state({
           platformKey: "linux-x64",
           message: "runtime"
         },
-        "sherpa-onnx": {
+        "sherpa-onnx|linux-x64|cpu|0.0.0-test": {
           id: "sherpa-onnx",
           variantKey: "sherpa-onnx|linux-x64|cpu|0.0.0-test",
           accelerator: "cpu",

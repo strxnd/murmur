@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { modelCatalog } from "../../shared/model-catalog";
-import type { SttRuntimeAvailability, SttRuntimeId, SttRuntimeInstallState } from "../../shared/types";
+import type { SttRuntimeAvailability, SttRuntimeId, SttRuntimeInstallState, SttRuntimeVariantKey } from "../../shared/types";
 import { resolveAppPaths, type AppPaths } from "./app-paths";
 import { ModelLibraryService } from "./model-library";
 import { StorageService } from "./storage";
@@ -128,10 +128,10 @@ function fakeRuntimeService(
     getInstallState(id: SttRuntimeId): SttRuntimeInstallState {
       return installState(id, status, options);
     },
-    getInstallStates(): Record<SttRuntimeId, SttRuntimeInstallState> {
+    getInstallStates(): Record<SttRuntimeVariantKey, SttRuntimeInstallState> {
       return {
-        "whisper.cpp": installState("whisper.cpp", status, options),
-        "sherpa-onnx": installState("sherpa-onnx", status, options)
+        "whisper.cpp|linux-x64|cpu|0.0.0-test": installState("whisper.cpp", status, options),
+        "sherpa-onnx|linux-x64|cpu|0.0.0-test": installState("sherpa-onnx", status, options)
       };
     },
     async repairRuntime(): Promise<SttRuntimeInstallState> {

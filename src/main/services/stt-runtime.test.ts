@@ -80,7 +80,7 @@ describe("SttRuntimeService", () => {
   it("resolves cache installs before dev vendor", () => {
     const root = tempRoot();
     const runtimeDir = join(root, "cache", "runtimes", "stt");
-    const cacheRoot = join(runtimeDir, "linux-x64", "whisper.cpp", "0.1.0");
+    const cacheRoot = join(runtimeDir, "linux-x64", "whisper.cpp", "cpu", "0.1.0");
     const cacheBinary = touch(join(cacheRoot, "whisper-server"));
     writeRuntimeReceipt(cacheRoot, "whisper.cpp", "linux-x64", "0.1.0");
     touch(join(root, "vendor", "runtimes", "linux-x64", "whisper.cpp", "whisper-server"));
@@ -102,7 +102,7 @@ describe("SttRuntimeService", () => {
   it("keeps cache installs ready but disables actions when downloads are disabled", () => {
     const root = tempRoot();
     const runtimeDir = join(root, "cache", "runtimes", "stt");
-    const cacheRoot = join(runtimeDir, "linux-x64", "whisper.cpp", "0.1.0");
+    const cacheRoot = join(runtimeDir, "linux-x64", "whisper.cpp", "cpu", "0.1.0");
     const cacheBinary = touch(join(cacheRoot, "whisper-server"));
     writeRuntimeReceipt(cacheRoot, "whisper.cpp", "linux-x64", "0.1.0");
 
@@ -143,7 +143,7 @@ describe("SttRuntimeService", () => {
     expect(availability.binaryPath).toBe(envBinary);
 
     const states = service.getInstallStates();
-    expect(states["whisper.cpp"].accelerator).toBe("cpu");
+    expect(states["whisper.cpp"]).toBeUndefined();
     expect(states["whisper.cpp|linux-x64|cuda|0.1.0"].status).toBe("ready");
   });
 
@@ -227,7 +227,7 @@ describe("SttRuntimeService", () => {
   it("marks corrupt cache receipts as repairable", () => {
     const root = tempRoot();
     const runtimeDir = join(root, "cache", "runtimes", "stt");
-    const cacheRoot = join(runtimeDir, "linux-x64", "whisper.cpp", "0.1.0");
+    const cacheRoot = join(runtimeDir, "linux-x64", "whisper.cpp", "cpu", "0.1.0");
     const catalog = structuredClone(sttRuntimeCatalog);
     catalog["whisper.cpp"].platforms["linux-x64"].url = "https://example.test/runtime.tar.gz";
     touch(join(cacheRoot, "whisper-server"));
@@ -250,7 +250,7 @@ describe("SttRuntimeService", () => {
   it("cleans partial downloads and staging dirs on startup", () => {
     const root = tempRoot();
     const runtimeDir = join(root, "cache", "runtimes", "stt");
-    const parent = join(runtimeDir, "linux-x64", "whisper.cpp");
+    const parent = join(runtimeDir, "linux-x64", "whisper.cpp", "cpu");
     const part = join(parent, "runtime.tar.gz.part");
     const staging = join(parent, "0.1.0.staging-1");
     touch(part);
@@ -290,7 +290,7 @@ describe("SttRuntimeService", () => {
       extractArchive: async () => undefined
     });
 
-    const state = await service.downloadRuntime("whisper.cpp");
+    const state = await service.downloadRuntime("whisper.cpp|linux-x64|cpu|0.1.0");
 
     expect(state.status).toBe("error");
     expect(state.error).toContain("SHA-256 mismatch");
@@ -328,12 +328,12 @@ describe("SttRuntimeService", () => {
       extractArchive: async () => undefined
     });
 
-    const state = await service.downloadRuntime("whisper.cpp");
+    const state = await service.downloadRuntime("whisper.cpp|linux-x64|cpu|0.1.0");
 
     expect(state.status).toBe("error");
     expect(state.error).toContain("response body");
-    expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "runtime.tar.gz.part"))).toBe(false);
-    expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "0.1.0"))).toBe(false);
+    expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "cpu", "runtime.tar.gz.part"))).toBe(false);
+    expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "cpu", "0.1.0"))).toBe(false);
   });
 
   it("rejects unsafe runtime archive paths before extraction", async () => {
@@ -362,12 +362,12 @@ describe("SttRuntimeService", () => {
       }
     });
 
-    const state = await service.downloadRuntime("whisper.cpp");
+    const state = await service.downloadRuntime("whisper.cpp|linux-x64|cpu|0.1.0");
 
     expect(state.status).toBe("error");
     expect(state.error).toContain("unsafe path");
     expect(extractCalls).toBe(0);
-    expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "0.1.0"))).toBe(false);
+    expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "cpu", "0.1.0"))).toBe(false);
   });
 
   it("does not fetch or emit progress when download and repair are disabled", async () => {
@@ -388,8 +388,8 @@ describe("SttRuntimeService", () => {
       }
     });
 
-    const downloadState = await service.downloadRuntime("whisper.cpp");
-    const repairState = await service.repairRuntime("whisper.cpp");
+    const downloadState = await service.downloadRuntime("whisper.cpp|linux-x64|cpu|0.1.0");
+    const repairState = await service.repairRuntime("whisper.cpp|linux-x64|cpu|0.1.0");
 
     expect(downloadState.status).toBe("not_installed");
     expect(repairState.status).toBe("not_installed");
@@ -437,19 +437,19 @@ describe("SttRuntimeService", () => {
       }
     });
 
-    const installPromise = service.downloadRuntime("whisper.cpp");
+    const installPromise = service.downloadRuntime("whisper.cpp|linux-x64|cpu|0.1.0");
     await extractionStartedPromise;
 
     expect(extractSignal).toBeDefined();
     expect(extractSignal?.aborted).toBe(false);
 
-    const cancelState = await service.cancelRuntimeDownload("whisper.cpp");
+    const cancelState = await service.cancelRuntimeDownload("whisper.cpp|linux-x64|cpu|0.1.0");
     const installState = await installPromise;
 
     expect(extractSignal?.aborted).toBe(true);
     expect(cancelState.status).toBe("not_installed");
     expect(installState.status).toBe("not_installed");
-    expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "0.1.0"))).toBe(false);
+    expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "cpu", "0.1.0"))).toBe(false);
   });
 
   it("builds dynamic library environment variables", () => {

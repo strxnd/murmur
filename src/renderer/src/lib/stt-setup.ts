@@ -60,5 +60,8 @@ function runtimeIdForModel(item: ModelCatalogItem): SttRuntimeId | null {
 }
 
 function runtimeReady(state: AppStateSnapshot, runtimeId: SttRuntimeId): boolean {
-  return state.sttSetup.runtimes[runtimeId]?.status === "ready" || state.capabilities.sttRuntimes[runtimeId]?.status === "available";
+  return (
+    Object.values(state.sttSetup.runtimes).some((runtime) => runtime.id === runtimeId && runtime.status === "ready") ||
+    Object.values(state.capabilities.sttRuntimes).some((runtime) => runtime.id === runtimeId && runtime.status === "available")
+  );
 }

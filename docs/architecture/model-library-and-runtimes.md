@@ -13,7 +13,6 @@ flowchart TD
   Resources["2. process.resourcesPath/runtimes"]
   Cache["3. managed cache install"]
   Vendor["4. vendor/runtimes/<platform-key>"]
-  Legacy["5. vendor/runtimes/<runtime-dir>"]
   RuntimeReady{"Runtime available?"}
   DownloadRuntime["Download runtime archive"]
   Verify["Verify SHA-256"]
@@ -30,7 +29,6 @@ flowchart TD
   RuntimeLookup --> Resources --> RuntimeReady
   RuntimeLookup --> Cache --> RuntimeReady
   RuntimeLookup --> Vendor --> RuntimeReady
-  RuntimeLookup --> Legacy --> RuntimeReady
   RuntimeReady -- no --> DownloadRuntime --> Verify --> Install --> DownloadModel
   RuntimeReady -- yes --> DownloadModel
   NeedRuntime -- no --> DownloadModel
@@ -45,7 +43,6 @@ For each runtime, Murmur checks:
 2. `process.resourcesPath/runtimes/<platform-key>/<runtime-dir>/`.
 3. Managed cache installs under `runtimes/stt/<platform-key>/<runtime-id>/<accelerator>/<runtime-bundle-semver>/`.
 4. `vendor/runtimes/<platform-key>/<runtime-dir>/`.
-5. Legacy `vendor/runtimes/<runtime-dir>/`.
 
 Cache installs must include a matching `runtime.json` receipt and a supported executable. Corrupt or mismatched cache installs are reported as repairable only when a downloadable runtime archive URL is configured.
 

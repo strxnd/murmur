@@ -42,11 +42,10 @@ type ProgressEmitter = (state: SttRuntimeInstallState) => void;
 type RuntimeMutationHook = (state: SttRuntimeInstallState) => void | Promise<void>;
 type DownloadableSttRuntimeAsset = SttRuntimeAsset & { url: string; sizeBytes: number; sha256: string; archiveFormat: "tar.gz" };
 export type SttRuntimeActionTarget =
-  | SttRuntimeId
   | SttRuntimeVariantKey
   | {
       id: SttRuntimeId;
-      accelerator?: SttRuntimeAccelerator;
+      accelerator: SttRuntimeAccelerator;
       variantKey?: SttRuntimeVariantKey;
     };
 const defaultDownloadHeaderTimeoutMs = 15000;
@@ -244,7 +243,6 @@ export class SttRuntimeService {
     for (const variant of this.runtimeVariants()) {
       const availability = this.getAvailability(variant.id, variant.accelerator);
       entries.push([availability.variantKey, availability]);
-      if (variant.accelerator === "cpu") entries.push([variant.id, availability]);
     }
     return Object.fromEntries(entries);
   }
@@ -281,11 +279,7 @@ export class SttRuntimeService {
       });
     }
 
-    const cacheProblem =
-      this.cacheInstallProblem(definition, platformKey, accelerator) ??
-      (accelerator === "cpu"
-        ? this.cacheInstallProblem(definition, platformKey, accelerator, this.legacyCpuCacheInstallRoot(definition, platformKey))
-        : null);
+    const cacheProblem = this.cacheInstallProblem(definition, platformKey, accelerator);
     if (cacheProblem && this.downloadsEnabled && canDownloadRuntime) {
       return this.state(id, accelerator, "repairable", {
         error: cacheProblem,
@@ -319,7 +313,6 @@ export class SttRuntimeService {
     for (const variant of this.runtimeVariants()) {
       const state = this.getInstallState(variant.id, variant.accelerator);
       entries.push([state.variantKey, state]);
-      if (variant.accelerator === "cpu") entries.push([variant.id, state]);
     }
     return Object.fromEntries(entries);
   }
@@ -636,21 +629,8 @@ export class SttRuntimeService {
     if (this.isValidCacheInstall(definition, platformKey, accelerator, cacheRoot)) {
       candidates.push(...this.runtimeDirCandidates(cacheRoot, definition, "cache", definition.version));
     }
-    const legacyCpuCacheRoot = this.legacyCpuCacheInstallRoot(definition, platformKey);
-    if (
-      accelerator === "cpu" &&
-      legacyCpuCacheRoot !== cacheRoot &&
-      this.isValidCacheInstall(definition, platformKey, accelerator, legacyCpuCacheRoot)
-    ) {
-      candidates.push(...this.runtimeDirCandidates(legacyCpuCacheRoot, definition, "cache", definition.version));
-    }
 
-    candidates.push(
-      ...this.runtimeDirCandidates(join(this.projectRoot, "vendor", "runtimes", platformKey, runtimeDir), definition, "vendor"),
-      ...(accelerator === "cpu"
-        ? this.runtimeDirCandidates(join(this.projectRoot, "vendor", "runtimes", definition.runtimeDir), definition, "legacy_vendor")
-        : [])
-    );
+    candidates.push(...this.runtimeDirCandidates(join(this.projectRoot, "vendor", "runtimes", platformKey, runtimeDir), definition, "vendor"));
 
     return candidates;
   }
@@ -698,10 +678,6 @@ export class SttRuntimeService {
       definition.id,
       accelerator
     );
-  }
-
-  private legacyCpuCacheInstallRoot(definition: SttRuntimeCatalogEntry, platformKey: string): string {
-    return join(this.runtimeDir ?? join(this.projectRoot, "vendor", "runtime-cache"), platformKey, definition.id, definition.version);
   }
 
   private cacheInstallProblem(
@@ -810,18 +786,14 @@ export class SttRuntimeService {
           variantKey: target
         };
       }
-      return {
-        id: target as SttRuntimeId,
-        platformKey,
-        accelerator: "cpu",
-        variantKey: this.variantKey(this.definition(target as SttRuntimeId), platformKey, "cpu")
-      };
+      throw new Error(`Invalid STT runtime variant key: ${target}`);
     }
 
-    const accelerator = target.accelerator ?? (target.variantKey ? parseSttRuntimeVariantKey(target.variantKey)?.accelerator : undefined) ?? "cpu";
+    const parsedVariant = target.variantKey ? parseSttRuntimeVariantKey(target.variantKey) : null;
+    const accelerator = parsedVariant?.accelerator ?? target.accelerator;
     return {
-      id: target.id,
-      platformKey,
+      id: parsedVariant?.id ?? target.id,
+      platformKey: parsedVariant?.platformKey ?? platformKey,
       accelerator,
       variantKey: target.variantKey ?? this.variantKey(this.definition(target.id), platformKey, accelerator)
     };
