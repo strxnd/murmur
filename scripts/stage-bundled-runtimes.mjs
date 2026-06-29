@@ -9,19 +9,25 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
 const vendorRoot = process.env.MURMUR_RUNTIME_VENDOR_ROOT || join(repoRoot, "vendor", "runtimes");
 const stagingRoot = process.env.MURMUR_RUNTIME_STAGING_ROOT || join(repoRoot, ".cache", "bundled-runtimes", "runtimes");
-const { sttRuntimeCatalog, supportedSttRuntimePlatformKeys } = await loadCatalog(join(repoRoot, "src", "shared", "stt-runtime-catalog.ts"));
+const {
+  getSttRuntimeVariantAsset,
+  sttRuntimeCatalog,
+  sttRuntimeVariantRuntimeDir,
+  supportedSttRuntimePlatformKeys
+} = await loadCatalog(join(repoRoot, "src", "shared", "stt-runtime-catalog.ts"));
 const target = readTarget(process.argv.slice(2), process.env);
 const platformKey = resolvePlatformKey(target);
 
 rmSync(stagingRoot, { recursive: true, force: true });
 
 for (const runtime of Object.values(sttRuntimeCatalog)) {
-  if (!runtime.platforms[platformKey]) {
-    throw new Error(`No asset metadata for ${runtime.id} on ${platformKey}.`);
+  if (!getSttRuntimeVariantAsset(runtime, platformKey, "cpu")) {
+    throw new Error(`No CPU asset metadata for ${runtime.id} on ${platformKey}.`);
   }
 
-  const sourceDir = join(vendorRoot, platformKey, runtime.runtimeDir);
-  const targetDir = join(stagingRoot, platformKey, runtime.runtimeDir);
+  const runtimeDir = sttRuntimeVariantRuntimeDir(runtime, platformKey, "cpu");
+  const sourceDir = join(vendorRoot, platformKey, runtimeDir);
+  const targetDir = join(stagingRoot, platformKey, runtimeDir);
   const executable = runtime.executableCandidates.map((candidate) => join(sourceDir, ...candidate.split("/"))).find((candidate) => existsSync(candidate));
 
   if (!executable) {
@@ -33,7 +39,7 @@ for (const runtime of Object.values(sttRuntimeCatalog)) {
     dereference: false,
     preserveTimestamps: true
   });
-  console.log(`Staged ${runtime.id} for ${platformKey}: ${relative(targetDir)}`);
+  console.log(`Staged ${runtime.id} CPU for ${platformKey}: ${relative(targetDir)}`);
 }
 
 function readTarget(args, env) {

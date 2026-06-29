@@ -20,7 +20,7 @@ Paths are resolved by [`resolveAppPaths()`](../../src/main/services/app-paths.ts
 Development-managed STT runtimes install under:
 
 ```text
-<runtimeDir>/<platform-key>/<runtime-id>/<version>/
+<runtimeDir>/<platform-key>/<runtime-id>/<accelerator>/<runtime-bundle-semver>/
 ```
 
 Each valid cache install includes a `runtime.json` receipt. Development fallbacks are read from:

@@ -109,6 +109,7 @@ describe("StorageService", () => {
     expect(settings.sttSetupCompletedAt).toBeUndefined();
     expect(settings.onboardingSkippedAt).toBeUndefined();
     expect(settings.onboardingCompletedAt).toBeUndefined();
+    expect(settings.gpuRuntimeInstallPromptDismissedAt).toBeUndefined();
   });
 
   it("preserves onboarding completion timestamps", () => {
@@ -453,6 +454,17 @@ describe("StorageService", () => {
     const reopened = jsonStorage(paths);
 
     expect(reopened.getState().settings.trayCloseNoticeShownAt).toBe(trayCloseNoticeShownAt);
+  });
+
+  it("persists the GPU runtime install prompt dismissal timestamp", () => {
+    const paths = testPaths();
+    const storage = jsonStorage(paths);
+    const gpuRuntimeInstallPromptDismissedAt = "2026-06-29T00:00:00.000Z";
+
+    storage.updateSettings({ gpuRuntimeInstallPromptDismissedAt });
+    const reopened = jsonStorage(paths);
+
+    expect(reopened.getState().settings.gpuRuntimeInstallPromptDismissedAt).toBe(gpuRuntimeInstallPromptDismissedAt);
   });
 
   it("writes history state to the data dir", () => {

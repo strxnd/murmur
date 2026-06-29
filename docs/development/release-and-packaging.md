@@ -76,18 +76,18 @@ Building the `rpm` target also requires the host system to provide `rpmbuild`.
 
 ## Draft GitHub Releases
 
-Pushing a version tag creates a draft GitHub Release. The workflow lives at [`.github/workflows/release.yml`](../../.github/workflows/release.yml) and runs on tags matching `v*`.
+Pushing a SemVer app version tag creates a draft GitHub Release. The workflow lives at [`.github/workflows/release.yml`](../../.github/workflows/release.yml) and runs on tags that start with a numeric SemVer core, such as `0.1.0`.
 
 Before pushing a release tag:
 
 1. Update `package.json` to the release version.
-2. Add meaningful release notes at `docs/releases/v<version>.md`.
+2. Add meaningful release notes at `docs/releases/<version>.md`.
 3. Commit the version and release notes.
 4. Push the matching tag, for example:
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag 0.1.0
+git push origin 0.1.0
 ```
 
 The workflow verifies that the tag matches `package.json`, requires the release notes file, runs lint/tests/audit, prepares bundled STT runtimes, builds `AppImage`, `deb`, and `rpm`, generates `SHA256SUMS-linux.txt`, verifies the checksums, and creates a draft release with those files attached.
@@ -145,7 +145,7 @@ mise run runtimes:stage
 mise run runtimes:package
 ```
 
-`runtimes:stage` copies one platform from `vendor/runtimes/<platform-key>/` into `.cache/bundled-runtimes/runtimes/<platform-key>/` for inclusion under `<process.resourcesPath>/runtimes/` in packaged apps. Packaged apps do not download runtime binaries at startup; voice model files are still downloaded separately into the user cache.
+`runtimes:stage` copies CPU runtime files from `vendor/runtimes/<platform-key>/` into `.cache/bundled-runtimes/runtimes/<platform-key>/` for inclusion under `<process.resourcesPath>/runtimes/` in packaged apps. GPU runtime variants are optional assets published on runtime-only GitHub releases, separate from app releases, and are downloaded into the user cache only when their catalog URL, size, and SHA-256 are configured.
 
 `runtimes:package` writes archives to `dist/runtimes/*.tar.gz`.
 

@@ -24,6 +24,7 @@ import { Select, type SelectItem } from "../components/ui/Select";
 import { Textarea } from "../components/ui/Textarea";
 import { cn } from "../lib/cn";
 import { murmurClient } from "../lib/murmur-client";
+import { runtimeStatusLabel, userRuntimeStatusMessage } from "../lib/runtimes";
 import {
   downloadForModel,
   formatBytes,
@@ -440,9 +441,7 @@ export function OnboardingWizard({
                     saving={isSavingHotkey}
                     error={hotkeyError}
                     registered={state.capabilities.hotkeys.registered}
-                    backend={state.capabilities.hotkeys.backend}
                     triggerDescription={state.capabilities.hotkeys.triggerDescription}
-                    diagnostics={state.capabilities.hotkeys.diagnostics}
                     dictationStatus={dictationStatus}
                     dictationMessage={dictationMessage}
                     dictationValue={dictationValue}
@@ -600,7 +599,7 @@ function SttStep({
                   <Badge tone={itemDownload?.status === "downloaded" ? "success" : "neutral"}>
                     {downloadStatusLabel(itemDownload?.status ?? "not_downloaded")}
                   </Badge>
-                  {itemRuntime && <Badge tone={itemRuntime.status === "ready" ? "success" : "warning"}>{itemRuntime.status}</Badge>}
+                  {itemRuntime && <Badge tone={itemRuntime.status === "ready" ? "success" : "warning"}>{runtimeStatusLabel(itemRuntime)}</Badge>}
                 </div>
               </div>
               {itemDownload?.status === "downloading" && <ProgressBar value={itemProgress} label={`${item.name} download progress`} className="mt-3" />}
@@ -618,10 +617,10 @@ function SttStep({
         <div className="flex flex-col gap-2 rounded-md border border-border bg-muted/30 p-3">
           <div className="flex flex-wrap items-center gap-2">
             <Badge>{runtime.label}</Badge>
-            <Badge tone={runtime.status === "ready" ? "success" : "warning"}>{runtime.status}</Badge>
+            <Badge tone={runtime.status === "ready" ? "success" : "warning"}>{runtimeStatusLabel(runtime)}</Badge>
           </div>
-          <p className="m-0 text-sm leading-6 text-muted-foreground">{runtime.message}</p>
-          {runtimeBusy && <ProgressBar value={progressValue(runtime.progressBytes, runtime.totalBytes)} label={`${runtime.label} runtime progress`} />}
+          <p className="m-0 text-sm leading-6 text-muted-foreground">{userRuntimeStatusMessage(runtime)}</p>
+          {runtimeBusy && <ProgressBar value={progressValue(runtime.progressBytes, runtime.totalBytes)} label={`${runtime.label} install progress`} />}
         </div>
       )}
       {downloadStatus === "downloading" && <ProgressBar value={downloadProgress} label={`${selectedModelName} download progress`} />}
@@ -643,9 +642,7 @@ function HotkeyTestStep({
   saving,
   error,
   registered,
-  backend,
   triggerDescription,
-  diagnostics,
   dictationStatus,
   dictationMessage,
   dictationValue,
@@ -663,9 +660,7 @@ function HotkeyTestStep({
   saving: boolean;
   error: string | null;
   registered: boolean;
-  backend: AppStateSnapshot["capabilities"]["hotkeys"]["backend"];
   triggerDescription?: string;
-  diagnostics: string[];
   dictationStatus: DictationTestStatus;
   dictationMessage: string;
   dictationValue: string;
@@ -700,12 +695,11 @@ function HotkeyTestStep({
         <StatusBadge status={registered ? "passed" : "warning"} />
       </div>
       <div className="grid grid-cols-2 gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm max-[640px]:grid-cols-1">
-        <Metric label="Backend" value={backendLabel(backend)} />
-        <Metric label="Registered" value={registered ? "Yes" : "No"} />
+        <Metric label="Shortcut" value={registered ? "Ready" : "Needs attention"} />
         {triggerDescription && <Metric label="System shortcut" value={triggerDescription} />}
       </div>
       {error && <StatusMessage status="error">{error}</StatusMessage>}
-      {!registered && diagnostics.length > 0 && <StatusMessage status="warning">{diagnostics.join(" ")}</StatusMessage>}
+      {!registered && <StatusMessage status="warning">Choose a different shortcut or assign it in system settings.</StatusMessage>}
       <Field label="Transcript test">
         <Textarea
           ref={textareaRef}
@@ -859,23 +853,6 @@ function downloadStatusLabel(status: string): string {
   if (status === "downloading") return "Downloading";
   if (status === "error") return "Error";
   return "Not downloaded";
-}
-
-function backendLabel(backend: string): string {
-  const labels: Record<string, string> = {
-    xdg_desktop_portal: "XDG Desktop Portal",
-    gnome_custom_shortcut: "GNOME custom shortcuts",
-    kde_kglobalaccel: "KDE KGlobalAccel",
-    hyprland_bind: "Hyprland binds",
-    electron_global_shortcut: "Electron globalShortcut",
-    linux_native_helper: "Linux helper",
-    wtype: "wtype",
-    xdotool: "xdotool",
-    ydotool: "ydotool",
-    xdg_remote_desktop_keyboard: "XDG RemoteDesktop",
-    clipboard_only: "Clipboard only"
-  };
-  return labels[backend] ?? backend;
 }
 
 function providerLabelForVoiceModel(item: ModelCatalogItem): string {

@@ -29,18 +29,26 @@ const cacheRoot = join(repoRoot, ".cache", "runtimes");
 
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 const platformArg = readPlatformArg(process.argv.slice(2));
+const acceleratorArg = readAcceleratorArg(process.argv.slice(2));
 const platformKeys = resolvePlatformKeys(platformArg);
+const accelerators = resolveAccelerators(acceleratorArg);
 const currentKey = currentPlatformKey();
 
 for (const platformKey of platformKeys) {
   console.log(`Preparing STT runtimes for ${platformKey}`);
-  await prepareSherpaOnnx(platformKey);
-  if (platformKey === currentKey) {
-    await prepareWhisperCpp(platformKey);
-  } else if (platformArg === "all") {
-    console.warn(`Skipping whisper.cpp build for ${platformKey}; cross-compilation is not configured. Build it on that platform.`);
-  } else {
-    throw new Error(`Cannot build whisper.cpp for ${platformKey} on ${currentKey}. Run this script on the target platform.`);
+  for (const accelerator of accelerators) {
+    if (accelerator === "hip") {
+      console.warn("Skipping Sherpa ONNX HIP; Sherpa ONNX has no HIP/ROCm runtime in this Murmur version.");
+    } else {
+      await prepareSherpaOnnx(platformKey, accelerator);
+    }
+    if (platformKey === currentKey) {
+      await prepareWhisperCpp(platformKey, accelerator);
+    } else if (platformArg === "all") {
+      console.warn(`Skipping whisper.cpp ${accelerator} build for ${platformKey}; cross-compilation is not configured. Build it on that platform.`);
+    } else {
+      throw new Error(`Cannot build whisper.cpp for ${platformKey} on ${currentKey}. Run this script on the target platform.`);
+    }
   }
 }
 
@@ -50,6 +58,20 @@ function readPlatformArg(args) {
   const value = args[index + 1];
   if (!value) throw new Error("--platform needs a value: current, all, or a platform key.");
   return value;
+}
+
+function readAcceleratorArg(args) {
+  const index = args.indexOf("--accelerator");
+  if (index === -1) return "cpu";
+  const value = args[index + 1];
+  if (!value) throw new Error("--accelerator needs a value: cpu, cuda, hip, or all.");
+  if (!["cpu", "cuda", "hip", "all"].includes(value)) throw new Error(`Unsupported accelerator ${value}.`);
+  return value;
+}
+
+function resolveAccelerators(value) {
+  if (value === "all") return ["cpu", "cuda", "hip"];
+  return [value];
 }
 
 function resolvePlatformKeys(value) {
@@ -67,10 +89,14 @@ function currentPlatformKey() {
   return `${process.platform}-${process.arch}`;
 }
 
-async function prepareSherpaOnnx(platformKey) {
+async function prepareSherpaOnnx(platformKey, accelerator) {
   const runtime = manifest.runtimes["sherpa-onnx"];
-  const asset = runtime.assets[platformKey];
-  if (!asset) throw new Error(`No Sherpa ONNX asset is configured for ${platformKey}.`);
+  const asset = runtime.assets[platformKey]?.[accelerator] ?? (accelerator === "cpu" ? runtime.assets[platformKey] : undefined);
+  if (!asset?.name || !asset.sha256) {
+    throw new Error(
+      `No Sherpa ONNX ${accelerator} source asset is configured for ${platformKey}. Repackage upstream GPU archives into Murmur tar.gz assets before app cataloging.`
+    );
+  }
 
   mkdirSync(cacheRoot, { recursive: true });
   const archivePath = join(cacheRoot, asset.name);
@@ -98,7 +124,7 @@ async function prepareSherpaOnnx(platformKey) {
     const offlineBinary = findFile(sourceRoot, (file) => basename(file) === "sherpa-onnx-offline");
     if (!offlineBinary) throw new Error(`Could not find sherpa-onnx-offline in ${asset.name}.`);
 
-    const dest = join(vendorRoot, platformKey, "sherpa-onnx");
+    const dest = join(vendorRoot, platformKey, runtimeDirForVariant("sherpa-onnx", accelerator));
     rmSync(dest, { recursive: true, force: true });
     mkdirSync(dirname(dest), { recursive: true });
     cpSync(sourceRoot, dest, { recursive: true });
@@ -109,16 +135,16 @@ async function prepareSherpaOnnx(platformKey) {
   }
 }
 
-async function prepareWhisperCpp(platformKey) {
+async function prepareWhisperCpp(platformKey, accelerator) {
   const runtime = manifest.runtimes["whisper.cpp"];
   const tempDir = mkdtempSync(join(tmpdir(), `murmur-whisper-${platformKey}-`));
   const sourceDir = join(tempDir, "whisper.cpp");
   const buildDir = join(tempDir, "build");
 
   try {
-    await run("git", ["clone", "--depth", "1", "--branch", runtime.version, runtime.repository, sourceDir]);
+    await run("git", ["clone", "--depth", "1", "--branch", runtime.gitTag ?? runtime.version, runtime.repository, sourceDir]);
     await run("git", ["apply", join(repoRoot, runtime.patch)], { cwd: sourceDir });
-    await run("cmake", [
+    const cmakeArgs = [
       "-S",
       sourceDir,
       "-B",
@@ -129,14 +155,20 @@ async function prepareWhisperCpp(platformKey) {
       "-DWHISPER_BUILD_SERVER=ON",
       "-DWHISPER_COMMON_FFMPEG=OFF",
       "-DGGML_NATIVE=OFF"
-    ]);
+    ];
+    if (accelerator === "cuda") cmakeArgs.push("-DGGML_CUDA=ON");
+    if (accelerator === "hip") {
+      cmakeArgs.push("-DGGML_HIP=ON");
+      if (process.env.MURMUR_ROCM_TARGETS) cmakeArgs.push(`-DAMDGPU_TARGETS=${process.env.MURMUR_ROCM_TARGETS}`);
+    }
+    await run("cmake", cmakeArgs);
     await run("cmake", ["--build", buildDir, "--config", "Release", "--target", "whisper-server"]);
 
     const binaryName = "whisper-server";
     const binary = findFile(buildDir, (file) => basename(file) === binaryName);
     if (!binary) throw new Error(`Could not find built ${binaryName}.`);
 
-    const dest = join(vendorRoot, platformKey, "whisper.cpp");
+    const dest = join(vendorRoot, platformKey, runtimeDirForVariant("whisper.cpp", accelerator));
     rmSync(dest, { recursive: true, force: true });
     mkdirSync(dest, { recursive: true });
     copyFileSync(binary, join(dest, binaryName));
@@ -190,6 +222,10 @@ function chmodExecutables(root, platformKey) {
   for (const file of findFiles(root, (candidate) => ["whisper-server", "sherpa-onnx-offline"].includes(basename(candidate)))) {
     chmodSync(file, 0o755);
   }
+}
+
+function runtimeDirForVariant(runtimeDir, accelerator) {
+  return accelerator === "cpu" ? runtimeDir : `${runtimeDir}-${accelerator}`;
 }
 
 function singleChildDirectory(dir) {

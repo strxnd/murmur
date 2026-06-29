@@ -11,7 +11,7 @@ import type {
   ProviderValidationResult,
   RecordingLevelPayload,
   RecordingStartPayload,
-  SttRuntimeId,
+  SttRuntimeActionTarget,
   SttRuntimeInstallState,
   SttSetupSnapshot,
   TranscriptionProviderConfig,
@@ -57,12 +57,12 @@ export const murmurClient = {
   toggleFavoriteModel: (modelId: string): Promise<ModelLibrarySnapshot> =>
     window.murmur.toggleFavoriteModel(modelId).then(parseModelLibrary),
   getSttSetup: (): Promise<SttSetupSnapshot> => window.murmur.getSttSetup().then(parseSttSetup),
-  downloadSttRuntime: (runtimeId: SttRuntimeId): Promise<SttSetupSnapshot> =>
-    window.murmur.downloadSttRuntime(runtimeId).then(parseSttSetup),
-  repairSttRuntime: (runtimeId: SttRuntimeId): Promise<SttSetupSnapshot> =>
-    window.murmur.repairSttRuntime(runtimeId).then(parseSttSetup),
-  cancelSttRuntimeDownload: (runtimeId: SttRuntimeId): Promise<SttSetupSnapshot> =>
-    window.murmur.cancelSttRuntimeDownload(runtimeId).then(parseSttSetup),
+  downloadSttRuntime: (target: SttRuntimeActionTarget): Promise<SttSetupSnapshot> =>
+    window.murmur.downloadSttRuntime(target).then(parseSttSetup),
+  repairSttRuntime: (target: SttRuntimeActionTarget): Promise<SttSetupSnapshot> =>
+    window.murmur.repairSttRuntime(target).then(parseSttSetup),
+  cancelSttRuntimeDownload: (target: SttRuntimeActionTarget): Promise<SttSetupSnapshot> =>
+    window.murmur.cancelSttRuntimeDownload(target).then(parseSttSetup),
   setupBundledStt: (modelId: string): Promise<AppStateSnapshot> => window.murmur.setupBundledStt(modelId).then(parseState),
   skipSttSetup: (): Promise<AppStateSnapshot> => window.murmur.skipSttSetup().then(parseState),
   startDictation: (): Promise<AppStateSnapshot> => window.murmur.startDictation().then(parseState),

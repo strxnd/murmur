@@ -36,6 +36,17 @@ export type ModelProvider =
 export type ModelDownloadStrategy = "direct_file" | "archive" | "ollama_pull" | "none";
 export type ModelDownloadStatus = "not_downloaded" | "downloading" | "downloaded" | "error";
 export type SttRuntimeId = "whisper.cpp" | "sherpa-onnx";
+export type SttRuntimeAccelerator = "cpu" | "cuda" | "hip";
+export type SttAccelerationPreference = "auto" | SttRuntimeAccelerator;
+export type SttRuntimeVariantKey = string;
+export type SttRuntimeActionTarget =
+  | SttRuntimeId
+  | SttRuntimeVariantKey
+  | {
+      id: SttRuntimeId;
+      accelerator?: SttRuntimeAccelerator;
+      variantKey?: SttRuntimeVariantKey;
+    };
 export type RuntimeAvailabilityStatus = "available" | "missing" | "unsupported";
 export type SttRuntimeInstallStatus =
   | "ready"
@@ -49,17 +60,22 @@ export type SttRuntimeSource = "env" | "resources" | "cache" | "vendor" | "legac
 
 export interface SttRuntimeAvailability {
   id: SttRuntimeId;
+  variantKey: SttRuntimeVariantKey;
+  accelerator: SttRuntimeAccelerator;
   label: string;
   status: RuntimeAvailabilityStatus;
   platformKey: string;
   binaryPath?: string;
   source?: SttRuntimeSource;
   version?: string;
+  abi?: string;
   message: string;
 }
 
 export interface SttRuntimeInstallState {
   id: SttRuntimeId;
+  variantKey: SttRuntimeVariantKey;
+  accelerator: SttRuntimeAccelerator;
   label: string;
   platformKey: string;
   requiredVersion: string;
@@ -68,6 +84,7 @@ export interface SttRuntimeInstallState {
   source?: SttRuntimeSource;
   binaryPath?: string;
   rootDir?: string;
+  abi?: string;
   progressBytes: number;
   totalBytes?: number;
   error?: string;
@@ -80,7 +97,7 @@ export interface SttSetupSnapshot {
   skipped: boolean;
   completed: boolean;
   needsSetup: boolean;
-  runtimes: Record<SttRuntimeId, SttRuntimeInstallState>;
+  runtimes: Record<SttRuntimeVariantKey, SttRuntimeInstallState>;
 }
 
 export interface ContextSnapshot {
@@ -234,7 +251,9 @@ export interface AppSettings {
   recordingPillPosition: RecordingPillPosition;
   preferredAudioInputId?: string;
   typingBaselineWpm: number;
+  sttAccelerationPreference: SttAccelerationPreference;
   trayCloseNoticeShownAt?: string;
+  gpuRuntimeInstallPromptDismissedAt?: string;
   sttSetupSkippedAt?: string;
   sttSetupCompletedAt?: string;
   onboardingSkippedAt?: string;
@@ -253,6 +272,7 @@ export interface DictationHistoryItem {
   transcriptionModel?: string;
   transcriptionProviderCloud: boolean;
   transcriptionStreamingMode: SttStreamingMode;
+  transcriptionAccelerator?: SttRuntimeAccelerator;
   llmProviderId?: string;
   llmProviderType?: string;
   llmModel?: string;
@@ -296,6 +316,7 @@ export interface TranscriptionResult {
   providerId: string;
   model?: string;
   streamingMode: SttStreamingMode;
+  accelerator?: SttRuntimeAccelerator;
 }
 
 export interface ProcessedResult {
@@ -337,10 +358,23 @@ export interface HotkeyActionCapability {
   diagnostics: string[];
 }
 
+export interface GpuProbeAdapterReport {
+  available: boolean;
+  devices: string[];
+  diagnostics: string[];
+}
+
+export interface SttGpuProbeReport {
+  nvidia: GpuProbeAdapterReport;
+  amd: GpuProbeAdapterReport;
+  diagnostics: string[];
+}
+
 export interface CapabilityReport {
-  sttRuntimes: Record<SttRuntimeId, SttRuntimeAvailability>;
+  sttRuntimes: Record<SttRuntimeVariantKey, SttRuntimeAvailability>;
   stt: {
     diagnostics: string[];
+    gpuProbe: SttGpuProbeReport;
   };
   hotkeys: {
     backend: "xdg_desktop_portal" | "gnome_custom_shortcut" | "kde_kglobalaccel" | "hyprland_bind" | "electron_global_shortcut";

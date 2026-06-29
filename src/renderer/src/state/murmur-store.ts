@@ -8,7 +8,7 @@ import type {
   ModelLibrarySnapshot,
   ModeConfig,
   ProviderValidationResult,
-  SttRuntimeId,
+  SttRuntimeActionTarget,
   SttRuntimeInstallState,
   SttSetupSnapshot,
   TranscriptionProviderConfig,
@@ -49,9 +49,9 @@ interface MurmurStore {
   deleteDownloadedModel: (modelId: string) => Promise<void>;
   toggleFavoriteModel: (modelId: string) => Promise<void>;
   getSttSetup: () => Promise<void>;
-  downloadSttRuntime: (runtimeId: SttRuntimeId) => Promise<void>;
-  repairSttRuntime: (runtimeId: SttRuntimeId) => Promise<void>;
-  cancelSttRuntimeDownload: (runtimeId: SttRuntimeId) => Promise<void>;
+  downloadSttRuntime: (target: SttRuntimeActionTarget) => Promise<void>;
+  repairSttRuntime: (target: SttRuntimeActionTarget) => Promise<void>;
+  cancelSttRuntimeDownload: (target: SttRuntimeActionTarget) => Promise<void>;
   setupBundledStt: (modelId: string) => Promise<void>;
   skipSttSetup: () => Promise<void>;
   startDictation: () => Promise<void>;
@@ -224,14 +224,19 @@ function upsertDownload(snapshot: AppStateSnapshot, download: ModelDownloadState
 }
 
 function upsertRuntimeState(snapshot: AppStateSnapshot, runtime: SttRuntimeInstallState): AppStateSnapshot {
+  const runtimes = {
+    ...snapshot.sttSetup.runtimes,
+    [runtime.variantKey]: runtime
+  };
+  if (runtime.accelerator === "cpu") {
+    runtimes[runtime.id] = runtime;
+  }
+
   return {
     ...snapshot,
     sttSetup: {
       ...snapshot.sttSetup,
-      runtimes: {
-        ...snapshot.sttSetup.runtimes,
-        [runtime.id]: runtime
-      }
+      runtimes
     }
   };
 }

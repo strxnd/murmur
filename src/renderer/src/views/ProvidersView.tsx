@@ -1,5 +1,6 @@
+import { Dialog } from "@base-ui/react/dialog";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { AlertTriangle, CheckCircle2, KeyRound, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronRight, KeyRound, MessageSquare, Mic, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import { createPortal } from "react-dom";
 import { Controller, useForm, useWatch, type Path, type UseFormReturn } from "react-hook-form";
@@ -18,9 +19,11 @@ import { Button } from "../components/ui/Button";
 import { Field } from "../components/ui/Field";
 import { IconButton } from "../components/ui/IconButton";
 import { Input } from "../components/ui/Input";
-import { Panel } from "../components/ui/Panel";
 import { Select, type SelectItem } from "../components/ui/Select";
 import { Switch } from "../components/ui/Switch";
+import { Toolbar } from "../components/ui/Toolbar";
+import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
+import { cn } from "../lib/cn";
 import { makeClientId } from "../lib/ids";
 import {
   applyCloudCredentialApiKey,
@@ -55,6 +58,10 @@ const providersFormSchema = z.object({
 
 type ProvidersFormValues = z.infer<typeof providersFormSchema>;
 type ProviderKind = "stt" | "llm";
+type ProviderDialogTarget = { kind: ProviderKind; id: string };
+type CustomProviderEntry =
+  | { kind: "stt"; provider: TranscriptionProviderConfig; index: number }
+  | { kind: "llm"; provider: LlmProviderConfig; index: number };
 type ValidationStatus = "validating" | "success" | "error";
 
 interface ValidationState {
@@ -77,8 +84,8 @@ const llmTypeItems: Array<SelectItem<(typeof customLlmProviderTypes)[number]>> =
 
 const streamingModeItems: Array<SelectItem<SttStreamingMode>> = [
   { value: "none", label: "None" },
-  { value: "completed_audio_sse", label: "Completed audio SSE" },
-  { value: "live_realtime", label: "Live realtime" }
+  { value: "completed_audio_sse", label: "Stream completed audio" },
+  { value: "live_realtime", label: "Live transcription" }
 ];
 
 export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Element {
@@ -107,6 +114,9 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isPromptMounted, setIsPromptMounted] = useState(false);
+  const [openProvider, setOpenProvider] = useState<ProviderDialogTarget | null>(null);
+  const [isProviderDialogOpen, setIsProviderDialogOpen] = useState(false);
+  const customProviderListParent = useAutoAnimateRef<HTMLDivElement>();
   const currentValues: ProvidersFormValues = {
     transcriptionProviders,
     llmProviders
@@ -177,18 +187,28 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
   }, [form]);
 
   const addSttProvider = (): void => {
+    const next = createCustomTranscriptionProvider(makeClientId("stt_provider"));
     form.setValue(
       "transcriptionProviders",
-      [...form.getValues("transcriptionProviders"), createCustomTranscriptionProvider(makeClientId("stt_provider"))],
+      [...form.getValues("transcriptionProviders"), next],
       { shouldDirty: true, shouldValidate: true }
     );
+    setOpenProvider({ kind: "stt", id: next.id });
+    setIsProviderDialogOpen(true);
   };
 
   const addLlmProvider = (): void => {
-    form.setValue("llmProviders", [...form.getValues("llmProviders"), createCustomLlmProvider(makeClientId("llm_provider"))], {
+    const next = createCustomLlmProvider(makeClientId("llm_provider"));
+    form.setValue("llmProviders", [...form.getValues("llmProviders"), next], {
       shouldDirty: true,
       shouldValidate: true
     });
+    setOpenProvider({ kind: "llm", id: next.id });
+    setIsProviderDialogOpen(true);
+  };
+
+  const closeProviderPopup = (): void => {
+    setIsProviderDialogOpen(false);
   };
 
   const deleteSttProvider = (providerId: string): void => {
@@ -198,6 +218,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
       { shouldDirty: true, shouldValidate: true }
     );
     clearValidation(providerKey("stt", providerId), setValidationByProvider);
+    if (openProvider?.kind === "stt" && openProvider.id === providerId) closeProviderPopup();
   };
 
   const deleteLlmProvider = (providerId: string): void => {
@@ -207,6 +228,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
       { shouldDirty: true, shouldValidate: true }
     );
     clearValidation(providerKey("llm", providerId), setValidationByProvider);
+    if (openProvider?.kind === "llm" && openProvider.id === providerId) closeProviderPopup();
   };
 
   const validateProvider = async (kind: ProviderKind, index: number): Promise<void> => {
@@ -318,7 +340,14 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
   const advancedLlmProviders = llmProviders
     .map((provider, index) => ({ provider, index }))
     .filter(({ provider }) => !isDefaultLlmProvider(provider) && !isCloudCredentialLlmProvider(provider));
-  const hasAdvancedProviders = advancedTranscriptionProviders.length > 0 || advancedLlmProviders.length > 0;
+  const customProviders: CustomProviderEntry[] = [
+    ...advancedTranscriptionProviders.map(({ provider, index }) => ({ kind: "stt" as const, provider, index })),
+    ...advancedLlmProviders.map(({ provider, index }) => ({ kind: "llm" as const, provider, index }))
+  ];
+  const openProviderEntry = openProvider
+    ? customProviders.find((entry) => entry.kind === openProvider.kind && entry.provider.id === openProvider.id)
+    : undefined;
+  const providerDialogOpen = isProviderDialogOpen && Boolean(openProviderEntry);
 
   const unsavedChangesPrompt = isPromptMounted
     ? createPortal(
@@ -370,65 +399,79 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
         />
 
         <section className="flex flex-col gap-4 border-t border-border pt-4">
-          <header className="flex items-center justify-between gap-3 max-[760px]:items-start">
+          <header className="flex items-center justify-between gap-3 max-[760px]:flex-col max-[760px]:items-start">
             <div className="min-w-0">
               <h2 className="m-0 text-sm font-semibold text-foreground">Custom providers</h2>
-              <p className="m-0 mt-1 text-xs text-muted-foreground">Custom provider records.</p>
+              <p className="m-0 mt-1 text-xs text-muted-foreground">Open a provider to edit its connection.</p>
             </div>
-          </header>
-
-          <div className="flex flex-col gap-6">
-            <div className="flex flex-wrap items-center justify-end gap-2">
+            <Toolbar className="justify-end">
               <Button onClick={addSttProvider}>
                 <Plus size={16} /> Add custom STT
               </Button>
               <Button onClick={addLlmProvider}>
                 <Plus size={16} /> Add custom LLM
               </Button>
-            </div>
+            </Toolbar>
+          </header>
 
-            {!hasAdvancedProviders && (
+          <div ref={customProviderListParent} className="flex flex-col gap-2">
+            {customProviders.length === 0 ? (
               <div className="flex min-h-24 items-center justify-center rounded-md border border-dashed border-border bg-muted/30 p-4 text-sm text-muted-foreground">
                 No custom providers.
               </div>
-            )}
-
-            {advancedTranscriptionProviders.length > 0 && (
-              <ProviderGroup title="Custom speech-to-text" actionLabel="Add custom STT provider" onAdd={addSttProvider}>
-                {advancedTranscriptionProviders.map(({ provider, index }) => (
-                  <TranscriptionProviderCard
-                    key={provider.id}
-                    form={form}
-                    index={index}
-                    provider={provider}
-                    validation={validationByProvider[providerKey("stt", provider.id)]}
-                    onValidate={() => void validateProvider("stt", index)}
-                    onDismissValidation={() => clearValidation(providerKey("stt", provider.id), setValidationByProvider)}
-                    onDelete={() => deleteSttProvider(provider.id)}
-                  />
-                ))}
-              </ProviderGroup>
-            )}
-
-            {advancedLlmProviders.length > 0 && (
-              <ProviderGroup title="Custom language models" actionLabel="Add custom LLM provider" onAdd={addLlmProvider}>
-                {advancedLlmProviders.map(({ provider, index }) => (
-                  <LlmProviderCard
-                    key={provider.id}
-                    form={form}
-                    index={index}
-                    provider={provider}
-                    validation={validationByProvider[providerKey("llm", provider.id)]}
-                    onValidate={() => void validateProvider("llm", index)}
-                    onDismissValidation={() => clearValidation(providerKey("llm", provider.id), setValidationByProvider)}
-                    onDelete={() => deleteLlmProvider(provider.id)}
-                  />
-                ))}
-              </ProviderGroup>
+            ) : (
+              customProviders.map((entry) => (
+                <CustomProviderRow
+                  key={`${entry.kind}:${entry.provider.id}`}
+                  entry={entry}
+                  active={openProvider?.kind === entry.kind && openProvider.id === entry.provider.id}
+                  onOpen={() => {
+                    setOpenProvider({ kind: entry.kind, id: entry.provider.id });
+                    setIsProviderDialogOpen(true);
+                  }}
+                />
+              ))
             )}
           </div>
         </section>
       </View>
+      <Dialog.Root
+        open={providerDialogOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            setIsProviderDialogOpen(true);
+          } else {
+            closeProviderPopup();
+          }
+        }}
+        onOpenChangeComplete={(open) => {
+          if (!open) setOpenProvider(null);
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Backdrop className="mode-dialog-backdrop fixed inset-0 z-40 bg-black/70" />
+          <Dialog.Popup
+            className="mode-dialog-popup fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-3rem)] overflow-y-auto rounded-md border border-border bg-surface-raised p-4 text-sm text-foreground shadow-2xl shadow-black/40 outline-none"
+            style={{ width: "min(42rem, calc(100vw - 2rem))" }}
+          >
+            {openProviderEntry && (
+              <CustomProviderEditor
+                entry={openProviderEntry}
+                form={form}
+                validation={validationByProvider[providerKey(openProviderEntry.kind, openProviderEntry.provider.id)]}
+                onValidate={() => void validateProvider(openProviderEntry.kind, openProviderEntry.index)}
+                onDismissValidation={() => clearValidation(providerKey(openProviderEntry.kind, openProviderEntry.provider.id), setValidationByProvider)}
+                onDelete={() =>
+                  openProviderEntry.kind === "stt"
+                    ? deleteSttProvider(openProviderEntry.provider.id)
+                    : deleteLlmProvider(openProviderEntry.provider.id)
+                }
+                onClose={closeProviderPopup}
+              />
+            )}
+          </Dialog.Popup>
+        </Dialog.Portal>
+      </Dialog.Root>
       {unsavedChangesPrompt}
     </>
   );
@@ -532,69 +575,121 @@ function CloudCredentialRow({
   );
 }
 
-function ProviderGroup({
-  title,
-  actionLabel,
-  onAdd,
-  children
-}: {
-  title: string;
-  actionLabel: string;
-  onAdd: () => void;
-  children: JSX.Element[];
-}): JSX.Element {
+function CustomProviderRow({ entry, active, onOpen }: { entry: CustomProviderEntry; active: boolean; onOpen: () => void }): JSX.Element {
+  const provider = entry.provider;
+
   return (
-    <section className="flex flex-col gap-3">
-      <header className="flex items-center justify-between gap-3">
-        <h2 className="m-0 text-sm font-semibold text-foreground">{title}</h2>
-        <IconButton title={actionLabel} onClick={onAdd}>
-          <Plus size={17} />
-        </IconButton>
-      </header>
-      <div className="grid grid-cols-1 gap-4 min-[1280px]:grid-cols-2">{children}</div>
-    </section>
+    <button
+      type="button"
+      className={cn(
+        "provider-row grid min-h-14 w-full grid-cols-[2.25rem_minmax(0,1fr)_auto_1rem] items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-left outline-none hover:bg-muted/70 focus-visible:bg-muted max-[760px]:grid-cols-[2.25rem_minmax(0,1fr)_1rem]",
+        active && "bg-muted"
+      )}
+      aria-haspopup="dialog"
+      aria-expanded={active}
+      onClick={onOpen}
+    >
+      <ProviderGlyph kind={entry.kind} active={active} />
+      <span className="flex min-w-0 items-center gap-2">
+        <span className="truncate text-sm font-medium text-foreground">{providerDisplayName(entry)}</span>
+      </span>
+      <span className="flex min-w-0 shrink-0 flex-wrap items-center justify-end gap-2 max-[760px]:col-start-2 max-[760px]:col-end-4 max-[760px]:row-start-2 max-[760px]:justify-start">
+        <Badge className="text-subtle">{providerKindLabel(entry.kind)}</Badge>
+        <Badge className="text-subtle">{providerTypeLabel(entry)}</Badge>
+        <Badge tone={provider.isCloud ? "cloud" : "local"}>{provider.isCloud ? "Cloud" : "Local"}</Badge>
+        <Badge tone={provider.enabled ? "success" : "neutral"}>{provider.enabled ? "Enabled" : "Disabled"}</Badge>
+      </span>
+      <ChevronRight
+        size={16}
+        className={cn("provider-row-chevron text-muted-foreground max-[760px]:col-start-3 max-[760px]:row-start-1", active && "rotate-90 text-foreground")}
+      />
+    </button>
   );
 }
 
-function TranscriptionProviderCard({
+function CustomProviderEditor({
+  entry,
+  form,
+  validation,
+  onValidate,
+  onDismissValidation,
+  onDelete,
+  onClose
+}: {
+  entry: CustomProviderEntry;
+  form: UseFormReturn<ProvidersFormValues>;
+  validation?: ValidationState;
+  onValidate: () => void;
+  onDismissValidation: () => void;
+  onDelete: () => void;
+  onClose: () => void;
+}): JSX.Element {
+  const editorParent = useAutoAnimateRef<HTMLDivElement>();
+
+  return (
+    <div ref={editorParent} className="flex flex-col gap-4">
+      <header className="flex items-start justify-between gap-3 max-[640px]:flex-col">
+        <div className="flex min-w-0 items-center gap-3">
+          <ProviderGlyph kind={entry.kind} active />
+          <div className="min-w-0">
+            <Dialog.Title className="m-0 truncate text-base font-semibold text-foreground">{providerDisplayName(entry)}</Dialog.Title>
+            <p className="m-0 truncate text-xs text-muted-foreground">{providerKindDetail(entry.kind)}</p>
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 max-[640px]:w-full max-[640px]:justify-start">
+          <Button size="sm" onClick={onValidate} disabled={validation?.status === "validating"}>
+            <CheckCircle2 size={15} /> {validation?.status === "validating" ? "Validating..." : "Validate"}
+          </Button>
+          <IconButton title="Delete provider" tone="danger" onClick={onDelete}>
+            <Trash2 size={18} />
+          </IconButton>
+          <IconButton title="Close" onClick={onClose}>
+            <X size={18} />
+          </IconButton>
+        </div>
+      </header>
+
+      {entry.kind === "stt" ? (
+        <TranscriptionProviderEditor
+          form={form}
+          index={entry.index}
+          provider={entry.provider}
+          validation={validation}
+          onDismissValidation={onDismissValidation}
+        />
+      ) : (
+        <LlmProviderEditor
+          form={form}
+          index={entry.index}
+          provider={entry.provider}
+          validation={validation}
+          onDismissValidation={onDismissValidation}
+        />
+      )}
+    </div>
+  );
+}
+
+function TranscriptionProviderEditor({
   form,
   index,
   provider,
   validation,
-  onValidate,
-  onDismissValidation,
-  onDelete
+  onDismissValidation
 }: {
   form: UseFormReturn<ProvidersFormValues>;
   index: number;
   provider: TranscriptionProviderConfig;
   validation?: ValidationState;
-  onValidate: () => void;
   onDismissValidation: () => void;
-  onDelete: () => void;
 }): JSX.Element {
   const isDefault = isDefaultTranscriptionProvider(provider);
-  const canDelete = !isDefault;
   const isRuntimeProvider = provider.baseUrl.startsWith("murmur://runtime/") || provider.type === "sherpa_onnx";
   const errors = form.formState.errors.transcriptionProviders?.[index];
 
   return (
-    <Panel
-      title={provider.name || "Untitled STT provider"}
-      actions={
-        <div className="flex items-center gap-2">
-          <Button size="sm" onClick={onValidate} disabled={validation?.status === "validating"}>
-            <CheckCircle2 size={15} /> {validation?.status === "validating" ? "Validating..." : "Validate"}
-          </Button>
-          {canDelete && (
-            <IconButton title="Delete provider" tone="danger" onClick={onDelete}>
-              <Trash2 size={16} />
-            </IconButton>
-          )}
-        </div>
-      }
-    >
-      <div className="mb-4 flex flex-wrap gap-2">
+    <>
+      <div className="flex flex-wrap gap-2">
         <Badge>{isDefault ? "Built-in" : "Custom"}</Badge>
         <Badge>{transcriptionProviderTypeLabel(provider.type)}</Badge>
         <Badge tone={provider.isCloud ? "cloud" : "local"}>{provider.isCloud ? "Cloud" : "Local"}</Badge>
@@ -684,48 +779,29 @@ function TranscriptionProviderCard({
       </div>
 
       <ValidationMessage state={validation} onDismiss={onDismissValidation} />
-    </Panel>
+    </>
   );
 }
 
-function LlmProviderCard({
+function LlmProviderEditor({
   form,
   index,
   provider,
   validation,
-  onValidate,
-  onDismissValidation,
-  onDelete
+  onDismissValidation
 }: {
   form: UseFormReturn<ProvidersFormValues>;
   index: number;
   provider: LlmProviderConfig;
   validation?: ValidationState;
-  onValidate: () => void;
   onDismissValidation: () => void;
-  onDelete: () => void;
 }): JSX.Element {
   const isDefault = isDefaultLlmProvider(provider);
-  const canDelete = !isDefault;
   const errors = form.formState.errors.llmProviders?.[index];
 
   return (
-    <Panel
-      title={provider.name || "Untitled LLM provider"}
-      actions={
-        <div className="flex items-center gap-2">
-          <Button size="sm" onClick={onValidate} disabled={validation?.status === "validating"}>
-            <CheckCircle2 size={15} /> {validation?.status === "validating" ? "Validating..." : "Validate"}
-          </Button>
-          {canDelete && (
-            <IconButton title="Delete provider" tone="danger" onClick={onDelete}>
-              <Trash2 size={16} />
-            </IconButton>
-          )}
-        </div>
-      }
-    >
-      <div className="mb-4 flex flex-wrap gap-2">
+    <>
+      <div className="flex flex-wrap gap-2">
         <Badge>{isDefault ? "Built-in" : "Custom"}</Badge>
         <Badge>{llmProviderTypeLabel(provider.type)}</Badge>
         <Badge tone={provider.isCloud ? "cloud" : "local"}>{provider.isCloud ? "Cloud" : "Local"}</Badge>
@@ -787,8 +863,40 @@ function LlmProviderCard({
       </div>
 
       <ValidationMessage state={validation} onDismiss={onDismissValidation} />
-    </Panel>
+    </>
   );
+}
+
+function ProviderGlyph({ kind, active = false }: { kind: ProviderKind; active?: boolean }): JSX.Element {
+  const Icon = kind === "stt" ? Mic : MessageSquare;
+
+  return (
+    <span
+      className={cn(
+        "provider-glyph grid h-9 w-9 shrink-0 place-items-center rounded-md border border-border bg-surface-raised text-foreground",
+        active && "scale-105 border-foreground/40"
+      )}
+    >
+      <Icon size={17} />
+    </span>
+  );
+}
+
+function providerDisplayName(entry: CustomProviderEntry): string {
+  const fallback = entry.kind === "stt" ? "Untitled STT provider" : "Untitled LLM provider";
+  return entry.provider.name || fallback;
+}
+
+function providerKindLabel(kind: ProviderKind): string {
+  return kind === "stt" ? "Speech-to-text" : "Language model";
+}
+
+function providerKindDetail(kind: ProviderKind): string {
+  return kind === "stt" ? "Custom speech-to-text provider" : "Custom language model provider";
+}
+
+function providerTypeLabel(entry: CustomProviderEntry): string {
+  return entry.kind === "stt" ? transcriptionProviderTypeLabel(entry.provider.type) : llmProviderTypeLabel(entry.provider.type);
 }
 
 function ValidationMessage({ state, onDismiss }: { state?: ValidationState; onDismiss?: () => void }): JSX.Element | null {
@@ -839,9 +947,9 @@ function validationCapabilityLabels(capabilities: ProviderValidationResult["capa
 
   const labels: string[] = [];
   if (capabilities.fileTranscription) labels.push("File transcription");
-  if (capabilities.completedAudioStreaming) labels.push("Completed audio SSE");
-  if (capabilities.liveRealtimeStreaming) labels.push("Live realtime");
-  if (capabilities.modelDiscovery) labels.push("Model discovery");
+  if (capabilities.completedAudioStreaming) labels.push("Streaming transcription");
+  if (capabilities.liveRealtimeStreaming) labels.push("Live transcription");
+  if (capabilities.modelDiscovery) labels.push("Model list");
   return labels;
 }
 

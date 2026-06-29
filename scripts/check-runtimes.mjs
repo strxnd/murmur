@@ -3,18 +3,28 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
-const manifest = JSON.parse(await readFile(join(scriptDir, "runtime-manifest.json"), "utf8"));
+const {
+  getSttRuntimeSupportedAccelerators,
+  sttRuntimeCatalog,
+  sttRuntimeVariantRuntimeDir,
+  supportedSttRuntimePlatformKeys
+} = await loadCatalog(join(repoRoot, "src", "shared", "stt-runtime-catalog.ts"));
 const platformArg = readPlatformArg(process.argv.slice(2));
+const acceleratorArg = readAcceleratorArg(process.argv.slice(2));
 const platformKeys = resolvePlatformKeys(platformArg);
 
 let failed = false;
 for (const platformKey of platformKeys) {
   console.log(`Checking STT runtimes for ${platformKey}`);
-  failed = !checkRuntime(platformKey, "whisper.cpp", ["whisper-server"]) || failed;
-  failed = !checkRuntime(platformKey, "sherpa-onnx", ["sherpa-onnx-offline", join("bin", "sherpa-onnx-offline")]) || failed;
+  for (const runtime of Object.values(sttRuntimeCatalog)) {
+    for (const accelerator of resolveAccelerators(runtime, platformKey, acceleratorArg)) {
+      failed = !checkRuntime(platformKey, runtime, accelerator) || failed;
+    }
+  }
 }
 
 if (failed) process.exitCode = 1;
@@ -30,26 +40,60 @@ function readPlatformArg(args) {
 function resolvePlatformKeys(value) {
   if (value === "current") {
     const key = `${process.platform}-${process.arch}`;
-    if (!manifest.platforms.includes(key)) throw new Error(`Unsupported current platform ${key}.`);
+    if (!supportedSttRuntimePlatformKeys.includes(key)) throw new Error(`Unsupported current platform ${key}.`);
     return [key];
   }
-  if (value === "all") return manifest.platforms;
-  if (!manifest.platforms.includes(value)) throw new Error(`Unsupported platform ${value}. Supported: ${manifest.platforms.join(", ")}`);
+  if (value === "all") return supportedSttRuntimePlatformKeys;
+  if (!supportedSttRuntimePlatformKeys.includes(value)) {
+    throw new Error(`Unsupported platform ${value}. Supported: ${supportedSttRuntimePlatformKeys.join(", ")}`);
+  }
   return [value];
 }
 
-function checkRuntime(platformKey, runtimeDir, executableCandidates) {
+function readAcceleratorArg(args) {
+  const index = args.indexOf("--accelerator");
+  if (index === -1) return "cpu";
+  const value = args[index + 1];
+  if (!value) throw new Error("--accelerator needs a value: cpu, cuda, hip, or all.");
+  if (!["cpu", "cuda", "hip", "all"].includes(value)) throw new Error(`Unsupported accelerator ${value}.`);
+  return value;
+}
+
+function resolveAccelerators(runtime, platformKey, value) {
+  const supported = getSttRuntimeSupportedAccelerators(runtime, platformKey);
+  if (value === "all") return supported;
+  if (!supported.includes(value)) throw new Error(`${runtime.id} has no ${value} variant for ${platformKey}.`);
+  return [value];
+}
+
+function checkRuntime(platformKey, runtime, accelerator) {
+  const runtimeDir = sttRuntimeVariantRuntimeDir(runtime, platformKey, accelerator);
   const root = join(repoRoot, "vendor", "runtimes", platformKey, runtimeDir);
-  const binary = executableCandidates.map((candidate) => join(root, candidate)).find((candidate) => existsSync(candidate));
+  const binary = runtime.executableCandidates.map((candidate) => join(root, candidate)).find((candidate) => existsSync(candidate));
 
   if (!binary) {
-    console.error(`missing: ${runtimeDir} for ${platformKey}. Expected one of:`);
-    for (const candidate of executableCandidates) console.error(`  ${join(root, candidate)}`);
+    console.error(`missing: ${runtime.id} ${accelerator} for ${platformKey}. Expected one of:`);
+    for (const candidate of runtime.executableCandidates) console.error(`  ${join(root, candidate)}`);
     return false;
   }
 
-  console.log(`available: ${runtimeDir} -> ${relative(binary)}`);
+  console.log(`available: ${runtime.id} ${accelerator} -> ${relative(binary)}`);
   return true;
+}
+
+async function loadCatalog(path) {
+  const source = await readFile(path, "utf8");
+  const output = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+      esModuleInterop: true
+    }
+  }).outputText;
+  const module = { exports: {} };
+  const require = () => ({});
+  new Function("exports", "require", "module", output)(module.exports, require, module);
+  return module.exports;
 }
 
 function relative(path) {

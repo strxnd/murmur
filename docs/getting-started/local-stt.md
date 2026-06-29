@@ -24,7 +24,7 @@ ${XDG_CACHE_HOME:-$HOME/.cache}/murmur/models/stt/
 Managed runtime installs are stored under:
 
 ```text
-${XDG_CACHE_HOME:-$HOME/.cache}/murmur/runtimes/stt/<platform-key>/<runtime-id>/<version>/
+${XDG_CACHE_HOME:-$HOME/.cache}/murmur/runtimes/stt/<platform-key>/<runtime-id>/<accelerator>/<runtime-bundle-semver>/
 ```
 
 Packaged runtime binaries are loaded from:

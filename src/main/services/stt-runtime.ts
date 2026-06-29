@@ -13,25 +13,42 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import {
+  getSttRuntimeSupportedAccelerators,
+  getSttRuntimeVariantAsset,
+  getSttRuntimeVariantKey,
+  parseSttRuntimeVariantKey,
   sttRuntimeCatalog,
   sttRuntimeIds,
+  sttRuntimeVariantLabel,
+  sttRuntimeVariantRuntimeDir,
   supportedSttRuntimePlatformKeys,
   type SttRuntimeAsset,
   type SttRuntimeCatalogEntry
 } from "../../shared/stt-runtime-catalog";
 import type {
+  SttAccelerationPreference,
+  SttRuntimeAccelerator,
   SttRuntimeAvailability,
   SttRuntimeId,
   SttRuntimeInstallState,
   SttRuntimeInstallStatus,
-  SttRuntimeSource
+  SttRuntimeSource,
+  SttRuntimeVariantKey
 } from "../../shared/types";
 
 type RuntimeSource = SttRuntimeSource;
 type RuntimeCatalog = Record<SttRuntimeId, SttRuntimeCatalogEntry>;
 type ProgressEmitter = (state: SttRuntimeInstallState) => void;
-type RuntimeMutationHook = (id: SttRuntimeId) => void | Promise<void>;
-type DownloadableSttRuntimeAsset = SttRuntimeAsset & { url: string };
+type RuntimeMutationHook = (state: SttRuntimeInstallState) => void | Promise<void>;
+type DownloadableSttRuntimeAsset = SttRuntimeAsset & { url: string; sizeBytes: number; sha256: string; archiveFormat: "tar.gz" };
+export type SttRuntimeActionTarget =
+  | SttRuntimeId
+  | SttRuntimeVariantKey
+  | {
+      id: SttRuntimeId;
+      accelerator?: SttRuntimeAccelerator;
+      variantKey?: SttRuntimeVariantKey;
+    };
 const defaultDownloadHeaderTimeoutMs = 15000;
 const defaultDownloadBodyTimeoutMs = 30000;
 const defaultProgressEmitIntervalMs = 500;
@@ -47,7 +64,10 @@ interface RuntimeCandidate {
 interface RuntimeReceipt {
   id: SttRuntimeId;
   platformKey: string;
+  accelerator?: SttRuntimeAccelerator;
+  variantKey?: SttRuntimeVariantKey;
   version: string;
+  upstreamVersion?: string;
   archiveName: string;
   archiveSha256: string;
   installedAt: string;
@@ -60,6 +80,8 @@ interface RuntimeOperation {
 
 export interface ResolvedSttRuntime {
   id: SttRuntimeId;
+  variantKey: SttRuntimeVariantKey;
+  accelerator: SttRuntimeAccelerator;
   label: string;
   platformKey: string;
   binaryPath: string;
@@ -83,6 +105,7 @@ export interface SttRuntimeServiceOptions {
   catalog?: RuntimeCatalog;
   emitProgress?: ProgressEmitter;
   onBeforeRuntimeMutation?: RuntimeMutationHook;
+  packaged?: boolean;
   downloadsEnabled?: boolean;
   downloadHeaderTimeoutMs?: number;
   downloadBodyTimeoutMs?: number;
@@ -104,13 +127,14 @@ export class SttRuntimeService {
   private catalog: RuntimeCatalog;
   private emitProgress?: ProgressEmitter;
   private onBeforeRuntimeMutation?: RuntimeMutationHook;
+  private packaged: boolean;
   private downloadsEnabled: boolean;
   private downloadHeaderTimeoutMs: number;
   private downloadBodyTimeoutMs: number;
   private progressEmitIntervalMs: number;
-  private operations = new Map<SttRuntimeId, RuntimeOperation>();
-  private activeStates = new Map<SttRuntimeId, SttRuntimeInstallState>();
-  private lastErrors = new Map<SttRuntimeId, string>();
+  private operations = new Map<SttRuntimeVariantKey, RuntimeOperation>();
+  private activeStates = new Map<SttRuntimeVariantKey, SttRuntimeInstallState>();
+  private lastErrors = new Map<SttRuntimeVariantKey, string>();
 
   constructor(options: SttRuntimeServiceOptions = {}) {
     this.platform = options.platform ?? process.platform;
@@ -125,6 +149,7 @@ export class SttRuntimeService {
     this.catalog = options.catalog ?? sttRuntimeCatalog;
     this.emitProgress = options.emitProgress;
     this.onBeforeRuntimeMutation = options.onBeforeRuntimeMutation;
+    this.packaged = options.packaged ?? false;
     this.downloadsEnabled = options.downloadsEnabled ?? true;
     this.downloadHeaderTimeoutMs = options.downloadHeaderTimeoutMs ?? defaultDownloadHeaderTimeoutMs;
     this.downloadBodyTimeoutMs = options.downloadBodyTimeoutMs ?? defaultDownloadBodyTimeoutMs;
@@ -148,151 +173,197 @@ export class SttRuntimeService {
     return this.supportedPlatformKeys().has(this.getPlatformKey());
   }
 
-  getAvailability(id: SttRuntimeId): SttRuntimeAvailability {
+  getAvailability(id: SttRuntimeId, accelerator: SttRuntimeAccelerator = "cpu"): SttRuntimeAvailability {
     const definition = this.definition(id);
     const platformKey = this.getPlatformKey();
+    const variantKey = this.variantKey(definition, platformKey, accelerator);
+    const asset = getSttRuntimeVariantAsset(definition, platformKey, accelerator);
+    const label = sttRuntimeVariantLabel(definition, accelerator);
 
-    if (!this.supportedPlatformKeys().has(platformKey)) {
+    if (!this.supportedPlatformKeys().has(platformKey) || !asset) {
       return {
         id,
-        label: definition.label,
+        variantKey,
+        accelerator,
+        label,
         status: "unsupported",
         platformKey,
         version: definition.version,
-        message: `${definition.label} is not bundled for ${platformKey}. Supported platforms: ${Array.from(this.supportedPlatformKeys()).join(", ")}.`
+        abi: asset?.abi,
+        message: !this.supportedPlatformKeys().has(platformKey)
+          ? `${label} is not bundled for ${platformKey}. Supported platforms: ${Array.from(this.supportedPlatformKeys()).join(", ")}.`
+          : `${label} is not configured for ${platformKey}.`
       };
     }
 
-    const candidate = this.resolveCandidate(definition, platformKey);
+    const candidate = this.resolveCandidate(definition, platformKey, accelerator);
     if (!candidate) {
-      const canDownloadRuntime = this.canDownloadRuntime(definition, platformKey);
+      const canDownloadRuntime = this.canDownloadRuntime(definition, platformKey, accelerator);
       return {
         id,
-        label: definition.label,
+        variantKey,
+        accelerator,
+        label,
         status: "missing",
         platformKey,
         version: definition.version,
+        abi: asset.abi,
         message: this.downloadsEnabled && canDownloadRuntime
-          ? `${definition.label} runtime binary was not found for ${platformKey}. Set ${definition.envVar}, install it from the setup flow, or install it under vendor/runtimes/${platformKey}/${definition.runtimeDir}.`
+          ? `${label} runtime binary was not found for ${platformKey}. Set ${this.envVar(definition, accelerator)}, install it from the setup flow, or install it under vendor/runtimes/${platformKey}/${this.runtimeDirName(definition, platformKey, accelerator)}.`
           : this.downloadsEnabled
-            ? `${definition.label} runtime binary was not found for ${platformKey}. Set ${definition.envVar} or run mise run runtimes:prepare to install it under vendor/runtimes/${platformKey}/${definition.runtimeDir}.`
-          : this.missingBundledRuntimeMessage(definition, platformKey)
+            ? `${label} runtime binary was not found for ${platformKey}. Set ${this.envVar(definition, accelerator)} or run mise run runtimes:prepare to install it under vendor/runtimes/${platformKey}/${this.runtimeDirName(definition, platformKey, accelerator)}.`
+            : this.missingBundledRuntimeMessage(definition, platformKey, accelerator)
       };
     }
 
     return {
       id,
-      label: definition.label,
+      variantKey,
+      accelerator,
+      label,
       status: "available",
       platformKey,
       binaryPath: candidate.binaryPath,
       source: candidate.source,
       version: candidate.version ?? definition.version,
-      message: `${definition.label} runtime is available.`
+      abi: asset.abi,
+      message: `${label} runtime is available.`
     };
   }
 
-  getAvailabilities(): Record<SttRuntimeId, SttRuntimeAvailability> {
-    return Object.fromEntries(sttRuntimeIds.map((id) => [id, this.getAvailability(id)])) as Record<SttRuntimeId, SttRuntimeAvailability>;
+  getAvailabilityForPreference(id: SttRuntimeId, preference: SttAccelerationPreference = "auto"): SttRuntimeAvailability {
+    for (const accelerator of this.acceleratorOrder(id, preference)) {
+      const availability = this.getAvailability(id, accelerator);
+      if (availability.status === "available") return availability;
+    }
+    return this.getAvailability(id, preference === "auto" ? "cpu" : preference);
   }
 
-  getInstallState(id: SttRuntimeId): SttRuntimeInstallState {
-    const active = this.activeStates.get(id);
-    if (active) return active;
+  getAvailabilities(): Record<SttRuntimeVariantKey, SttRuntimeAvailability> {
+    const entries: Array<[string, SttRuntimeAvailability]> = [];
+    for (const variant of this.runtimeVariants()) {
+      const availability = this.getAvailability(variant.id, variant.accelerator);
+      entries.push([availability.variantKey, availability]);
+      if (variant.accelerator === "cpu") entries.push([variant.id, availability]);
+    }
+    return Object.fromEntries(entries);
+  }
 
+  getInstallState(id: SttRuntimeId, accelerator: SttRuntimeAccelerator = "cpu"): SttRuntimeInstallState {
     const definition = this.definition(id);
     const platformKey = this.getPlatformKey();
-    const asset = definition.platforms[platformKey];
+    const variantKey = this.variantKey(definition, platformKey, accelerator);
+    const active = this.activeStates.get(variantKey);
+    if (active) return active;
+
+    const asset = getSttRuntimeVariantAsset(definition, platformKey, accelerator);
     const supported = this.supportedPlatformKeys().has(platformKey) && Boolean(asset);
-    const canDownloadRuntime = this.canDownloadRuntime(definition, platformKey);
+    const canDownloadRuntime = this.canDownloadRuntime(definition, platformKey, accelerator);
 
     if (!supported) {
-      return this.state(id, "unsupported", {
-        message: `${definition.label} is not available for ${platformKey}.`,
+      return this.state(id, accelerator, "unsupported", {
+        message: `${sttRuntimeVariantLabel(definition, accelerator)} is not available for ${platformKey}.`,
         canDownload: false,
         canRepair: false
       });
     }
 
-    const candidate = this.resolveCandidate(definition, platformKey);
+    const candidate = this.resolveCandidate(definition, platformKey, accelerator);
     if (candidate) {
-      return this.state(id, "ready", {
+      return this.state(id, accelerator, "ready", {
         installedVersion: candidate.version ?? definition.version,
         source: candidate.source,
         binaryPath: candidate.binaryPath,
         rootDir: candidate.rootDir,
-        message: `${definition.label} runtime is ready.`,
+        message: `${sttRuntimeVariantLabel(definition, accelerator)} runtime is ready.`,
         canDownload: candidate.source === "cache" && canDownloadRuntime,
         canRepair: candidate.source === "cache" && canDownloadRuntime
       });
     }
 
-    const cacheProblem = this.cacheInstallProblem(definition, platformKey);
+    const cacheProblem =
+      this.cacheInstallProblem(definition, platformKey, accelerator) ??
+      (accelerator === "cpu"
+        ? this.cacheInstallProblem(definition, platformKey, accelerator, this.legacyCpuCacheInstallRoot(definition, platformKey))
+        : null);
     if (cacheProblem && this.downloadsEnabled && canDownloadRuntime) {
-      return this.state(id, "repairable", {
+      return this.state(id, accelerator, "repairable", {
         error: cacheProblem,
-        message: `${definition.label} runtime cache needs repair.`,
+        message: `${sttRuntimeVariantLabel(definition, accelerator)} runtime cache needs repair.`,
         canDownload: true,
         canRepair: true
       });
     }
 
-    const error = this.lastErrors.get(id);
+    const error = this.lastErrors.get(variantKey);
     if (error) {
-      return this.state(id, "error", {
+      return this.state(id, accelerator, "error", {
         error,
-        message: `${definition.label} runtime install failed.`,
+        message: `${sttRuntimeVariantLabel(definition, accelerator)} runtime install failed.`,
         canDownload: canDownloadRuntime,
         canRepair: canDownloadRuntime
       });
     }
 
-    return this.state(id, "not_installed", {
+    return this.state(id, accelerator, "not_installed", {
       message: this.downloadsEnabled
-        ? `${definition.label} runtime is not installed. Run mise run runtimes:prepare or set ${definition.envVar} to a compatible binary.`
-        : this.missingBundledRuntimeMessage(definition, platformKey),
+        ? `${sttRuntimeVariantLabel(definition, accelerator)} runtime is not installed. Run mise run runtimes:prepare or set ${this.envVar(definition, accelerator)} to a compatible binary.`
+        : this.missingBundledRuntimeMessage(definition, platformKey, accelerator),
       canDownload: this.downloadsEnabled && canDownloadRuntime,
       canRepair: false
     });
   }
 
-  getInstallStates(): Record<SttRuntimeId, SttRuntimeInstallState> {
-    return Object.fromEntries(sttRuntimeIds.map((id) => [id, this.getInstallState(id)])) as Record<SttRuntimeId, SttRuntimeInstallState>;
+  getInstallStates(): Record<SttRuntimeVariantKey, SttRuntimeInstallState> {
+    const entries: Array<[string, SttRuntimeInstallState]> = [];
+    for (const variant of this.runtimeVariants()) {
+      const state = this.getInstallState(variant.id, variant.accelerator);
+      entries.push([state.variantKey, state]);
+      if (variant.accelerator === "cpu") entries.push([variant.id, state]);
+    }
+    return Object.fromEntries(entries);
   }
 
-  async downloadRuntime(id: SttRuntimeId): Promise<SttRuntimeInstallState> {
-    if (!this.downloadsEnabled) return this.getInstallState(id);
+  async downloadRuntime(target: SttRuntimeActionTarget): Promise<SttRuntimeInstallState> {
+    const variant = this.resolveTarget(target);
+    if (!this.downloadsEnabled) return this.getInstallState(variant.id, variant.accelerator);
 
-    const existingOperation = this.operations.get(id);
+    const existingOperation = this.operations.get(variant.variantKey);
     if (existingOperation) return existingOperation.promise;
 
-    const definition = this.definition(id);
-    const platformKey = this.getPlatformKey();
-    const asset = definition.platforms[platformKey];
-    const url = asset?.url;
-    if (!this.supportedPlatformKeys().has(platformKey) || !asset || !url) {
-      const unsupported = this.getInstallState(id);
+    const definition = this.definition(variant.id);
+    const platformKey = variant.platformKey;
+    const asset = getSttRuntimeVariantAsset(definition, platformKey, variant.accelerator);
+    if (!this.supportedPlatformKeys().has(platformKey) || !asset || !this.canDownloadRuntime(definition, platformKey, variant.accelerator)) {
+      const unsupported = this.getInstallState(variant.id, variant.accelerator);
       this.emit(unsupported);
       return unsupported;
     }
-    const downloadableAsset: DownloadableSttRuntimeAsset = { ...asset, url };
+    const downloadableAsset: DownloadableSttRuntimeAsset = {
+      ...asset,
+      url: asset.url!,
+      sizeBytes: asset.sizeBytes!,
+      sha256: asset.sha256!,
+      archiveFormat: "tar.gz"
+    };
 
     const controller = new AbortController();
-    const promise = this.installRuntime(id, definition, downloadableAsset, controller).finally(() => {
-      this.operations.delete(id);
-      this.activeStates.delete(id);
+    const promise = this.installRuntime(variant.id, variant.accelerator, definition, downloadableAsset, controller).finally(() => {
+      this.operations.delete(variant.variantKey);
+      this.activeStates.delete(variant.variantKey);
     });
-    this.operations.set(id, { controller, promise });
+    this.operations.set(variant.variantKey, { controller, promise });
     return promise;
   }
 
-  async repairRuntime(id: SttRuntimeId): Promise<SttRuntimeInstallState> {
-    return this.downloadRuntime(id);
+  async repairRuntime(target: SttRuntimeActionTarget): Promise<SttRuntimeInstallState> {
+    return this.downloadRuntime(target);
   }
 
-  async cancelRuntimeDownload(id: SttRuntimeId): Promise<SttRuntimeInstallState> {
-    const operation = this.operations.get(id);
-    if (!operation) return this.getInstallState(id);
+  async cancelRuntimeDownload(target: SttRuntimeActionTarget): Promise<SttRuntimeInstallState> {
+    const variant = this.resolveTarget(target);
+    const operation = this.operations.get(variant.variantKey);
+    if (!operation) return this.getInstallState(variant.id, variant.accelerator);
 
     operation.controller.abort();
     try {
@@ -300,24 +371,26 @@ export class SttRuntimeService {
     } catch {
       // The download path records cancellation state before resolving back to the caller.
     }
-    return this.getInstallState(id);
+    return this.getInstallState(variant.id, variant.accelerator);
   }
 
-  requireRuntime(id: SttRuntimeId): ResolvedSttRuntime {
+  requireRuntime(id: SttRuntimeId, accelerator: SttRuntimeAccelerator = "cpu"): ResolvedSttRuntime {
     const definition = this.definition(id);
-    const availability = this.getAvailability(id);
+    const availability = this.getAvailability(id, accelerator);
     if (availability.status !== "available" || !availability.binaryPath || !availability.source) {
       throw new Error(availability.message);
     }
 
-    const candidate = this.resolveCandidate(definition, availability.platformKey);
+    const candidate = this.resolveCandidate(definition, availability.platformKey, accelerator);
     if (!candidate) {
       throw new Error(availability.message);
     }
 
     const runtime: Omit<ResolvedSttRuntime, "env"> = {
       id,
-      label: definition.label,
+      variantKey: availability.variantKey,
+      accelerator,
+      label: availability.label,
       platformKey: availability.platformKey,
       binaryPath: candidate.binaryPath,
       rootDir: candidate.rootDir,
@@ -332,6 +405,16 @@ export class SttRuntimeService {
     };
   }
 
+  requireRuntimeForPreference(id: SttRuntimeId, preference: SttAccelerationPreference = "auto"): ResolvedSttRuntime {
+    const attempted: string[] = [];
+    for (const accelerator of this.acceleratorOrder(id, preference)) {
+      const availability = this.getAvailability(id, accelerator);
+      attempted.push(`${availability.label}: ${availability.message}`);
+      if (availability.status === "available") return this.requireRuntime(id, accelerator);
+    }
+    throw new Error(`No ${this.definition(id).label} runtime is available for preference "${preference}". ${attempted.join(" ")}`);
+  }
+
   buildSpawnEnv(runtime: Omit<ResolvedSttRuntime, "env">): NodeJS.ProcessEnv {
     const env = { ...this.env };
     const dirs = this.runtimeSearchDirs(runtime);
@@ -343,13 +426,15 @@ export class SttRuntimeService {
 
   private async installRuntime(
     id: SttRuntimeId,
+    accelerator: SttRuntimeAccelerator,
     definition: SttRuntimeCatalogEntry,
     asset: DownloadableSttRuntimeAsset,
     controller: AbortController
   ): Promise<SttRuntimeInstallState> {
     const platformKey = this.getPlatformKey();
-    const parentDir = this.cacheRuntimeParentDir(definition, platformKey);
-    const finalDir = this.cacheInstallRoot(definition, platformKey);
+    const variantKey = this.variantKey(definition, platformKey, accelerator);
+    const parentDir = this.cacheRuntimeParentDir(definition, platformKey, accelerator);
+    const finalDir = this.cacheInstallRoot(definition, platformKey, accelerator);
     const archivePath = join(parentDir, `${asset.assetName}.part`);
     const stagingDir = join(parentDir, `${definition.version}.staging-${process.pid}-${Date.now()}`);
     const extractDir = join(stagingDir, "extract");
@@ -357,30 +442,30 @@ export class SttRuntimeService {
     mkdirSync(parentDir, { recursive: true });
     rmSync(archivePath, { force: true });
     rmSync(stagingDir, { recursive: true, force: true });
-    this.lastErrors.delete(id);
+    this.lastErrors.delete(variantKey);
 
     this.emit(
-      this.state(id, "downloading", {
+      this.state(id, accelerator, "downloading", {
         progressBytes: 0,
         totalBytes: asset.sizeBytes,
-        message: `Downloading ${definition.label} runtime.`,
+        message: `Downloading ${sttRuntimeVariantLabel(definition, accelerator)} runtime.`,
         canDownload: false,
         canRepair: false
       })
     );
 
     try {
-      const archiveSha256 = await this.downloadArchive(asset, archivePath, id, controller);
+      const archiveSha256 = await this.downloadArchive(asset, archivePath, variantKey, controller);
       if (archiveSha256 !== asset.sha256) {
         rmSync(archivePath, { force: true });
         throw new Error(`SHA-256 mismatch for ${asset.assetName}. Expected ${asset.sha256}, got ${archiveSha256}.`);
       }
 
       this.emit(
-        this.state(id, "installing", {
+        this.state(id, accelerator, "installing", {
           progressBytes: asset.sizeBytes,
           totalBytes: asset.sizeBytes,
-          message: `Installing ${definition.label} runtime.`,
+          message: `Installing ${sttRuntimeVariantLabel(definition, accelerator)} runtime.`,
           canDownload: false,
           canRepair: false
         })
@@ -401,28 +486,35 @@ export class SttRuntimeService {
       writeReceipt(join(extractedRoot, "runtime.json"), {
         id,
         platformKey,
+        accelerator,
+        variantKey,
         version: definition.version,
+        upstreamVersion: definition.upstreamVersion,
         archiveName: asset.assetName,
         archiveSha256: asset.sha256,
         installedAt: new Date().toISOString()
       });
 
-      await this.onBeforeRuntimeMutation?.(id);
+      const installingState = this.state(id, accelerator, "installing", {
+        progressBytes: asset.sizeBytes,
+        totalBytes: asset.sizeBytes
+      });
+      await this.onBeforeRuntimeMutation?.(installingState);
       replaceDirectory(extractedRoot, finalDir);
       rmSync(archivePath, { force: true });
       rmSync(stagingDir, { recursive: true, force: true });
 
-      this.activeStates.delete(id);
-      const ready = this.getInstallState(id);
+      this.activeStates.delete(variantKey);
+      const ready = this.getInstallState(id, accelerator);
       this.emit(ready);
       return ready;
     } catch (error) {
       rmSync(archivePath, { force: true });
       rmSync(stagingDir, { recursive: true, force: true });
       const errorText = isAbortError(error) ? "Runtime download was cancelled." : message(error);
-      if (!isAbortError(error)) this.lastErrors.set(id, errorText);
-      this.activeStates.delete(id);
-      const state = this.getInstallState(id);
+      if (!isAbortError(error)) this.lastErrors.set(variantKey, errorText);
+      this.activeStates.delete(variantKey);
+      const state = this.getInstallState(id, accelerator);
       this.emit(
         state.status === "ready"
           ? state
@@ -430,17 +522,17 @@ export class SttRuntimeService {
               ...state,
               status: isAbortError(error) ? "not_installed" : state.status,
               error: isAbortError(error) ? undefined : errorText,
-              message: isAbortError(error) ? `${definition.label} runtime download was cancelled.` : state.message
+              message: isAbortError(error) ? `${sttRuntimeVariantLabel(definition, accelerator)} runtime download was cancelled.` : state.message
             }
       );
-      return this.getInstallState(id);
+      return this.getInstallState(id, accelerator);
     }
   }
 
   private async downloadArchive(
     asset: DownloadableSttRuntimeAsset,
     archivePath: string,
-    id: SttRuntimeId,
+    variantKey: SttRuntimeVariantKey,
     controller: AbortController
   ): Promise<string> {
     const response = await fetchWithTimeout(
@@ -477,7 +569,7 @@ export class SttRuntimeService {
         progressBytes += value.byteLength;
         hash.update(value);
         await writeChunk(writer, value);
-        const active = this.activeStates.get(id);
+        const active = this.activeStates.get(variantKey);
         const now = Date.now();
         const firstPositiveProgress = lastProgressBytes === 0 && progressBytes > 0;
         const shouldEmit =
@@ -506,16 +598,25 @@ export class SttRuntimeService {
     return hash.digest("hex");
   }
 
-  private resolveCandidate(definition: SttRuntimeCatalogEntry, platformKey: string): RuntimeCandidate | null {
-    for (const candidate of this.candidates(definition, platformKey)) {
+  private resolveCandidate(
+    definition: SttRuntimeCatalogEntry,
+    platformKey: string,
+    accelerator: SttRuntimeAccelerator
+  ): RuntimeCandidate | null {
+    for (const candidate of this.candidates(definition, platformKey, accelerator)) {
       if (this.exists(candidate.binaryPath)) return candidate;
     }
     return null;
   }
 
-  private candidates(definition: SttRuntimeCatalogEntry, platformKey: string): RuntimeCandidate[] {
-    const envPath = this.env[definition.envVar];
+  private candidates(
+    definition: SttRuntimeCatalogEntry,
+    platformKey: string,
+    accelerator: SttRuntimeAccelerator
+  ): RuntimeCandidate[] {
+    const envPath = this.env[this.envVar(definition, accelerator)];
     const candidates: RuntimeCandidate[] = [];
+    const runtimeDir = this.runtimeDirName(definition, platformKey, accelerator);
 
     if (envPath) {
       candidates.push({
@@ -527,18 +628,28 @@ export class SttRuntimeService {
 
     if (this.resourcesPath) {
       candidates.push(
-        ...this.runtimeDirCandidates(join(this.resourcesPath, "runtimes", platformKey, definition.runtimeDir), definition, "resources")
+        ...this.runtimeDirCandidates(join(this.resourcesPath, "runtimes", platformKey, runtimeDir), definition, "resources")
       );
     }
 
-    const cacheRoot = this.cacheInstallRoot(definition, platformKey);
-    if (this.isValidCacheInstall(definition, platformKey, cacheRoot)) {
+    const cacheRoot = this.cacheInstallRoot(definition, platformKey, accelerator);
+    if (this.isValidCacheInstall(definition, platformKey, accelerator, cacheRoot)) {
       candidates.push(...this.runtimeDirCandidates(cacheRoot, definition, "cache", definition.version));
+    }
+    const legacyCpuCacheRoot = this.legacyCpuCacheInstallRoot(definition, platformKey);
+    if (
+      accelerator === "cpu" &&
+      legacyCpuCacheRoot !== cacheRoot &&
+      this.isValidCacheInstall(definition, platformKey, accelerator, legacyCpuCacheRoot)
+    ) {
+      candidates.push(...this.runtimeDirCandidates(legacyCpuCacheRoot, definition, "cache", definition.version));
     }
 
     candidates.push(
-      ...this.runtimeDirCandidates(join(this.projectRoot, "vendor", "runtimes", platformKey, definition.runtimeDir), definition, "vendor"),
-      ...this.runtimeDirCandidates(join(this.projectRoot, "vendor", "runtimes", definition.runtimeDir), definition, "legacy_vendor")
+      ...this.runtimeDirCandidates(join(this.projectRoot, "vendor", "runtimes", platformKey, runtimeDir), definition, "vendor"),
+      ...(accelerator === "cpu"
+        ? this.runtimeDirCandidates(join(this.projectRoot, "vendor", "runtimes", definition.runtimeDir), definition, "legacy_vendor")
+        : [])
     );
 
     return candidates;
@@ -568,16 +679,37 @@ export class SttRuntimeService {
     return existingDirs.length ? existingDirs : [binaryDir];
   }
 
-  private cacheInstallRoot(definition: SttRuntimeCatalogEntry, platformKey: string): string {
-    return join(this.cacheRuntimeParentDir(definition, platformKey), definition.version);
+  private cacheInstallRoot(
+    definition: SttRuntimeCatalogEntry,
+    platformKey: string,
+    accelerator: SttRuntimeAccelerator
+  ): string {
+    return join(this.cacheRuntimeParentDir(definition, platformKey, accelerator), definition.version);
   }
 
-  private cacheRuntimeParentDir(definition: SttRuntimeCatalogEntry, platformKey: string): string {
-    return join(this.runtimeDir ?? join(this.projectRoot, "vendor", "runtime-cache"), platformKey, definition.id);
+  private cacheRuntimeParentDir(
+    definition: SttRuntimeCatalogEntry,
+    platformKey: string,
+    accelerator: SttRuntimeAccelerator
+  ): string {
+    return join(
+      this.runtimeDir ?? join(this.projectRoot, "vendor", "runtime-cache"),
+      platformKey,
+      definition.id,
+      accelerator
+    );
   }
 
-  private cacheInstallProblem(definition: SttRuntimeCatalogEntry, platformKey: string): string | null {
-    const root = this.cacheInstallRoot(definition, platformKey);
+  private legacyCpuCacheInstallRoot(definition: SttRuntimeCatalogEntry, platformKey: string): string {
+    return join(this.runtimeDir ?? join(this.projectRoot, "vendor", "runtime-cache"), platformKey, definition.id, definition.version);
+  }
+
+  private cacheInstallProblem(
+    definition: SttRuntimeCatalogEntry,
+    platformKey: string,
+    accelerator: SttRuntimeAccelerator,
+    root = this.cacheInstallRoot(definition, platformKey, accelerator)
+  ): string | null {
     if (!this.exists(root)) return null;
 
     const receipt = readReceipt(join(root, "runtime.json"));
@@ -585,57 +717,176 @@ export class SttRuntimeService {
     if (receipt.id !== definition.id || receipt.version !== definition.version || receipt.platformKey !== platformKey) {
       return "Runtime receipt does not match the required runtime version.";
     }
+    if (receipt.upstreamVersion && receipt.upstreamVersion !== definition.upstreamVersion) {
+      return "Runtime receipt does not match the required upstream runtime version.";
+    }
+    const receiptAccelerator = receipt.accelerator ?? "cpu";
+    if (receiptAccelerator !== accelerator) {
+      return "Runtime receipt does not match the required accelerator.";
+    }
     if (!findExecutable(root, definition)) return "Runtime executable is missing.";
     return null;
   }
 
-  private isValidCacheInstall(definition: SttRuntimeCatalogEntry, platformKey: string, root: string): boolean {
-    return this.cacheInstallProblem(definition, platformKey) === null && this.exists(root);
+  private isValidCacheInstall(
+    definition: SttRuntimeCatalogEntry,
+    platformKey: string,
+    accelerator: SttRuntimeAccelerator,
+    root: string
+  ): boolean {
+    return this.cacheInstallProblem(definition, platformKey, accelerator, root) === null && this.exists(root);
   }
 
   private supportedPlatformKeys(): Set<string> {
     return new Set(supportedSttRuntimePlatformKeys);
   }
 
-  private canDownloadRuntime(definition: SttRuntimeCatalogEntry, platformKey: string): boolean {
-    return Boolean(definition.platforms[platformKey]?.url);
+  private canDownloadRuntime(
+    definition: SttRuntimeCatalogEntry,
+    platformKey: string,
+    accelerator: SttRuntimeAccelerator
+  ): boolean {
+    const asset = getSttRuntimeVariantAsset(definition, platformKey, accelerator);
+    if (!asset) return false;
+    const hasReleaseAsset =
+      (asset.archiveFormat === undefined || asset.archiveFormat === "tar.gz") &&
+      Boolean(asset.url) &&
+      Boolean(asset.sha256 && /^[a-f0-9]{64}$/.test(asset.sha256)) &&
+      Number.isFinite(asset.sizeBytes) &&
+      (asset.sizeBytes ?? 0) > 0;
+    if (!hasReleaseAsset) return false;
+    if (!this.downloadsEnabled) return false;
+    return !this.packaged || accelerator !== "cpu";
   }
 
-  private missingBundledRuntimeMessage(definition: SttRuntimeCatalogEntry, platformKey: string): string {
-    return `${definition.label} runtime was not found in bundled application resources for ${platformKey}. Reinstall Murmur or set ${definition.envVar} to a compatible binary.`;
+  private missingBundledRuntimeMessage(
+    definition: SttRuntimeCatalogEntry,
+    platformKey: string,
+    accelerator: SttRuntimeAccelerator
+  ): string {
+    const label = sttRuntimeVariantLabel(definition, accelerator);
+    if (this.packaged && accelerator !== "cpu") {
+      return `${label} runtime was not found for ${platformKey}. GPU runtimes can be installed only from Murmur release assets with pinned SHA-256 metadata.`;
+    }
+    return `${label} runtime was not found in bundled application resources for ${platformKey}. Reinstall Murmur or set ${this.envVar(definition, accelerator)} to a compatible binary.`;
   }
 
   private definition(id: SttRuntimeId): SttRuntimeCatalogEntry {
     return this.catalog[id];
   }
 
+  private runtimeVariants(): Array<{
+    id: SttRuntimeId;
+    platformKey: string;
+    accelerator: SttRuntimeAccelerator;
+    variantKey: SttRuntimeVariantKey;
+  }> {
+    const platformKey = this.getPlatformKey();
+    return sttRuntimeIds.flatMap((id) => {
+      const definition = this.definition(id);
+      return getSttRuntimeSupportedAccelerators(definition, platformKey).map((accelerator) => ({
+        id,
+        platformKey,
+        accelerator,
+        variantKey: this.variantKey(definition, platformKey, accelerator)
+      }));
+    });
+  }
+
+  private resolveTarget(target: SttRuntimeActionTarget): {
+    id: SttRuntimeId;
+    platformKey: string;
+    accelerator: SttRuntimeAccelerator;
+    variantKey: SttRuntimeVariantKey;
+  } {
+    const platformKey = this.getPlatformKey();
+    if (typeof target === "string") {
+      const parsed = parseSttRuntimeVariantKey(target);
+      if (parsed) {
+        return {
+          id: parsed.id,
+          platformKey: parsed.platformKey,
+          accelerator: parsed.accelerator,
+          variantKey: target
+        };
+      }
+      return {
+        id: target as SttRuntimeId,
+        platformKey,
+        accelerator: "cpu",
+        variantKey: this.variantKey(this.definition(target as SttRuntimeId), platformKey, "cpu")
+      };
+    }
+
+    const accelerator = target.accelerator ?? (target.variantKey ? parseSttRuntimeVariantKey(target.variantKey)?.accelerator : undefined) ?? "cpu";
+    return {
+      id: target.id,
+      platformKey,
+      accelerator,
+      variantKey: target.variantKey ?? this.variantKey(this.definition(target.id), platformKey, accelerator)
+    };
+  }
+
+  private acceleratorOrder(id: SttRuntimeId, preference: SttAccelerationPreference): SttRuntimeAccelerator[] {
+    if (preference !== "auto") return [preference];
+    const definition = this.definition(id);
+    const platformKey = this.getPlatformKey();
+    const supported = new Set(getSttRuntimeSupportedAccelerators(definition, platformKey));
+    return (["cuda", "hip", "cpu"] as const).filter((accelerator) => supported.has(accelerator));
+  }
+
+  private envVar(definition: SttRuntimeCatalogEntry, accelerator: SttRuntimeAccelerator): string {
+    return definition.acceleratorEnvVars?.[accelerator] ?? definition.envVar;
+  }
+
+  private runtimeDirName(
+    definition: SttRuntimeCatalogEntry,
+    platformKey: string,
+    accelerator: SttRuntimeAccelerator
+  ): string {
+    return sttRuntimeVariantRuntimeDir(definition, platformKey, accelerator);
+  }
+
+  private variantKey(
+    definition: SttRuntimeCatalogEntry,
+    platformKey: string,
+    accelerator: SttRuntimeAccelerator
+  ): SttRuntimeVariantKey {
+    return getSttRuntimeVariantKey(definition.id, platformKey, accelerator, definition.version);
+  }
+
   private state(
     id: SttRuntimeId,
+    accelerator: SttRuntimeAccelerator,
     status: SttRuntimeInstallStatus,
     patch: Partial<SttRuntimeInstallState> = {}
   ): SttRuntimeInstallState {
     const definition = this.definition(id);
     const platformKey = this.getPlatformKey();
-    const asset = definition.platforms[platformKey];
+    const asset = getSttRuntimeVariantAsset(definition, platformKey, accelerator);
+    const variantKey = this.variantKey(definition, platformKey, accelerator);
     const state: SttRuntimeInstallState = {
       id,
-      label: definition.label,
+      variantKey,
+      accelerator,
+      label: sttRuntimeVariantLabel(definition, accelerator),
       platformKey,
       requiredVersion: definition.version,
+      abi: asset?.abi,
       status,
       progressBytes: 0,
       totalBytes: asset?.sizeBytes,
       message: "",
-      canDownload: Boolean(asset?.url) && status !== "unsupported",
+      canDownload: this.canDownloadRuntime(definition, platformKey, accelerator) && status !== "unsupported",
       canRepair: false,
       ...patch
     };
-    return this.downloadsEnabled ? state : { ...state, canDownload: false, canRepair: false };
+    return state;
   }
 
   private emit(state: SttRuntimeInstallState): void {
     if (state.status === "downloading" || state.status === "installing") {
-      this.activeStates.set(state.id, state);
+      this.activeStates.set(state.variantKey, state);
     }
     this.emitProgress?.(state);
   }

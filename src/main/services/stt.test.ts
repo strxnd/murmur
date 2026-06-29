@@ -178,10 +178,12 @@ function fakeRuntimeService(
   binaryPath = "/tmp/runtime",
   argsPath = "/tmp/sherpa-args.json"
 ): SttRuntimeService {
-  return {
+  const service = {
     getAvailability(id: SttRuntimeId): SttRuntimeAvailability {
       return {
         id,
+        variantKey: `${id}|linux-x64|cpu|0.0.0-test`,
+        accelerator: "cpu",
         label: id,
         status,
         platformKey: "linux-x64",
@@ -190,20 +192,29 @@ function fakeRuntimeService(
         message: `${id} ${status}`
       };
     },
+    getAvailabilityForPreference(id: SttRuntimeId): SttRuntimeAvailability {
+      return service.getAvailability(id);
+    },
     requireRuntime(id: SttRuntimeId): ResolvedSttRuntime {
       return {
         id,
+        variantKey: `${id}|linux-x64|cpu|0.0.0-test`,
+        accelerator: "cpu",
         label: id,
         platformKey: "linux-x64",
         binaryPath,
         rootDir: dirname(binaryPath),
         cwd: dirname(binaryPath),
         source: "env",
-        version: "test",
+        version: "0.0.0-test",
         env: { ...process.env, MURMUR_ARGS_PATH: argsPath }
       };
+    },
+    requireRuntimeForPreference(id: SttRuntimeId): ResolvedSttRuntime {
+      return service.requireRuntime(id);
     }
-  } as unknown as SttRuntimeService;
+  };
+  return service as unknown as SttRuntimeService;
 }
 
 function runtimeShim(root: string): string {

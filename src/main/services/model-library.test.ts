@@ -522,17 +522,23 @@ function setLlmApiKey(storage: StorageService, apiKey: string): void {
 }
 
 function fakeRuntimeService(status: SttRuntimeAvailability["status"]): SttRuntimeService {
-  return {
+  const service = {
     getAvailability(id: SttRuntimeId): SttRuntimeAvailability {
       return {
         id,
+        variantKey: `${id}|linux-x64|cpu|0.0.0-test`,
+        accelerator: "cpu",
         label: id,
         status,
         platformKey: "linux-x64",
         message: `${id} ${status}`
       };
+    },
+    getAvailabilityForPreference(id: SttRuntimeId): SttRuntimeAvailability {
+      return service.getAvailability(id);
     }
-  } as unknown as SttRuntimeService;
+  };
+  return service as unknown as SttRuntimeService;
 }
 
 function testPaths(): AppPaths {

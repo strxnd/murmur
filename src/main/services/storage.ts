@@ -77,6 +77,7 @@ const builtInModeIds = new Set(builtInModeDefaults.map((mode) => mode.id));
 const removedReleaseNoteIds = new Set(["initial-prototype"]);
 const activationModes = new Set<ActivationMode>(["toggle", "push_to_talk"]);
 const recordingPillPositions = new Set<RecordingPillPosition>(["bottom_left", "bottom_center", "bottom_right"]);
+const sttAccelerationPreferences = new Set<AppSettings["sttAccelerationPreference"]>(["auto", "cpu", "cuda", "hip"]);
 const appSettingKeys = [
   "theme",
   "textRetentionDays",
@@ -90,7 +91,9 @@ const appSettingKeys = [
   "recordingPillPosition",
   "preferredAudioInputId",
   "typingBaselineWpm",
+  "sttAccelerationPreference",
   "trayCloseNoticeShownAt",
+  "gpuRuntimeInstallPromptDismissedAt",
   "sttSetupSkippedAt",
   "sttSetupCompletedAt",
   "onboardingSkippedAt",
@@ -566,8 +569,15 @@ export class StorageService {
         : defaultSettings.recordingPillPosition,
       selectedTextCapture: currentSettings.selectedTextCapture === "disabled" ? "disabled" : "clipboard_restore",
       pasteMethod: "clipboard_restore",
+      sttAccelerationPreference: sttAccelerationPreferences.has(currentSettings.sttAccelerationPreference as AppSettings["sttAccelerationPreference"])
+        ? (currentSettings.sttAccelerationPreference as AppSettings["sttAccelerationPreference"])
+        : defaultSettings.sttAccelerationPreference,
       trayCloseNoticeShownAt:
-        typeof currentSettings.trayCloseNoticeShownAt === "string" ? currentSettings.trayCloseNoticeShownAt : undefined
+        typeof currentSettings.trayCloseNoticeShownAt === "string" ? currentSettings.trayCloseNoticeShownAt : undefined,
+      gpuRuntimeInstallPromptDismissedAt:
+        typeof currentSettings.gpuRuntimeInstallPromptDismissedAt === "string"
+          ? currentSettings.gpuRuntimeInstallPromptDismissedAt
+          : undefined
     };
     const modeIds = new Set(modes.map((mode) => mode.id));
     normalized.activeModeId = legacyModeIdMap.get(normalized.activeModeId) ?? normalized.activeModeId;

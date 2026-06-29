@@ -11,8 +11,15 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
 const vendorRoot = join(repoRoot, "vendor", "runtimes");
 const outputDir = join(repoRoot, "dist", "runtimes");
-const { sttRuntimeCatalog, supportedSttRuntimePlatformKeys } = await loadCatalog(join(repoRoot, "src", "shared", "stt-runtime-catalog.ts"));
+const {
+  getSttRuntimeSupportedAccelerators,
+  getSttRuntimeVariantAsset,
+  sttRuntimeCatalog,
+  sttRuntimeVariantRuntimeDir,
+  supportedSttRuntimePlatformKeys
+} = await loadCatalog(join(repoRoot, "src", "shared", "stt-runtime-catalog.ts"));
 const platformArg = readPlatformArg(process.argv.slice(2));
+const acceleratorArg = readAcceleratorArg(process.argv.slice(2));
 const platformKeys = resolvePlatformKeys(platformArg);
 
 mkdirSync(outputDir, { recursive: true });
@@ -20,37 +27,43 @@ mkdirSync(outputDir, { recursive: true });
 const results = [];
 for (const platformKey of platformKeys) {
   for (const runtime of Object.values(sttRuntimeCatalog)) {
-    const asset = runtime.platforms[platformKey];
-    if (!asset) throw new Error(`No asset metadata for ${runtime.id} on ${platformKey}.`);
+    const accelerators = resolveAccelerators(runtime, platformKey, acceleratorArg);
 
-    const sourceDir = join(vendorRoot, platformKey, runtime.runtimeDir);
-    if (!existsSync(sourceDir)) throw new Error(`Missing runtime source directory: ${relative(sourceDir)}`);
+    for (const accelerator of accelerators) {
+      const asset = getSttRuntimeVariantAsset(runtime, platformKey, accelerator);
+      if (!asset) throw new Error(`No ${accelerator} asset metadata for ${runtime.id} on ${platformKey}.`);
 
-    const targetPath = join(outputDir, asset.assetName);
-    rmSync(targetPath, { force: true });
-    await run("tar", [
-      "--sort=name",
-      "--mtime=@0",
-      "--owner=0",
-      "--group=0",
-      "--numeric-owner",
-      "-I",
-      "gzip -n",
-      "-cf",
-      targetPath,
-      "-C",
-      sourceDir,
-      "."
-    ]);
-    const sha256 = await sha256File(targetPath);
-    const sizeBytes = statSync(targetPath).size;
-    results.push({
-      runtimeId: runtime.id,
-      platformKey,
-      assetName: asset.assetName,
-      sizeBytes,
-      sha256
-    });
+      const runtimeDir = sttRuntimeVariantRuntimeDir(runtime, platformKey, accelerator);
+      const sourceDir = join(vendorRoot, platformKey, runtimeDir);
+      if (!existsSync(sourceDir)) throw new Error(`Missing runtime source directory: ${relative(sourceDir)}`);
+
+      const targetPath = join(outputDir, asset.assetName);
+      rmSync(targetPath, { force: true });
+      await run("tar", [
+        "--sort=name",
+        "--mtime=@0",
+        "--owner=0",
+        "--group=0",
+        "--numeric-owner",
+        "-I",
+        "gzip -n",
+        "-cf",
+        targetPath,
+        "-C",
+        sourceDir,
+        "."
+      ]);
+      const sha256 = await sha256File(targetPath);
+      const sizeBytes = statSync(targetPath).size;
+      results.push({
+        runtimeId: runtime.id,
+        platformKey,
+        accelerator,
+        assetName: asset.assetName,
+        sizeBytes,
+        sha256
+      });
+    }
   }
 }
 
@@ -62,6 +75,22 @@ function readPlatformArg(args) {
   const value = args[index + 1];
   if (!value) throw new Error("--platform needs a value: current, all, or a platform key.");
   return value;
+}
+
+function readAcceleratorArg(args) {
+  const index = args.indexOf("--accelerator");
+  if (index === -1) return "cpu";
+  const value = args[index + 1];
+  if (!value) throw new Error("--accelerator needs a value: cpu, cuda, hip, or all.");
+  if (!["cpu", "cuda", "hip", "all"].includes(value)) throw new Error(`Unsupported accelerator ${value}.`);
+  return value;
+}
+
+function resolveAccelerators(runtime, platformKey, value) {
+  const supported = getSttRuntimeSupportedAccelerators(runtime, platformKey);
+  if (value === "all") return supported;
+  if (!supported.includes(value)) throw new Error(`${runtime.id} has no ${value} variant for ${platformKey}.`);
+  return [value];
 }
 
 function resolvePlatformKeys(value) {

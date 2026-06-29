@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - "[0-9]*.[0-9]*.[0-9]*"
 
 permissions:
   contents: write
@@ -34,15 +34,15 @@ jobs:
       - name: Validate release tag
         run: |
           tag="${GITHUB_REF_NAME}"
-          version="${tag#v}"
           package_version="$(node -p "require('./package.json').version")"
+          semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
 
-          if [ "$tag" = "$version" ]; then
-            echo "::error title=Invalid release tag::Release tags must use the v-prefixed form, for example v${package_version}."
+          if [[ ! "$tag" =~ $semver_re ]]; then
+            echo "::error title=Invalid release tag::Release tags must be SemVer, for example ${package_version}."
             exit 1
           fi
 
-          if [ "$package_version" != "$version" ]; then
+          if [ "$package_version" != "$tag" ]; then
             echo "::error title=Version mismatch::Tag ${tag} does not match package.json version ${package_version}."
             exit 1
           fi
@@ -91,5 +91,5 @@ jobs:
 
           gh release create "$tag" "${artifacts[@]}" \
             --draft \
-            --title "Murmur ${tag#v}" \
+            --title "Murmur ${tag}" \
             --notes-file "$notes_file"

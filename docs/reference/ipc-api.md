@@ -47,13 +47,15 @@ The public renderer API is exposed as `window.murmur` by [`src/preload/index.ts`
 | `deleteDownloadedModel(modelId)` | `models:delete` | `ModelLibrarySnapshot` |
 | `toggleFavoriteModel(modelId)` | `models:toggle-favorite` | `ModelLibrarySnapshot` |
 | `getSttSetup()` | `stt-setup:get` | `SttSetupSnapshot` |
-| `downloadSttRuntime(runtimeId)` | `stt-runtime:download` | `SttSetupSnapshot` |
-| `repairSttRuntime(runtimeId)` | `stt-runtime:repair` | `SttSetupSnapshot` |
-| `cancelSttRuntimeDownload(runtimeId)` | `stt-runtime:cancel-download` | `SttSetupSnapshot` |
+| `downloadSttRuntime(target)` | `stt-runtime:download` | `SttSetupSnapshot` |
+| `repairSttRuntime(target)` | `stt-runtime:repair` | `SttSetupSnapshot` |
+| `cancelSttRuntimeDownload(target)` | `stt-runtime:cancel-download` | `SttSetupSnapshot` |
 | `setupBundledStt(modelId)` | `stt-setup:setup-bundled` | `AppStateSnapshot` |
 | `skipSttSetup()` | `stt-setup:skip` | `AppStateSnapshot` |
 | `onModelDownloadProgress(callback)` | `models:download-progress` | unsubscribe function |
 | `onSttRuntimeProgress(callback)` | `stt-runtime:progress` | unsubscribe function |
+
+Runtime action `target` accepts a legacy `SttRuntimeId` for the CPU variant or a variant key from `SttRuntimeInstallState.variantKey`.
 
 ## Dictation and Recording
 

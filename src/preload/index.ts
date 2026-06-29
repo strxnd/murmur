@@ -12,7 +12,7 @@ import type {
   ProviderValidationResult,
   RecordingLevelPayload,
   RecordingStartPayload,
-  SttRuntimeId,
+  SttRuntimeActionTarget,
   SttRuntimeInstallState,
   SttSetupSnapshot,
   TranscriptionProviderConfig,
@@ -45,10 +45,10 @@ const api = {
   deleteDownloadedModel: (modelId: string): Promise<ModelLibrarySnapshot> => ipcRenderer.invoke("models:delete", modelId),
   toggleFavoriteModel: (modelId: string): Promise<ModelLibrarySnapshot> => ipcRenderer.invoke("models:toggle-favorite", modelId),
   getSttSetup: (): Promise<SttSetupSnapshot> => ipcRenderer.invoke("stt-setup:get"),
-  downloadSttRuntime: (runtimeId: SttRuntimeId): Promise<SttSetupSnapshot> => ipcRenderer.invoke("stt-runtime:download", runtimeId),
-  repairSttRuntime: (runtimeId: SttRuntimeId): Promise<SttSetupSnapshot> => ipcRenderer.invoke("stt-runtime:repair", runtimeId),
-  cancelSttRuntimeDownload: (runtimeId: SttRuntimeId): Promise<SttSetupSnapshot> =>
-    ipcRenderer.invoke("stt-runtime:cancel-download", runtimeId),
+  downloadSttRuntime: (target: SttRuntimeActionTarget): Promise<SttSetupSnapshot> => ipcRenderer.invoke("stt-runtime:download", target),
+  repairSttRuntime: (target: SttRuntimeActionTarget): Promise<SttSetupSnapshot> => ipcRenderer.invoke("stt-runtime:repair", target),
+  cancelSttRuntimeDownload: (target: SttRuntimeActionTarget): Promise<SttSetupSnapshot> =>
+    ipcRenderer.invoke("stt-runtime:cancel-download", target),
   setupBundledStt: (modelId: string): Promise<AppStateSnapshot> => ipcRenderer.invoke("stt-setup:setup-bundled", modelId),
   skipSttSetup: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("stt-setup:skip"),
   startDictation: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("dictation:start"),

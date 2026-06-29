@@ -1,12 +1,14 @@
-import { CircleAlert, Clock3, Library, Mic, Square, Wrench } from "lucide-react";
-import { useMemo, type JSX } from "react";
+import { CircleAlert, Clock3, Gpu, Library, Mic, Square, Wrench, X } from "lucide-react";
+import { useMemo, useState, type JSX } from "react";
 import type { AppStateSnapshot, DictationHistoryItem } from "../../../shared/types";
 import { StatCard } from "../components/StatCard";
 import { View } from "../components/View";
 import { Button } from "../components/ui/Button";
+import { IconButton } from "../components/ui/IconButton";
 import { Panel } from "../components/ui/Panel";
 import { Toolbar } from "../components/ui/Toolbar";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
+import { gpuRuntimePromptState, isRuntimeBusy } from "../lib/runtimes";
 import { recordingUnavailableReason, shouldShowSttSetupCallout } from "../lib/stt-setup";
 import { useMurmurStore } from "../state/murmur-store";
 
@@ -26,6 +28,7 @@ export function HomeView({
   return (
     <View title="Home" actions={<SessionActions state={state} />}>
       {shouldShowSttSetupCallout(state) && <SttSetupCallout onOpenModels={onOpenModels} onOpenOnboarding={onOpenOnboarding} />}
+      <GpuRuntimeInstallCallout state={state} />
       {state.session.error && <SessionNotice status={state.session.status} message={state.session.error} />}
 
       <section className="grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[640px]:grid-cols-1">
@@ -134,6 +137,72 @@ function SttSetupCallout({
             <Wrench size={18} /> Guided setup
           </Button>
         </Toolbar>
+      </div>
+    </Panel>
+  );
+}
+
+function GpuRuntimeInstallCallout({ state }: { state: AppStateSnapshot }): JSX.Element | null {
+  const prompt = gpuRuntimePromptState(state);
+  const updateSettings = useMurmurStore((store) => store.updateSettings);
+  const downloadSttRuntime = useMurmurStore((store) => store.downloadSttRuntime);
+  const [isInstalling, setIsInstalling] = useState(false);
+
+  if (!prompt) return null;
+
+  const busy = isInstalling || prompt.candidates.some(isRuntimeBusy);
+  const hasError = prompt.candidates.some((runtime) => runtime.status === "error");
+  const canInstall = prompt.installable.length > 0;
+  const label = busy
+    ? "Installing GPU acceleration"
+    : hasError
+      ? "GPU acceleration was not installed"
+      : canInstall
+        ? "GPU acceleration available"
+        : "GPU detected";
+  const buttonLabel = busy ? "Installing..." : hasError ? "Retry" : canInstall ? "Install" : "Unavailable";
+
+  const dismiss = (): void => {
+    void updateSettings({ gpuRuntimeInstallPromptDismissedAt: new Date().toISOString() });
+  };
+
+  const installGpuRuntimes = async (): Promise<void> => {
+    setIsInstalling(true);
+    try {
+      for (const runtime of prompt.installable) {
+        await downloadSttRuntime(runtime.variantKey);
+      }
+    } catch {
+      // The store surfaces install failures in the app-level action banner.
+    } finally {
+      setIsInstalling(false);
+    }
+  };
+
+  return (
+    <Panel className="border-emerald-500/45 bg-emerald-500/10 p-3">
+      <div className="flex items-center justify-between gap-3 max-[640px]:items-stretch">
+        <div className="flex min-h-10 min-w-0 flex-1 items-center gap-3">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-emerald-500 text-background">
+            <Gpu size={19} />
+          </span>
+          <span className="truncate text-sm font-medium text-foreground">{label}</span>
+        </div>
+        <Button
+          onClick={() => void installGpuRuntimes()}
+          disabled={busy || !canInstall}
+          title={canInstall ? undefined : "GPU acceleration downloads are not available yet."}
+          className="border-emerald-500 bg-emerald-500 text-background hover:border-emerald-600 hover:bg-emerald-600 focus-visible:ring-emerald-500/35"
+        >
+          {buttonLabel}
+        </Button>
+        <IconButton
+          title="Dismiss GPU acceleration prompt"
+          onClick={dismiss}
+          className="border-emerald-500/35 bg-emerald-500/10 hover:bg-emerald-500/15"
+        >
+          <X size={18} />
+        </IconButton>
       </div>
     </Panel>
   );

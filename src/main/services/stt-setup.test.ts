@@ -114,11 +114,16 @@ function fakeRuntimeService(
     getAvailability(id: SttRuntimeId): SttRuntimeAvailability {
       return {
         id,
+        variantKey: `${id}|linux-x64|cpu|0.0.0-test`,
+        accelerator: "cpu",
         label: id,
         platformKey: "linux-x64",
         status: status === "ready" ? "available" : "missing",
         message: `${id} ${status}`
       };
+    },
+    getAvailabilityForPreference(id: SttRuntimeId): SttRuntimeAvailability {
+      return runtime.getAvailability(id);
     },
     getInstallState(id: SttRuntimeId): SttRuntimeInstallState {
       return installState(id, status, options);
@@ -145,9 +150,11 @@ function installState(
 ): SttRuntimeInstallState {
   return {
     id,
+    variantKey: `${id}|linux-x64|cpu|0.0.0-test`,
+    accelerator: "cpu",
     label: id,
     platformKey: "linux-x64",
-    requiredVersion: "test",
+    requiredVersion: "0.0.0-test",
     status,
     progressBytes: 0,
     message: options.message ?? `${id} ${status}`,

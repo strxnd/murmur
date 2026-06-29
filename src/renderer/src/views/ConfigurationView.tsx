@@ -1,22 +1,32 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { RotateCcw, Save, Trash2 } from "lucide-react";
+import { Cpu, Gpu, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import { createPortal } from "react-dom";
 import { Controller, useForm, useWatch, type Control, type Path } from "react-hook-form";
 import { z } from "zod";
-import type { AppSettings, AppStateSnapshot } from "../../../shared/types";
+import type { AppSettings, AppStateSnapshot, SttRuntimeAccelerator, SttRuntimeInstallState } from "../../../shared/types";
 import { appSettingsSchema } from "../../../shared/schemas";
 import { ShortcutRecorder } from "../components/ShortcutRecorder";
 import { View } from "../components/View";
+import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Field } from "../components/ui/Field";
 import { Input } from "../components/ui/Input";
 import { Panel } from "../components/ui/Panel";
+import { ProgressBar } from "../components/ui/ProgressBar";
 import { Select, type SelectItem } from "../components/ui/Select";
 import { Switch } from "../components/ui/Switch";
 import { useAudioDevices } from "../hooks/useAudioDevices";
 import { murmurClient } from "../lib/murmur-client";
+import {
+  acceleratorLabel,
+  detectedGpuAccelerators,
+  isRuntimeBusy,
+  runtimeProgressValue,
+  uniqueRuntimeInstallStates,
+  type DetectedGpuAccelerator
+} from "../lib/runtimes";
 import { useMurmurStore } from "../state/murmur-store";
 
 const configurationFormSchema = z.object({
@@ -90,10 +100,7 @@ export function ConfigurationView({
   const [clearDataConfirmation, setClearDataConfirmation] = useState("");
   const [isClearingLocalData, setIsClearingLocalData] = useState(false);
   const [clearDataError, setClearDataError] = useState<string | null>(null);
-  const actionableHotkeyDiagnostics = [
-    ...state.capabilities.hotkeys.diagnostics,
-    ...state.capabilities.hotkeys.modeSelector.diagnostics
-  ].filter(isActionableHotkeyDiagnostic);
+  const shortcutNeedsAttention = !state.capabilities.hotkeys.registered || !state.capabilities.hotkeys.modeSelector.registered;
   const audioInputItems: Array<SelectItem<string>> = [
     { value: "", label: "System default" },
     ...devices.map((device) => ({
@@ -272,9 +279,9 @@ export function ConfigurationView({
               <Field label="Mode selector shortcut" error={form.formState.errors.settings?.modeSelectorHotkey?.message}>
                 <FormShortcutRecorder control={form.control} name="settings.modeSelectorHotkey" />
               </Field>
-              {actionableHotkeyDiagnostics.length > 0 && (
+              {shortcutNeedsAttention && (
                 <p className="col-span-full m-0 text-xs leading-5 text-muted-foreground">
-                  {actionableHotkeyDiagnostics.join(" ")}
+                  One or more shortcuts need attention. Try a different shortcut or assign it in system settings.
                 </p>
               )}
             </div>
@@ -306,6 +313,8 @@ export function ConfigurationView({
             />
           </div>
         </Panel>
+
+        <AccelerationPanel state={state} />
 
         <section id="advanced-settings" className="flex flex-col gap-4">
           <h2 className="m-0 text-sm font-semibold text-foreground">Advanced Settings</h2>
@@ -363,22 +372,124 @@ export function ConfigurationView({
   );
 }
 
-function isActionableHotkeyDiagnostic(message: string): boolean {
-  const normalized = message.toLowerCase();
+type AccelerationRowTone = "neutral" | "success" | "warning" | "danger";
 
-  if (message === "Keyboard shortcut recording is active.") return true;
-  if (message.startsWith("Global activation shortcut is not registered: ")) return true;
-  if (message.startsWith("Global mode selector shortcut is not registered: ")) return true;
-  if (/^Unable to register .+ hotkey globally: /.test(message)) return true;
-  if (/^Invalid .+ hotkey ".+": /.test(message)) return true;
-  if (normalized.includes("does not support activation shortcut")) return true;
-  if (normalized.includes("does not expose key release events")) return true;
-  if (normalized.includes("assign it in system keyboard settings")) return true;
-  if (normalized.includes("assigned a different shortcut")) return true;
-  if (normalized.includes("already used")) return normalized.includes("shortcut") || normalized.includes("hotkey");
-  if (normalized.includes("already owned")) return normalized.includes("shortcut") || normalized.includes("hotkey");
+interface AccelerationRow {
+  accelerator: SttRuntimeAccelerator;
+  title: string;
+  status: string;
+  detail: string;
+  tone: AccelerationRowTone;
+  progress: number | null;
+}
 
-  return false;
+const accelerationOrder: SttRuntimeAccelerator[] = ["cpu", "cuda", "hip"];
+
+function AccelerationPanel({ state }: { state: AppStateSnapshot }): JSX.Element {
+  const detectedAccelerators = detectedGpuAccelerators(state);
+  const runtimes = uniqueRuntimeInstallStates(state);
+  const rows = accelerationOrder
+    .map((accelerator) => accelerationRow(accelerator, runtimes, detectedAccelerators))
+    .filter((row): row is AccelerationRow => Boolean(row));
+  const summary = detectedAccelerators.length > 0 ? "GPU detected" : "CPU baseline";
+
+  return (
+    <Panel title="Acceleration" actions={<Badge tone={detectedAccelerators.length > 0 ? "success" : "neutral"}>{summary}</Badge>}>
+      <div className="flex flex-col">
+        {rows.map((row) => (
+          <AccelerationStatusRow key={row.accelerator} row={row} />
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
+function AccelerationStatusRow({ row }: { row: AccelerationRow }): JSX.Element {
+  const Icon = row.accelerator === "cpu" ? Cpu : Gpu;
+
+  return (
+    <article className="grid grid-cols-[2.25rem_minmax(0,1fr)_auto] items-center gap-3 border-t border-border py-3 first:border-t-0 first:pt-0 last:pb-0 max-[760px]:grid-cols-[2.25rem_minmax(0,1fr)]">
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-border bg-muted/40 text-foreground">
+        <Icon size={18} />
+      </span>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="m-0 text-sm font-medium text-foreground">{row.title}</h3>
+          <Badge tone={row.tone}>{row.status}</Badge>
+        </div>
+        <p className="m-0 mt-1 text-sm leading-6 text-muted-foreground">{row.detail}</p>
+        {row.progress !== null && <ProgressBar className="mt-3" value={row.progress} label={`${row.title} install progress`} />}
+      </div>
+    </article>
+  );
+}
+
+function accelerationRow(
+  accelerator: SttRuntimeAccelerator,
+  runtimes: SttRuntimeInstallState[],
+  detectedAccelerators: DetectedGpuAccelerator[]
+): AccelerationRow | null {
+  const detected = accelerator === "cpu" || detectedAccelerators.includes(accelerator as DetectedGpuAccelerator);
+  const matches = runtimes.filter((runtime) => runtime.accelerator === accelerator);
+  const ready = matches.filter((runtime) => runtime.status === "ready");
+  const busy = matches.find(isRuntimeBusy);
+  const failed = matches.find((runtime) => runtime.status === "error" || runtime.status === "repairable");
+  const canInstall = matches.some((runtime) => runtime.canDownload);
+  const title = acceleratorLabel(accelerator);
+
+  if (ready.length > 0) {
+    return {
+      accelerator,
+      title,
+      status: `${title} ready`,
+      detail: ready.map(runtimeProofLabel).join(", "),
+      tone: "success",
+      progress: null
+    };
+  }
+
+  if (busy) {
+    return {
+      accelerator,
+      title,
+      status: "Installing",
+      detail: runtimeProofLabel(busy),
+      tone: "neutral",
+      progress: runtimeProgressValue(busy)
+    };
+  }
+
+  if (failed) {
+    return {
+      accelerator,
+      title,
+      status: "Needs attention",
+      detail: `${runtimeProofLabel(failed)} can be retried when GPU acceleration is offered on Home.`,
+      tone: "danger",
+      progress: null
+    };
+  }
+
+  if (accelerator !== "cpu" && !detected) return null;
+
+  return {
+    accelerator,
+    title,
+    status: accelerator === "cpu" ? "Not ready" : "Not installed",
+    detail:
+      accelerator === "cpu"
+        ? "Local dictation uses CPU when GPU acceleration is unavailable."
+        : canInstall
+          ? "A compatible GPU was detected. Install GPU acceleration from Home."
+          : "A compatible GPU was detected. GPU acceleration is not available yet.",
+    tone: "warning",
+    progress: null
+  };
+}
+
+function runtimeProofLabel(runtime: SttRuntimeInstallState): string {
+  const version = runtime.installedVersion ?? runtime.requiredVersion;
+  return `${runtime.label} ${version}`;
 }
 
 function sameValue(left: unknown, right: unknown): boolean {

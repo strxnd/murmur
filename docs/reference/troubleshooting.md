@@ -18,9 +18,11 @@ This page is a maintainer-oriented checklist for common failure areas.
 ## STT
 
 - `sttSetup.needsSetup` means no usable STT provider or active local voice model is ready.
-- Check `capabilities.sttRuntimes` for runtime status and source.
+- Check `capabilities.sttRuntimes` for runtime variant status and source.
+- Check `capabilities.stt.gpuProbe` for advisory NVIDIA/AMD detection. Launch and transcription success are the source of truth.
 - For bundled Whisper, confirm the model exists under `modelDir` and the runtime can start `whisper-server`.
 - For Sherpa ONNX, confirm `tokens.txt` plus CTC or transducer ONNX files are present.
+- Sherpa ONNX supports CPU and CUDA in this version; AMD/HIP uses the CPU runtime.
 - Use [runtime builds](../development/runtime-builds.md) for direct runtime smoke tests.
 
 ## Providers

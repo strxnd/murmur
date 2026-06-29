@@ -5,7 +5,6 @@ import {
   Check,
   ChevronRight,
   Download,
-  Hammer,
   HardDrive,
   Heart,
   KeyRound,
@@ -21,6 +20,7 @@ import type {
   ModelCatalogItem,
   ModelDownloadState,
   ModelProvider,
+  SttAccelerationPreference,
   SttRuntimeInstallState
 } from "../../../shared/types";
 import { canActivateModel, isModelProviderUsable, providerLabel } from "../../../shared/model-activation";
@@ -43,6 +43,7 @@ import { Select } from "../components/ui/Select";
 import { Toolbar } from "../components/ui/Toolbar";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { cn } from "../lib/cn";
+import { runtimeInstallForModel, runtimeProgressValue, runtimeStatusLabel, userRuntimeStatusMessage } from "../lib/runtimes";
 import { useMurmurStore } from "../state/murmur-store";
 
 type ModelFilter = "all" | "voice" | "language" | "offline" | "favorites" | "downloaded";
@@ -66,6 +67,13 @@ const filters: Array<{ id: ModelFilter; label: string }> = [
   { id: "downloaded", label: "Downloaded" }
 ];
 
+const accelerationItems: Array<{ value: SttAccelerationPreference; label: string }> = [
+  { value: "auto", label: "Auto acceleration" },
+  { value: "cpu", label: "CPU" },
+  { value: "cuda", label: "CUDA" },
+  { value: "hip", label: "HIP/ROCm" }
+];
+
 export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.Element {
   const getModelLibrary = useMurmurStore((store) => store.getModelLibrary);
   const downloadModel = useMurmurStore((store) => store.downloadModel);
@@ -73,6 +81,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
   const activateModel = useMurmurStore((store) => store.activateModel);
   const deleteDownloadedModel = useMurmurStore((store) => store.deleteDownloadedModel);
   const toggleFavoriteModel = useMurmurStore((store) => store.toggleFavoriteModel);
+  const updateSettings = useMurmurStore((store) => store.updateSettings);
   const downloadSttRuntime = useMurmurStore((store) => store.downloadSttRuntime);
   const repairSttRuntime = useMurmurStore((store) => store.repairSttRuntime);
   const cancelSttRuntimeDownload = useMurmurStore((store) => store.cancelSttRuntimeDownload);
@@ -101,7 +110,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
       if (filter === "favorites" && !download?.favorite) return false;
       if (filter === "downloaded" && !isModelDownloadedOrAvailable(item, download)) return false;
       if (!needle) return true;
-      return [item.name, providerLabel(item.provider), item.description, item.discovery?.message, ...item.tags]
+      return [item.name, providerLabel(item.provider), item.description, ...item.tags]
         .filter(Boolean)
         .some((value) => value!.toLowerCase().includes(needle));
     });
@@ -114,7 +123,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
   return (
     <View title="Models">
       <Panel>
-        <div className="grid grid-cols-[minmax(0,1fr)_14rem] gap-3 max-[760px]:grid-cols-1">
+        <div className="grid grid-cols-[minmax(0,1fr)_14rem_12rem] gap-3 max-[860px]:grid-cols-1">
           <label className="relative block">
             <Search className="absolute left-2.5 top-2.5 text-muted-foreground" size={18} />
             <Input
@@ -125,6 +134,12 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
             />
           </label>
           <Select items={providers} value={provider} onValueChange={(value) => setProvider(value as "all" | ModelProvider)} />
+          <Select
+            aria-label="STT acceleration"
+            items={accelerationItems}
+            value={state.settings.sttAccelerationPreference}
+            onValueChange={(value) => void updateSettings({ sttAccelerationPreference: value })}
+          />
         </div>
         <Toolbar className="mt-3">
           <FilterButton active={filter === "all"} onClick={() => setFilter("all")}>
@@ -200,9 +215,9 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
                           onCancelDownload={() => void cancelModelDownload(item.id)}
                           onDelete={() => void deleteDownloadedModel(item.id)}
                           onActivate={() => void activateModel(item.id)}
-                          onInstallRuntime={() => runtime && void downloadSttRuntime(runtime.id)}
-                          onRepairRuntime={() => runtime && void repairSttRuntime(runtime.id)}
-                          onCancelRuntimeDownload={() => runtime && void cancelSttRuntimeDownload(runtime.id)}
+                          onInstallRuntime={() => runtime && void downloadSttRuntime(runtime.variantKey)}
+                          onRepairRuntime={() => runtime && void repairSttRuntime(runtime.variantKey)}
+                          onCancelRuntimeDownload={() => runtime && void cancelSttRuntimeDownload(runtime.variantKey)}
                           onClose={() => setOpenModelId(null)}
                           runtime={runtime}
                         />
@@ -315,29 +330,29 @@ function ModelPopover({
         </div>
       )}
 
-      {download?.error && <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">{download.error}</p>}
-      {runtime && <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">{runtime.message}</p>}
-      {item.discovery?.message && (
-        <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">{item.discovery.message}</p>
+      {download?.error && <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">Download failed. Try again.</p>}
+      {runtime && <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">{userRuntimeStatusMessage(runtime)}</p>}
+      {item.discovery && !item.discovery.reachable && (
+        <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">Local provider is not reachable.</p>
       )}
 
       {status === "downloading" && <ProgressBar value={progressValue(download)} label={`Downloading ${item.name}`} />}
-      {runtimeBusy && <ProgressBar value={runtimeProgressValue(runtime)} label={`${runtime.label} runtime progress`} />}
+      {runtimeBusy && <ProgressBar value={runtimeProgressValue(runtime)} label={`${runtime.label} install progress`} />}
 
       <Toolbar>
         {runtime && runtime.status !== "ready" && runtime.canDownload && (
           <Button onClick={onInstallRuntime} disabled={runtimeBusy}>
-            <Hammer size={18} /> Install runtime
+            <Download size={18} /> Install acceleration
           </Button>
         )}
         {runtime?.canRepair && (
           <Button onClick={onRepairRuntime} disabled={runtimeBusy}>
-            <Wrench size={18} /> Repair runtime
+            <Wrench size={18} /> Repair acceleration
           </Button>
         )}
         {canCancelRuntimeDownload && (
           <Button variant="secondary" onClick={onCancelRuntimeDownload}>
-            <X size={18} /> Cancel runtime
+            <X size={18} /> Cancel acceleration
           </Button>
         )}
         {item.downloadStrategy !== "none" && (
@@ -623,7 +638,7 @@ function RuntimeBadge({ item, runtime }: { item: ModelCatalogItem; runtime?: Stt
   if (item.downloadStrategy === "none") return null;
   if (item.isCloud) return <Badge tone="cloud">Cloud</Badge>;
   if (item.isOffline) return <Badge tone="local">Offline</Badge>;
-  return <Badge>Runtime</Badge>;
+  return <Badge>Local engine</Badge>;
 }
 
 function providerModelLabel(item: ModelCatalogItem): string {
@@ -690,23 +705,6 @@ function isModelCurrentlyAvailable(item: ModelCatalogItem): boolean {
 
 function isModelDownloadedOrAvailable(item: ModelCatalogItem, download?: ModelDownloadState): boolean {
   return download?.status === "downloaded" || Boolean(item.discovery?.reachable);
-}
-
-function runtimeInstallForModel(state: AppStateSnapshot, item: ModelCatalogItem): SttRuntimeInstallState | undefined {
-  if (item.kind !== "voice") return undefined;
-  if (item.defaultProviderConfig?.sttProviderType === "whisper_cpp") return state.sttSetup.runtimes["whisper.cpp"];
-  if (item.defaultProviderConfig?.sttProviderType === "sherpa_onnx") return state.sttSetup.runtimes["sherpa-onnx"];
-  return undefined;
-}
-
-function runtimeStatusLabel(runtime: SttRuntimeInstallState): string {
-  if (runtime.status === "ready") return "Runtime ready";
-  if (runtime.status === "downloading") return "Runtime downloading";
-  if (runtime.status === "installing") return "Runtime installing";
-  if (runtime.status === "repairable") return "Runtime repairable";
-  if (runtime.status === "unsupported") return "Unsupported platform";
-  if (runtime.status === "error") return "Runtime error";
-  return "Runtime missing";
 }
 
 type ProviderIcon = ({ className }: { className?: string }) => JSX.Element;
@@ -801,11 +799,6 @@ function progressLabel(download: ModelDownloadState | undefined): string {
 function progressValue(download: ModelDownloadState | undefined): number | null {
   if (!download?.totalBytes) return null;
   return Math.max(4, Math.min(100, (download.progressBytes / download.totalBytes) * 100));
-}
-
-function runtimeProgressValue(runtime: SttRuntimeInstallState | undefined): number | null {
-  if (!runtime?.totalBytes) return null;
-  return Math.max(4, Math.min(100, (runtime.progressBytes / runtime.totalBytes) * 100));
 }
 
 function formatBytes(bytes: number): string {

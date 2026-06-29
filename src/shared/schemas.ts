@@ -28,6 +28,25 @@ export const modelProviderSchema = z.enum(["whisper_cpp", "nvidia", "ollama", "l
 export const modelDownloadStrategySchema = z.enum(["direct_file", "archive", "ollama_pull", "none"]);
 export const modelDownloadStatusSchema = z.enum(["not_downloaded", "downloading", "downloaded", "error"]);
 export const sttRuntimeIdSchema = z.enum(["whisper.cpp", "sherpa-onnx"]);
+export const sttRuntimeAcceleratorSchema = z.enum(["cpu", "cuda", "hip"]);
+export const sttAccelerationPreferenceSchema = z.enum(["auto", "cpu", "cuda", "hip"]);
+
+const semverPatternSource =
+  "(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";
+const semverStringSchema = z.string().regex(new RegExp(`^${semverPatternSource}$`));
+
+export const sttRuntimeVariantKeySchema = z
+  .string()
+  .regex(new RegExp(`^(whisper\\.cpp|sherpa-onnx)\\|[^|]+\\|(cpu|cuda|hip)\\|${semverPatternSource}$`));
+export const sttRuntimeActionTargetSchema = z.union([
+  sttRuntimeIdSchema,
+  sttRuntimeVariantKeySchema,
+  z.object({
+    id: sttRuntimeIdSchema,
+    accelerator: sttRuntimeAcceleratorSchema.optional(),
+    variantKey: sttRuntimeVariantKeySchema.optional()
+  })
+]);
 export const runtimeAvailabilityStatusSchema = z.enum(["available", "missing", "unsupported"]);
 export const sttRuntimeInstallStatusSchema = z.enum([
   "ready",
@@ -210,7 +229,9 @@ export const appSettingsSchema = z
     recordingPillPosition: recordingPillPositionSchema,
     preferredAudioInputId: optionalStringSchema,
     typingBaselineWpm: z.number().min(1),
+    sttAccelerationPreference: sttAccelerationPreferenceSchema.catch("auto"),
     trayCloseNoticeShownAt: optionalStringSchema,
+    gpuRuntimeInstallPromptDismissedAt: optionalStringSchema,
     sttSetupSkippedAt: optionalStringSchema,
     sttSetupCompletedAt: optionalStringSchema,
     onboardingSkippedAt: optionalStringSchema,
@@ -230,6 +251,7 @@ export const dictationHistoryItemSchema = z
     transcriptionModel: optionalStringSchema,
     transcriptionProviderCloud: z.boolean(),
     transcriptionStreamingMode: sttStreamingModeSchema,
+    transcriptionAccelerator: sttRuntimeAcceleratorSchema.optional(),
     llmProviderId: optionalStringSchema,
     llmProviderType: optionalStringSchema,
     llmModel: optionalStringSchema,
@@ -262,12 +284,15 @@ export const dictationSessionSchema = z
 export const sttRuntimeAvailabilitySchema = z
   .object({
     id: sttRuntimeIdSchema,
+    variantKey: sttRuntimeVariantKeySchema,
+    accelerator: sttRuntimeAcceleratorSchema,
     label: z.string(),
     status: runtimeAvailabilityStatusSchema,
     platformKey: z.string(),
     binaryPath: optionalStringSchema,
     source: sttRuntimeSourceSchema.optional(),
-    version: optionalStringSchema,
+    version: semverStringSchema.optional(),
+    abi: optionalStringSchema,
     message: z.string()
   })
   .passthrough();
@@ -275,14 +300,17 @@ export const sttRuntimeAvailabilitySchema = z
 export const sttRuntimeInstallStateSchema = z
   .object({
     id: sttRuntimeIdSchema,
+    variantKey: sttRuntimeVariantKeySchema,
+    accelerator: sttRuntimeAcceleratorSchema,
     label: z.string(),
     platformKey: z.string(),
-    requiredVersion: z.string(),
-    installedVersion: optionalStringSchema,
+    requiredVersion: semverStringSchema,
+    installedVersion: semverStringSchema.optional(),
     status: sttRuntimeInstallStatusSchema,
     source: sttRuntimeSourceSchema.optional(),
     binaryPath: optionalStringSchema,
     rootDir: optionalStringSchema,
+    abi: optionalStringSchema,
     progressBytes: z.number().min(0),
     totalBytes: z.number().min(0).optional(),
     error: optionalStringSchema,
@@ -297,15 +325,30 @@ export const sttSetupSnapshotSchema = z
     skipped: z.boolean(),
     completed: z.boolean(),
     needsSetup: z.boolean(),
-    runtimes: z.record(sttRuntimeIdSchema, sttRuntimeInstallStateSchema)
+    runtimes: z.record(sttRuntimeVariantKeySchema, sttRuntimeInstallStateSchema)
   })
   .passthrough();
 
+export const sttGpuProbeReportSchema = z.object({
+  nvidia: z.object({
+    available: z.boolean(),
+    devices: z.array(z.string()),
+    diagnostics: z.array(z.string())
+  }),
+  amd: z.object({
+    available: z.boolean(),
+    devices: z.array(z.string()),
+    diagnostics: z.array(z.string())
+  }),
+  diagnostics: z.array(z.string())
+});
+
 export const capabilityReportSchema = z
   .object({
-    sttRuntimes: z.record(sttRuntimeIdSchema, sttRuntimeAvailabilitySchema),
+    sttRuntimes: z.record(sttRuntimeVariantKeySchema, sttRuntimeAvailabilitySchema),
     stt: z.object({
-      diagnostics: z.array(z.string())
+      diagnostics: z.array(z.string()),
+      gpuProbe: sttGpuProbeReportSchema
     }),
     hotkeys: z
       .object({

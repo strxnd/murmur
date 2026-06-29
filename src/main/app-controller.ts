@@ -23,6 +23,7 @@ import type {
   ModeSelectorStateSnapshot,
   PillStateSnapshot,
   RecordingLevelPayload,
+  SttRuntimeActionTarget,
   SttRuntimeId,
   TranscriptionProviderConfig,
   VocabularyEntry
@@ -40,7 +41,7 @@ import {
   recordingLevelPayloadSchema,
   settingsUpdatePayloadSchema,
   sttProvidersSetPayloadSchema,
-  sttRuntimeIdSchema,
+  sttRuntimeActionTargetSchema,
   transcriptionProviderConfigSchema,
   vocabularySetPayloadSchema
 } from "../shared/schemas";
@@ -65,6 +66,7 @@ import { isTrustedRendererUrl, resolveRendererSource, type RendererSource } from
 import { getSttUsability, sttRuntimeIdForModel, SttSetupService } from "./services/stt-setup";
 import { TranscriptionService } from "./services/stt";
 import { SttRuntimeService } from "./services/stt-runtime";
+import { SttGpuProbeService } from "./services/stt-gpu-probe";
 import { resolveAppPaths, type AppPaths } from "./services/app-paths";
 import { NativeDesktopGlobalShortcutService } from "./services/native-global-shortcuts";
 import { TextAutomationService } from "./services/text-automation";
@@ -109,6 +111,7 @@ export class AppController {
   private context = new ContextService(this.textAutomation);
   private paste = new PasteService(this.textAutomation);
   private runtimeService: SttRuntimeService;
+  private gpuProbe = new SttGpuProbeService();
   private portalHotkeys = new XdgGlobalShortcutService();
   private nativeHotkeys = new NativeDesktopGlobalShortcutService();
   private paths: AppPaths;
@@ -150,13 +153,13 @@ export class AppController {
     this.storage = new StorageService(this.paths, undefined, createSafeStorageProviderSecretCodec(safeStorage));
     this.runtimeService = new SttRuntimeService({
       runtimeDir: this.paths.runtimeDir,
-      downloadsEnabled: !app.isPackaged,
+      packaged: app.isPackaged,
       emitProgress: (state) => {
         this.mainWindow?.webContents.send("stt-runtime:progress", state);
         this.pillWindow?.webContents.send("stt-runtime:progress", state);
         this.broadcastState();
       },
-      onBeforeRuntimeMutation: (runtimeId) => this.stt?.stopRuntime(runtimeId)
+      onBeforeRuntimeMutation: (state) => this.stt?.stopRuntime(state.id)
     });
     this.stt = new TranscriptionService(this.paths, this.runtimeService);
     this.modelLibrary = new ModelLibraryService(this.paths, this.storage, (state) => {
@@ -590,20 +593,20 @@ export class AppController {
     });
     handle("stt-setup:get", () => this.sttSetup.getSnapshot());
     handle("stt-runtime:download", async (_event, payload) => {
-      const runtimeId = parseIpcPayload(sttRuntimeIdSchema, payload, "stt-runtime:download") as SttRuntimeId;
-      await this.runtimeService.downloadRuntime(runtimeId);
+      const target = parseIpcPayload(sttRuntimeActionTargetSchema, payload, "stt-runtime:download") as SttRuntimeActionTarget;
+      await this.runtimeService.downloadRuntime(target);
       this.broadcastState();
       return this.sttSetup.getSnapshot();
     });
     handle("stt-runtime:repair", async (_event, payload) => {
-      const runtimeId = parseIpcPayload(sttRuntimeIdSchema, payload, "stt-runtime:repair") as SttRuntimeId;
-      await this.runtimeService.repairRuntime(runtimeId);
+      const target = parseIpcPayload(sttRuntimeActionTargetSchema, payload, "stt-runtime:repair") as SttRuntimeActionTarget;
+      await this.runtimeService.repairRuntime(target);
       this.broadcastState();
       return this.sttSetup.getSnapshot();
     });
     handle("stt-runtime:cancel-download", async (_event, payload) => {
-      const runtimeId = parseIpcPayload(sttRuntimeIdSchema, payload, "stt-runtime:cancel-download") as SttRuntimeId;
-      await this.runtimeService.cancelRuntimeDownload(runtimeId);
+      const target = parseIpcPayload(sttRuntimeActionTargetSchema, payload, "stt-runtime:cancel-download") as SttRuntimeActionTarget;
+      await this.runtimeService.cancelRuntimeDownload(target);
       this.broadcastState();
       return this.sttSetup.getSnapshot();
     });
@@ -1111,6 +1114,7 @@ export class AppController {
         provider: sttProvider,
         language: mode.language ?? sttProvider.defaultLanguage,
         vocabularyPrompt,
+        accelerationPreference: persisted.settings.sttAccelerationPreference,
         onDelta: (delta) => {
           this.session = { ...this.session, transcriptPreview: `${this.session.transcriptPreview ?? ""}${delta}` };
           this.mainWindow?.webContents.send("dictation:transcript-delta", delta);
@@ -1170,6 +1174,7 @@ export class AppController {
         transcriptionModel: transcription.model,
         transcriptionProviderCloud: sttProvider.isCloud,
         transcriptionStreamingMode: transcription.streamingMode,
+        transcriptionAccelerator: transcription.accelerator,
         llmProviderId: llmProvider?.id,
         llmProviderType: llmProvider?.type,
         llmModel,
@@ -1289,51 +1294,61 @@ export class AppController {
   }
 
   private selectTranscriptionProvider(state: {
+    settings: AppSettings;
     transcriptionProviders: TranscriptionProviderConfig[];
     modelLibrary: ModelLibrarySnapshot;
   }): TranscriptionProviderConfig | undefined {
-    const activeModel = this.selectActiveModel(state.modelLibrary, "voice");
+    const activeModel = this.selectActiveModel(state, "voice");
     const activeProvider = activeModel ? transcriptionProviderFromModel(activeModel, state.transcriptionProviders) : null;
-    if (activeProvider && this.isTranscriptionProviderUsable(activeProvider)) return activeProvider;
-    return state.transcriptionProviders.find((provider) => this.isTranscriptionProviderUsable(provider));
+    if (activeProvider && this.isTranscriptionProviderUsable(activeProvider, state.settings)) return activeProvider;
+    return state.transcriptionProviders.find((provider) => this.isTranscriptionProviderUsable(provider, state.settings));
   }
 
   private selectLlmProvider(state: {
     llmProviders: LlmProviderConfig[];
     modelLibrary: ModelLibrarySnapshot;
   }): LlmProviderConfig | undefined {
-    const activeModel = this.selectActiveModel(state.modelLibrary, "language");
+    const activeModel = this.selectActiveModel(state, "language");
     const activeProvider = activeModel ? llmProviderFromModel(activeModel, state.llmProviders) : null;
     if (activeProvider && isLlmProviderUsable(activeProvider)) return activeProvider;
     return state.llmProviders.find((provider) => isLlmProviderUsable(provider));
   }
 
-  private selectActiveModel(modelLibrary: ModelLibrarySnapshot, kind: ModelCatalogItem["kind"]): ModelCatalogItem | undefined {
+  private selectActiveModel(
+    state: { settings?: AppSettings; modelLibrary: ModelLibrarySnapshot },
+    kind: ModelCatalogItem["kind"]
+  ): ModelCatalogItem | undefined {
+    const { modelLibrary } = state;
     const modelId = modelLibrary.activeModelIds[kind];
     const item = modelId ? modelLibrary.catalog.find((candidate) => candidate.id === modelId && candidate.kind === kind) : undefined;
     if (!item) return undefined;
     if (item.discovery && !item.discovery.reachable) return undefined;
     if (kind === "voice") {
       const runtimeId = sttRuntimeIdForModel(item);
-      if (runtimeId && this.runtimeService.getAvailability(runtimeId).status !== "available") return undefined;
+      if (
+        runtimeId &&
+        this.runtimeService.getAvailabilityForPreference(runtimeId, state.settings?.sttAccelerationPreference ?? "auto").status !== "available"
+      ) {
+        return undefined;
+      }
     }
     if (item.downloadStrategy === "none") return item;
     return modelLibrary.downloads.some((download) => download.modelId === item.id && download.status === "downloaded") ? item : undefined;
   }
 
-  private isTranscriptionProviderUsable(provider: TranscriptionProviderConfig): boolean {
+  private isTranscriptionProviderUsable(provider: TranscriptionProviderConfig, settings: AppSettings): boolean {
     if (!isBaseTranscriptionProviderUsable(provider)) return false;
     if (provider.type === "whisper_cpp" && provider.baseUrl === "murmur://runtime/whisper.cpp") {
-      return this.bundledProviderUsable(provider, "whisper.cpp");
+      return this.bundledProviderUsable(provider, "whisper.cpp", settings);
     }
     if (provider.type === "sherpa_onnx") {
-      return this.bundledProviderUsable(provider, "sherpa-onnx");
+      return this.bundledProviderUsable(provider, "sherpa-onnx", settings);
     }
     return true;
   }
 
-  private bundledProviderUsable(provider: TranscriptionProviderConfig, runtimeId: SttRuntimeId): boolean {
-    if (this.runtimeService.getAvailability(runtimeId).status !== "available") return false;
+  private bundledProviderUsable(provider: TranscriptionProviderConfig, runtimeId: SttRuntimeId, settings: AppSettings): boolean {
+    if (this.runtimeService.getAvailabilityForPreference(runtimeId, settings.sttAccelerationPreference).status !== "available") return false;
     if (!provider.defaultModel) return false;
     const modelPath = isAbsolute(provider.defaultModel) ? provider.defaultModel : join(this.paths.modelDir, provider.defaultModel);
     return existsSync(modelPath);
@@ -1601,7 +1616,8 @@ export class AppController {
     return {
       sttRuntimes: this.runtimeService.getAvailabilities(),
       stt: {
-        diagnostics: this.stt.getDiagnostics()
+        diagnostics: this.stt.getDiagnostics(),
+        gpuProbe: this.gpuProbe.getReport()
       },
       hotkeys: {
         backend: this.hotkeyBackend,

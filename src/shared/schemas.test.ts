@@ -11,6 +11,14 @@ describe("IPC payload schemas", () => {
     expect(result.success).toBe(false);
   });
 
+  it("accepts the GPU runtime prompt dismissal setting", () => {
+    const result = settingsUpdatePayloadSchema.safeParse({
+      gpuRuntimeInstallPromptDismissedAt: "2026-06-29T00:00:00.000Z"
+    });
+
+    expect(result.success).toBe(true);
+  });
+
   it("rejects oversized text payloads", () => {
     expect(ipcTextPayloadSchema.safeParse("a".repeat(maxIpcTextCharacters)).success).toBe(true);
     expect(ipcTextPayloadSchema.safeParse("a".repeat(maxIpcTextCharacters + 1)).success).toBe(false);

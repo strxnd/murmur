@@ -43,13 +43,13 @@ For each runtime, Murmur checks:
 
 1. `MURMUR_WHISPER_CPP_SERVER` or `MURMUR_SHERPA_ONNX_OFFLINE`.
 2. `process.resourcesPath/runtimes/<platform-key>/<runtime-dir>/`.
-3. Managed cache installs under `runtimes/stt/<platform-key>/<runtime-id>/<version>/`.
+3. Managed cache installs under `runtimes/stt/<platform-key>/<runtime-id>/<accelerator>/<runtime-bundle-semver>/`.
 4. `vendor/runtimes/<platform-key>/<runtime-dir>/`.
 5. Legacy `vendor/runtimes/<runtime-dir>/`.
 
 Cache installs must include a matching `runtime.json` receipt and a supported executable. Corrupt or mismatched cache installs are reported as repairable only when a downloadable runtime archive URL is configured.
 
-Packaged apps include `whisper.cpp` and `sherpa-onnx` under `process.resourcesPath/runtimes/<platform-key>/`. In packaged mode, runtime download and repair actions are disabled; users can reinstall Murmur or set the runtime environment override if bundled resources are missing.
+Packaged apps include CPU `whisper.cpp` and `sherpa-onnx` runtimes under `process.resourcesPath/runtimes/<platform-key>/`. Packaged CPU runtime repair is disabled; optional GPU runtime downloads are allowed only when the catalog pins a runtime-only release URL, size, and SHA-256.
 
 ## Runtime Install Flow
 

@@ -54,7 +54,7 @@ export function ModelCard({
 
       {item.description && <p className="m-0 flex-1 text-sm leading-6 text-muted-foreground">{item.description}</p>}
 
-      {download?.error && <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">{download.error}</p>}
+      {download?.error && <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">Download failed. Try again.</p>}
 
       {status === "downloading" && (
         <ProgressBar value={progressValue(download)} label={`Downloading ${item.name}`} />

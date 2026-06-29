@@ -2,17 +2,25 @@
   "platforms": ["linux-x64"],
   "runtimes": {
     "whisper.cpp": {
-      "version": "v1.8.6",
+      "version": "1.8.6",
+      "gitTag": "v1.8.6",
       "repository": "https://github.com/ggml-org/whisper.cpp.git",
       "patch": "patches/whisper.cpp/v1.8.6-server-multipart-wav.patch"
     },
     "sherpa-onnx": {
-      "version": "v1.13.2",
+      "version": "1.13.2",
+      "releaseTag": "v1.13.2",
       "releaseBaseUrl": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.2",
       "assets": {
         "linux-x64": {
-          "name": "sherpa-onnx-v1.13.2-linux-x64-shared-no-tts.tar.bz2",
-          "sha256": "a1fb5d71811e85fe1fd5856540c6d19614681e222810e266d3b33038f724be75"
+          "cpu": {
+            "name": "sherpa-onnx-v1.13.2-linux-x64-shared-no-tts.tar.bz2",
+            "sha256": "a1fb5d71811e85fe1fd5856540c6d19614681e222810e266d3b33038f724be75"
+          },
+          "cuda": {
+            "name": "sherpa-onnx-v1.13.2-cuda-12.x-cudnn-9.x-linux-x64-gpu.tar.bz2",
+            "sha256": "bd113c93a18ba0f9b6e0cac46ab6a6a17606bdd7b771b6eaee0cbd6f96ce63fe"
+          }
         }
       }
     }

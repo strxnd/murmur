@@ -541,7 +541,8 @@ pre {
 }
 
 .mode-row,
-.model-row {
+.model-row,
+.provider-row {
   transition:
     background-color 140ms ease,
     transform 140ms ease;
@@ -550,14 +551,18 @@ pre {
 .mode-row:hover,
 .mode-row[data-popup-open],
 .model-row:hover,
-.model-row[data-popup-open] {
+.model-row[data-popup-open],
+.provider-row:hover,
+.provider-row[data-popup-open] {
   transform: translateY(-1px);
 }
 
 .mode-row-chevron,
 .mode-glyph,
 .model-row-chevron,
-.model-glyph {
+.model-glyph,
+.provider-row-chevron,
+.provider-glyph {
   transition:
     background-color 140ms ease,
     border-color 140ms ease,
@@ -591,7 +596,10 @@ pre {
   .model-popover-popup,
   .model-row,
   .model-row-chevron,
-  .model-glyph {
+  .model-glyph,
+  .provider-row,
+  .provider-row-chevron,
+  .provider-glyph {
     transition-duration: 1ms !important;
     transform: none !important;
   }
@@ -797,7 +805,8 @@ span.inline-flex.items-center.rounded.border.text-foreground {
 }
 
 .mode-row,
-.model-row {
+.model-row,
+.provider-row {
   background: color-mix(in srgb, var(--surface) 88%, var(--background));
   border-color: color-mix(in srgb, var(--border) 88%, var(--console-contrast) 12%);
   border-radius: 8px;
@@ -808,13 +817,17 @@ span.inline-flex.items-center.rounded.border.text-foreground {
 .mode-row[data-popup-open],
 .model-row:hover,
 .model-row[data-popup-open],
+.provider-row:hover,
+.provider-row[data-popup-open],
 .mode-row.bg-muted,
-.model-row.bg-muted {
+.model-row.bg-muted,
+.provider-row.bg-muted {
   background: linear-gradient(90deg, color-mix(in srgb, var(--console-contrast) 18%, var(--muted)), var(--surface));
   border-color: color-mix(in srgb, var(--console-fill) 36%, var(--border));
 }
 
-.mode-glyph {
+.mode-glyph,
+.provider-glyph {
   background: linear-gradient(145deg, color-mix(in srgb, var(--surface-raised) 78%, var(--console-contrast) 22%), var(--surface-raised));
   border-color: color-mix(in srgb, var(--border) 72%, var(--console-edge) 28%);
   color: var(--foreground);
@@ -833,7 +846,8 @@ span.inline-flex.items-center.rounded.border.text-foreground {
   box-shadow: var(--console-control-shadow);
 }
 
-.mode-glyph.scale-105 {
+.mode-glyph.scale-105,
+.provider-glyph.scale-105 {
   border-color: color-mix(in srgb, var(--console-fill) 58%, var(--border));
   color: var(--console-fill);
 }

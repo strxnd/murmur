@@ -60,9 +60,11 @@ function testSnapshot(): AppStateSnapshot {
       runtimes: {
         "whisper.cpp": {
           id: "whisper.cpp",
+          variantKey: "whisper.cpp|linux-x64|cpu|0.0.0-test",
+          accelerator: "cpu",
           label: "whisper.cpp",
           platformKey: "linux-x64",
-          requiredVersion: "test",
+          requiredVersion: "0.0.0-test",
           status: "ready",
           progressBytes: 0,
           message: "Ready",
@@ -71,9 +73,11 @@ function testSnapshot(): AppStateSnapshot {
         },
         "sherpa-onnx": {
           id: "sherpa-onnx",
+          variantKey: "sherpa-onnx|linux-x64|cpu|0.0.0-test",
+          accelerator: "cpu",
           label: "Sherpa ONNX",
           platformKey: "linux-x64",
-          requiredVersion: "test",
+          requiredVersion: "0.0.0-test",
           status: "ready",
           progressBytes: 0,
           message: "Ready",
@@ -87,6 +91,8 @@ function testSnapshot(): AppStateSnapshot {
       sttRuntimes: {
         "whisper.cpp": {
           id: "whisper.cpp",
+          variantKey: "whisper.cpp|linux-x64|cpu|0.0.0-test",
+          accelerator: "cpu",
           label: "whisper.cpp",
           status: "available",
           platformKey: "linux-x64",
@@ -94,13 +100,22 @@ function testSnapshot(): AppStateSnapshot {
         },
         "sherpa-onnx": {
           id: "sherpa-onnx",
+          variantKey: "sherpa-onnx|linux-x64|cpu|0.0.0-test",
+          accelerator: "cpu",
           label: "Sherpa ONNX",
           status: "available",
           platformKey: "linux-x64",
           message: "Ready"
         }
       },
-      stt: { diagnostics: [] },
+      stt: {
+        diagnostics: [],
+        gpuProbe: {
+          nvidia: { available: false, devices: [], diagnostics: [] },
+          amd: { available: false, devices: [], diagnostics: [] },
+          diagnostics: []
+        }
+      },
       hotkeys: {
         backend: "electron_global_shortcut",
         pushToTalkRelease: false,

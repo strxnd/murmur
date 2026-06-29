@@ -1,10 +1,13 @@
-import type { SttRuntimeId } from "./types";
+import type { SttRuntimeAccelerator, SttRuntimeId, SttRuntimeVariantKey } from "./types";
 
 export interface SttRuntimeAsset {
   assetName: string;
   url?: string;
-  sizeBytes: number;
-  sha256: string;
+  sizeBytes?: number;
+  sha256?: string;
+  archiveFormat?: "tar.gz" | "tar.bz2";
+  abi?: string;
+  runtimeDir?: string;
 }
 
 export interface SttRuntimeCatalogEntry {
@@ -12,13 +15,21 @@ export interface SttRuntimeCatalogEntry {
   label: string;
   runtimeDir: string;
   envVar: string;
+  acceleratorEnvVars?: Partial<Record<SttRuntimeAccelerator, string>>;
+  upstreamVersion: string;
   version: string;
   executableCandidates: string[];
   libraryDirs: string[];
   platforms: Record<string, SttRuntimeAsset>;
+  variants?: Record<string, Partial<Record<SttRuntimeAccelerator, SttRuntimeAsset>>>;
 }
 
 export const supportedSttRuntimePlatformKeys = ["linux-x64"] as const;
+export const sttRuntimeAccelerators = ["cpu", "cuda", "hip"] as const satisfies SttRuntimeAccelerator[];
+export const sttGpuRuntimeReleaseVersion = "0.1.0";
+export const sttGpuRuntimeReleaseTag = `stt-runtimes-${sttGpuRuntimeReleaseVersion}`;
+
+const sttGpuRuntimeReleaseBaseUrl = `https://github.com/strxnd/murmur/releases/download/${sttGpuRuntimeReleaseTag}`;
 
 export const sttRuntimeCatalog: Record<SttRuntimeId, SttRuntimeCatalogEntry> = {
   "whisper.cpp": {
@@ -26,15 +37,39 @@ export const sttRuntimeCatalog: Record<SttRuntimeId, SttRuntimeCatalogEntry> = {
     label: "whisper.cpp",
     runtimeDir: "whisper.cpp",
     envVar: "MURMUR_WHISPER_CPP_SERVER",
-    version: "v1.8.6",
+    acceleratorEnvVars: {
+      cpu: "MURMUR_WHISPER_CPP_SERVER",
+      cuda: "MURMUR_WHISPER_CPP_CUDA_SERVER",
+      hip: "MURMUR_WHISPER_CPP_HIP_SERVER"
+    },
+    upstreamVersion: "1.8.6",
+    version: "0.1.0",
     executableCandidates: ["whisper-server"],
     libraryDirs: ["lib", "bin"],
     platforms: {
       "linux-x64": runtimeAsset(
-        "murmur-stt-runtime-whisper.cpp-v1.8.6-linux-x64.tar.gz",
+        "murmur-stt-runtime-whisper.cpp-1.8.6-linux-x64-0.1.0.tar.gz",
         3720870,
         "d59417162bbf89aaecbf6c348a385da67dd71fcdbb6cf62066a53ae49ea685b1"
       )
+    },
+    variants: {
+      "linux-x64": {
+        cuda: runtimeAsset(
+          "murmur-stt-runtime-whisper.cpp-1.8.6-linux-x64-cuda-0.1.0.tar.gz",
+          430368535,
+          "c91b1b9a97e8a95ee8689cf364fd3ad85d24b6101789b02e33bf547e560ec778",
+          {
+            url: gpuRuntimeReleaseUrl("murmur-stt-runtime-whisper.cpp-1.8.6-linux-x64-cuda-0.1.0.tar.gz"),
+            abi: "CUDA",
+            runtimeDir: "whisper.cpp-cuda"
+          }
+        ),
+        hip: runtimeAsset("murmur-stt-runtime-whisper.cpp-1.8.6-linux-x64-hip-0.1.0.tar.gz", undefined, undefined, {
+          abi: "HIP/ROCm",
+          runtimeDir: "whisper.cpp-hip"
+        })
+      }
     }
   },
   "sherpa-onnx": {
@@ -42,15 +77,34 @@ export const sttRuntimeCatalog: Record<SttRuntimeId, SttRuntimeCatalogEntry> = {
     label: "Sherpa ONNX",
     runtimeDir: "sherpa-onnx",
     envVar: "MURMUR_SHERPA_ONNX_OFFLINE",
-    version: "v1.13.2",
+    acceleratorEnvVars: {
+      cpu: "MURMUR_SHERPA_ONNX_OFFLINE",
+      cuda: "MURMUR_SHERPA_ONNX_CUDA_OFFLINE"
+    },
+    upstreamVersion: "1.13.2",
+    version: "0.1.0",
     executableCandidates: ["sherpa-onnx-offline", "bin/sherpa-onnx-offline"],
     libraryDirs: ["lib", "bin"],
     platforms: {
       "linux-x64": runtimeAsset(
-        "murmur-stt-runtime-sherpa-onnx-v1.13.2-linux-x64.tar.gz",
+        "murmur-stt-runtime-sherpa-onnx-1.13.2-linux-x64-0.1.0.tar.gz",
         25574920,
         "563f226035c3905279ac01bf123f7b4f0faa1baa96cae7f2fece96f9e73530b1"
       )
+    },
+    variants: {
+      "linux-x64": {
+        cuda: runtimeAsset(
+          "murmur-stt-runtime-sherpa-onnx-1.13.2-linux-x64-cuda-0.1.0.tar.gz",
+          225775663,
+          "41d0c216303b3e1de55924fc68df877e25f66590fdb3551d326cb531832ac745",
+          {
+            url: gpuRuntimeReleaseUrl("murmur-stt-runtime-sherpa-onnx-1.13.2-linux-x64-cuda-0.1.0.tar.gz"),
+            abi: "CUDA 12.x/cuDNN 9.x",
+            runtimeDir: "sherpa-onnx-cuda"
+          }
+        )
+      }
     }
   }
 };
@@ -61,10 +115,85 @@ export function getSttRuntimeCatalogEntry(id: SttRuntimeId): SttRuntimeCatalogEn
   return sttRuntimeCatalog[id];
 }
 
-function runtimeAsset(assetName: string, sizeBytes: number, sha256: string): SttRuntimeAsset {
+export function getSttRuntimeVariantAsset(
+  entry: SttRuntimeCatalogEntry,
+  platformKey: string,
+  accelerator: SttRuntimeAccelerator
+): SttRuntimeAsset | undefined {
+  if (accelerator === "cpu") {
+    return entry.variants?.[platformKey]?.cpu ?? entry.platforms[platformKey];
+  }
+  return entry.variants?.[platformKey]?.[accelerator];
+}
+
+export function getSttRuntimeSupportedAccelerators(
+  entry: SttRuntimeCatalogEntry,
+  platformKey: string
+): SttRuntimeAccelerator[] {
+  return sttRuntimeAccelerators.filter((accelerator) => Boolean(getSttRuntimeVariantAsset(entry, platformKey, accelerator)));
+}
+
+export function getSttRuntimeExpectedAssetName(
+  entry: SttRuntimeCatalogEntry,
+  platformKey: string,
+  accelerator: SttRuntimeAccelerator
+): string {
+  const acceleratorSuffix = accelerator === "cpu" ? "" : `-${accelerator}`;
+  return `murmur-stt-runtime-${entry.id}-${entry.upstreamVersion}-${platformKey}${acceleratorSuffix}-${entry.version}.tar.gz`;
+}
+
+export function getSttRuntimeVariantKey(
+  id: SttRuntimeId,
+  platformKey: string,
+  accelerator: SttRuntimeAccelerator,
+  version: string
+): SttRuntimeVariantKey {
+  return [id, platformKey, accelerator, version].join("|");
+}
+
+export function parseSttRuntimeVariantKey(value: string): {
+  id: SttRuntimeId;
+  platformKey: string;
+  accelerator: SttRuntimeAccelerator;
+  version: string;
+} | null {
+  const [id, platformKey, accelerator, version] = value.split("|");
+  if (!isSttRuntimeId(id) || !isSttRuntimeAccelerator(accelerator) || !platformKey || !version || !isSemverVersion(version)) return null;
+  return { id, platformKey, accelerator, version };
+}
+
+export function sttRuntimeVariantLabel(entry: SttRuntimeCatalogEntry, accelerator: SttRuntimeAccelerator): string {
+  if (accelerator === "cpu") return entry.label;
+  return `${entry.label} ${accelerator.toUpperCase()}`;
+}
+
+export function sttRuntimeVariantRuntimeDir(entry: SttRuntimeCatalogEntry, platformKey: string, accelerator: SttRuntimeAccelerator): string {
+  const asset = getSttRuntimeVariantAsset(entry, platformKey, accelerator);
+  return asset?.runtimeDir ?? (accelerator === "cpu" ? entry.runtimeDir : `${entry.runtimeDir}-${accelerator}`);
+}
+
+function runtimeAsset(assetName: string, sizeBytes?: number, sha256?: string, patch: Partial<SttRuntimeAsset> = {}): SttRuntimeAsset {
   return {
     assetName,
+    archiveFormat: "tar.gz",
     sizeBytes,
-    sha256
+    sha256,
+    ...patch
   };
+}
+
+function gpuRuntimeReleaseUrl(assetName: string): string {
+  return `${sttGpuRuntimeReleaseBaseUrl}/${assetName}`;
+}
+
+export function isSemverVersion(value: string): boolean {
+  return /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(value);
+}
+
+function isSttRuntimeId(value: string): value is SttRuntimeId {
+  return value === "whisper.cpp" || value === "sherpa-onnx";
+}
+
+function isSttRuntimeAccelerator(value: string): value is SttRuntimeAccelerator {
+  return value === "cpu" || value === "cuda" || value === "hip";
 }

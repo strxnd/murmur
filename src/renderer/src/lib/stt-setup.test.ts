@@ -98,6 +98,8 @@ function state({
       sttRuntimes: {
         "whisper.cpp": {
           id: "whisper.cpp",
+          variantKey: "whisper.cpp|linux-x64|cpu|0.0.0-test",
+          accelerator: "cpu",
           label: "whisper.cpp",
           status: runtimeStatus === "ready" ? "available" : "missing",
           platformKey: "linux-x64",
@@ -105,13 +107,15 @@ function state({
         },
         "sherpa-onnx": {
           id: "sherpa-onnx",
+          variantKey: "sherpa-onnx|linux-x64|cpu|0.0.0-test",
+          accelerator: "cpu",
           label: "sherpa-onnx",
           status: "missing",
           platformKey: "linux-x64",
           message: "runtime"
         }
       },
-      stt: { diagnostics: [] },
+      stt: { diagnostics: [], gpuProbe: emptyGpuProbe() },
       hotkeys: {
         backend: "electron_global_shortcut",
         pushToTalkRelease: false,
@@ -147,13 +151,23 @@ function state({
 function runtime(id: "whisper.cpp" | "sherpa-onnx", status: SttRuntimeInstallState["status"]): SttRuntimeInstallState {
   return {
     id,
+    variantKey: `${id}|linux-x64|cpu|0.0.0-test`,
+    accelerator: "cpu",
     label: id,
     platformKey: "linux-x64",
-    requiredVersion: "test",
+    requiredVersion: "0.0.0-test",
     status,
     progressBytes: 0,
     message: id,
     canDownload: status !== "ready",
     canRepair: status !== "ready"
+  };
+}
+
+function emptyGpuProbe() {
+  return {
+    nvidia: { available: false, devices: [], diagnostics: [] },
+    amd: { available: false, devices: [], diagnostics: [] },
+    diagnostics: []
   };
 }

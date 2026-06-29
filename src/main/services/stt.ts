@@ -5,6 +5,8 @@ import { createServer } from "node:net";
 import { isAbsolute, join } from "node:path";
 import type {
   ProviderValidationResult,
+  SttAccelerationPreference,
+  SttRuntimeAccelerator,
   SttRuntimeId,
   SttStreamingMode,
   TranscriptionProviderConfig,
@@ -21,6 +23,7 @@ interface TranscribeOptions {
   provider: TranscriptionProviderConfig;
   language?: string | "auto";
   vocabularyPrompt?: string;
+  accelerationPreference?: SttAccelerationPreference;
   onDelta?: (delta: string) => void;
 }
 
@@ -32,6 +35,7 @@ interface RuntimeProcessResult {
 interface WhisperServerProcess {
   key: string;
   runtimeId: SttRuntimeId;
+  accelerator: SttRuntimeAccelerator;
   baseUrl: string;
   process: ChildProcessWithoutNullStreams;
 }
@@ -156,14 +160,17 @@ export class TranscriptionService {
     }
 
     const modelPath = this.requiredModelPath(options.provider.defaultModel, "Bundled whisper.cpp");
-    const baseUrl = await this.ensureWhisperServer(modelPath);
-    return this.transcribeWhisperCpp({
-      ...options,
-      provider: {
-        ...options.provider,
-        baseUrl,
-        endpointPath: "/inference"
-      }
+    return this.withRuntimeFallback("whisper.cpp", options.accelerationPreference ?? "auto", async (runtime) => {
+      const baseUrl = await this.ensureWhisperServer(modelPath, runtime);
+      const result = await this.transcribeWhisperCpp({
+        ...options,
+        provider: {
+          ...options.provider,
+          baseUrl,
+          endpointPath: "/inference"
+        }
+      });
+      return { ...result, accelerator: runtime.accelerator };
     });
   }
 
@@ -196,20 +203,27 @@ export class TranscriptionService {
       throw new Error("Sherpa ONNX expects WAV input. Restart recording so Murmur can capture WAV audio.");
     }
 
-    const runtime = this.runtimeService.requireRuntime("sherpa-onnx");
     const modelPath = this.requiredModelPath(options.provider.defaultModel, "Sherpa ONNX");
     const audioPath = this.writeTempAudio(options.audio, "wav");
 
     try {
-      const result = await runProcess(runtime.binaryPath, buildSherpaArgs(modelPath, audioPath), transcriptionTimeoutMs, runtime);
-      this.lastRuntimeDiagnostics = runtimeDiagnostics("Sherpa ONNX", result.stdout, result.stderr);
-      const text = extractSherpaText(result.stdout) || extractSherpaText(result.stderr);
-      return {
-        text,
-        providerId: options.provider.id,
-        model: options.provider.defaultModel,
-        streamingMode: "none"
-      };
+      return await this.withRuntimeFallback("sherpa-onnx", options.accelerationPreference ?? "auto", async (runtime) => {
+        const result = await runProcess(
+          runtime.binaryPath,
+          buildSherpaArgs(modelPath, audioPath, undefined, runtime.accelerator),
+          transcriptionTimeoutMs,
+          runtime
+        );
+        this.lastRuntimeDiagnostics = runtimeDiagnostics(runtime.label, result.stdout, result.stderr);
+        const text = extractSherpaText(result.stdout) || extractSherpaText(result.stderr);
+        return {
+          text,
+          providerId: options.provider.id,
+          model: options.provider.defaultModel,
+          streamingMode: "none",
+          accelerator: runtime.accelerator
+        };
+      });
     } catch (error) {
       this.lastRuntimeDiagnostics = [`Sherpa ONNX error: ${tail(error instanceof Error ? error.message : String(error))}`];
       throw new Error("Sherpa ONNX transcription failed. Check runtime diagnostics for details.");
@@ -267,9 +281,40 @@ export class TranscriptionService {
     };
   }
 
-  private async ensureWhisperServer(modelPath: string): Promise<string> {
-    const runtime = this.runtimeService.requireRuntime("whisper.cpp");
-    const key = [runtime.id, runtime.platformKey, runtime.source, runtime.rootDir, runtime.version, modelPath].join("|");
+  private async withRuntimeFallback(
+    runtimeId: SttRuntimeId,
+    preference: SttAccelerationPreference,
+    attempt: (runtime: ResolvedSttRuntime) => Promise<TranscriptionResult>
+  ): Promise<TranscriptionResult> {
+    const primary = this.runtimeService.requireRuntimeForPreference(runtimeId, preference);
+    try {
+      return await attempt(primary);
+    } catch (error) {
+      const primaryMessage = errorMessage(error);
+      if (preference !== "auto" || primary.accelerator === "cpu") {
+        throw error;
+      }
+
+      this.stopRuntime(runtimeId);
+      this.lastRuntimeDiagnostics = [
+        `${primary.label} failed; retrying ${primary.id} CPU once because acceleration preference is auto.`,
+        primaryMessage,
+        ...this.lastRuntimeDiagnostics
+      ].map((line) => tail(line, maxRuntimeDiagnosticsChars));
+
+      const cpu = this.runtimeService.requireRuntime(runtimeId, "cpu");
+      try {
+        return await attempt(cpu);
+      } catch (cpuError) {
+        throw new Error(
+          `${primary.label} failed and the CPU retry also failed. GPU error: ${primaryMessage}. CPU error: ${errorMessage(cpuError)}`
+        );
+      }
+    }
+  }
+
+  private async ensureWhisperServer(modelPath: string, runtime: ResolvedSttRuntime): Promise<string> {
+    const key = [runtime.variantKey, runtime.source, runtime.rootDir, runtime.version, modelPath].join("|");
     const existing = this.whisperServer;
     if (existing?.key === key && existing.process.exitCode === null && !existing.process.killed) {
       this.scheduleWhisperServerIdleShutdown();
@@ -279,26 +324,26 @@ export class TranscriptionService {
     this.stopWhisperServer();
     const port = await findOpenPort();
     const baseUrl = `http://127.0.0.1:${port}`;
-    const args = buildWhisperServerArgs(port, modelPath);
+    const args = buildWhisperServerArgs(port, modelPath, undefined, runtime.accelerator, runtime.env.MURMUR_STT_GPU_DEVICE);
     const child = spawn(runtime.binaryPath, args, { stdio: ["pipe", "pipe", "pipe"], env: runtime.env, cwd: runtime.cwd });
     const stdout = new BoundedTextBuffer(maxRuntimeDiagnosticsChars);
     const stderr = new BoundedTextBuffer(maxRuntimeDiagnosticsChars);
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdout.append(chunk.toString());
-      this.lastRuntimeDiagnostics = runtimeDiagnostics("whisper.cpp", stdout.text(), stderr.text());
+      this.lastRuntimeDiagnostics = runtimeDiagnostics(runtime.label, stdout.text(), stderr.text());
     });
     child.stderr.on("data", (chunk: Buffer) => {
       stderr.append(chunk.toString());
-      this.lastRuntimeDiagnostics = runtimeDiagnostics("whisper.cpp", stdout.text(), stderr.text());
+      this.lastRuntimeDiagnostics = runtimeDiagnostics(runtime.label, stdout.text(), stderr.text());
     });
     child.on("close", () => {
       if (this.whisperServer?.process === child) this.whisperServer = null;
     });
 
-    this.whisperServer = { key, runtimeId: "whisper.cpp", baseUrl, process: child };
+    this.whisperServer = { key, runtimeId: "whisper.cpp", accelerator: runtime.accelerator, baseUrl, process: child };
     await waitForHttp(baseUrl, child, () => {
-      this.lastRuntimeDiagnostics = runtimeDiagnostics("whisper.cpp", stdout.text(), stderr.text());
+      this.lastRuntimeDiagnostics = runtimeDiagnostics(runtime.label, stdout.text(), stderr.text());
       return [stdout.text(), stderr.text()].filter(Boolean).join("\n");
     });
     this.scheduleWhisperServerIdleShutdown();
@@ -438,11 +483,17 @@ export class BoundedTextBuffer {
   }
 }
 
-export function buildSherpaArgs(modelPath: string, audioPath: string, threadCount = process.env.MURMUR_STT_THREADS || "4"): string[] {
+export function buildSherpaArgs(
+  modelPath: string,
+  audioPath: string,
+  threadCount = process.env.MURMUR_STT_THREADS || "4",
+  accelerator: SttRuntimeAccelerator = "cpu"
+): string[] {
   const tokensPath = join(modelPath, "tokens.txt");
   if (!existsSync(tokensPath)) {
     throw new Error(`Sherpa ONNX model is missing tokens.txt in ${modelPath}.`);
   }
+  const provider = accelerator === "cuda" ? "cuda" : "cpu";
 
   const ctcModel = firstExisting([join(modelPath, "model.int8.onnx"), join(modelPath, "model.onnx")]);
   if (ctcModel) {
@@ -450,6 +501,7 @@ export function buildSherpaArgs(modelPath: string, audioPath: string, threadCoun
       `--nemo-ctc-model=${ctcModel}`,
       `--tokens=${tokensPath}`,
       `--num-threads=${threadCount}`,
+      `--provider=${provider}`,
       "--decoding-method=greedy_search",
       "--debug=false",
       audioPath
@@ -467,6 +519,7 @@ export function buildSherpaArgs(modelPath: string, audioPath: string, threadCoun
       `--tokens=${tokensPath}`,
       "--model-type=nemo_transducer",
       `--num-threads=${threadCount}`,
+      `--provider=${provider}`,
       "--decoding-method=greedy_search",
       "--debug=false",
       audioPath
@@ -476,8 +529,14 @@ export function buildSherpaArgs(modelPath: string, audioPath: string, threadCoun
   throw new Error(`Sherpa ONNX model directory is missing supported ONNX files: ${modelPath}`);
 }
 
-export function buildWhisperServerArgs(port: number, modelPath: string, threadCount = process.env.MURMUR_STT_THREADS || "4"): string[] {
-  return [
+export function buildWhisperServerArgs(
+  port: number,
+  modelPath: string,
+  threadCount = process.env.MURMUR_STT_THREADS || "4",
+  accelerator: SttRuntimeAccelerator = "cpu",
+  gpuDevice = process.env.MURMUR_STT_GPU_DEVICE
+): string[] {
+  const args = [
     "--host",
     "127.0.0.1",
     "--port",
@@ -489,6 +548,10 @@ export function buildWhisperServerArgs(port: number, modelPath: string, threadCo
     "--threads",
     threadCount
   ];
+  if (accelerator !== "cpu" && gpuDevice) {
+    args.push("--device", gpuDevice);
+  }
+  return args;
 }
 
 function runProcess(
@@ -613,6 +676,10 @@ function transcriptionHttpTimeouts(): { totalTimeoutMs: number; idleTimeoutMs: n
 function envPositiveInteger(name: string, fallback: number): number {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function runtimeDiagnostics(label: string, stdout: string, stderr: string): string[] {
