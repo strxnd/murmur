@@ -36,6 +36,7 @@ This starts Electron through Electron Vite. In non-packaged development builds, 
 | `mise run runtimes:manifest-check` | Validate runtime archive metadata. |
 | `mise run runtimes:manifest-check:release` | Validate configured runtime release URLs are reachable. |
 | `mise run linux-helper:build` | Build the optional native Linux keyboard helper. |
+| `mise run release:prepare` | Prepare local release artifacts without committing, tagging, pushing, or creating releases. |
 
 ## Generated Output
 

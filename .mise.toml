@@ -61,6 +61,10 @@ run = "npm run runtimes:manifest-check:release"
 description = "Build the optional native Linux keyboard helper."
 run = "npm run linux-helper:build"
 
+[tasks."release:prepare"]
+description = "Prepare local release artifacts without committing, tagging, pushing, or creating releases."
+run = "npm run release:prepare --"
+
 [tasks.pack]
 description = "Build and package an unpacked Electron app."
 run = "npm run pack"

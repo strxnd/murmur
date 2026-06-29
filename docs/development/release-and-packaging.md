@@ -40,6 +40,20 @@ flowchart TD
 
 ## App Packaging Commands
 
+For local release preparation without pushing a tag or creating a GitHub release:
+
+```sh
+mise run release:prepare
+```
+
+The preparation helper verifies the release version and `docs/releases/<version>.md`, checks the git worktree, runs the same verification steps as the release workflow, prepares bundled STT runtimes, builds app artifacts, packages current-platform runtime archives, and writes `dist/SHA256SUMS-linux.txt`. It does not edit tracked files, create release notes, commit, tag, push, or call `gh release`.
+
+The helper writes only ignored generated output under paths such as `out/`, `dist/`, `.cache/bundled-runtimes/`, `vendor/runtimes/`, and `resources/bin/linux-fast-paste`. For available skips and non-interactive mode:
+
+```sh
+npm run release:prepare -- --help
+```
+
 ```sh
 mise run pack
 mise run dist
