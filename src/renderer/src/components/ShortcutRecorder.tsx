@@ -119,7 +119,7 @@ export function ShortcutRecorder({
             ) : (
               <span
                 key={`${part}-${index}`}
-                className="shrink-0 rounded bg-muted px-2 py-1 font-mono text-[11px] font-semibold leading-none text-muted-foreground shadow-inner shadow-foreground/5"
+                className="shrink-0 rounded bg-muted px-2 py-1 font-mono text-[11px] font-semibold leading-none text-muted-foreground"
               >
                 {part}
               </span>

@@ -311,8 +311,8 @@ export function ConfigurationView({
                   <Trash2 size={18} /> Clear local data
                 </Dialog.Trigger>
                 <Dialog.Portal>
-                  <Dialog.Backdrop className="fixed inset-0 z-40 bg-black/70" />
-                  <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 w-[min(calc(100vw-2rem),30rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-2xl outline-none">
+                  <Dialog.Backdrop className="fixed inset-0 z-40 bg-black/50" />
+                  <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 w-[min(calc(100vw-2rem),30rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-[var(--console-dialog-shadow)] outline-none">
                     <Dialog.Title className="m-0 text-base font-semibold text-foreground">Clear all local data?</Dialog.Title>
                     <Dialog.Description className="m-0 mt-2 text-sm leading-6 text-muted-foreground">
                       This will reset settings, modes, providers, vocabulary, model records, and history. This cannot be undone.

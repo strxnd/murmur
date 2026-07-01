@@ -51,15 +51,15 @@
   --console-fill: #e5e5e5;
   --console-fill-soft: #303030;
   --console-on-strong: #0b0b0b;
-  --console-panel-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
-  --console-dialog-shadow: 0 24px 64px rgba(0, 0, 0, 0.34);
-  --console-popover-shadow: 0 20px 54px rgba(0, 0, 0, 0.3);
-  --console-listbox-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
-  --console-pill-shadow: 0 18px 34px rgba(0, 0, 0, 0.34);
-  --console-control-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset;
+  --console-panel-shadow: none;
+  --console-dialog-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  --console-popover-shadow: 0 6px 18px rgba(0, 0, 0, 0.24);
+  --console-listbox-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+  --console-pill-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
+  --console-control-shadow: none;
   --console-focus: rgba(255, 255, 255, 0.24);
-  --console-overlay: rgba(0, 0, 0, 0.72);
-  --console-pill-inset: rgba(255, 255, 255, 0.1);
+  --console-overlay: rgba(0, 0, 0, 0.6);
+  --console-pill-inset: transparent;
 }
 
 :root[data-theme="light"] {
@@ -85,17 +85,15 @@
   --console-fill: #1f1f1f;
   --console-fill-soft: #d7d7d7;
   --console-on-strong: #ffffff;
-  --console-panel-shadow: 0 18px 42px rgba(22, 22, 22, 0.1);
-  --console-dialog-shadow: 0 24px 64px rgba(22, 22, 22, 0.18);
-  --console-popover-shadow: 0 20px 54px rgba(22, 22, 22, 0.16);
-  --console-listbox-shadow: 0 18px 42px rgba(22, 22, 22, 0.14);
-  --console-pill-shadow: 0 18px 34px rgba(22, 22, 22, 0.2);
-  --console-control-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.86) inset,
-    0 1px 1px rgba(22, 22, 22, 0.04);
+  --console-panel-shadow: none;
+  --console-dialog-shadow: 0 8px 24px rgba(22, 22, 22, 0.14);
+  --console-popover-shadow: 0 6px 18px rgba(22, 22, 22, 0.12);
+  --console-listbox-shadow: 0 6px 18px rgba(22, 22, 22, 0.1);
+  --console-pill-shadow: 0 4px 12px rgba(22, 22, 22, 0.18);
+  --console-control-shadow: none;
   --console-focus: rgba(0, 0, 0, 0.16);
-  --console-overlay: rgba(18, 18, 18, 0.46);
-  --console-pill-inset: rgba(255, 255, 255, 0.12);
+  --console-overlay: rgba(18, 18, 18, 0.34);
+  --console-pill-inset: transparent;
 }
 
 :root.theme-transition-suppressed,
@@ -198,14 +196,9 @@ pre {
   gap: 10px;
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--foreground) 20%, var(--border));
-  border-radius: 18px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--surface-raised) 92%, var(--foreground) 8%), color-mix(in srgb, var(--surface) 96%, transparent)),
-    color-mix(in srgb, var(--surface) 96%, transparent);
-  box-shadow:
-    0 24px 54px rgba(0, 0, 0, 0.34),
-    inset 0 0 0 1px color-mix(in srgb, var(--foreground) 7%, transparent),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  box-shadow: var(--console-popover-shadow);
   contain: layout paint;
 }
 
@@ -233,7 +226,7 @@ pre {
 }
 
 .mode-selector-list:focus-visible {
-  border-radius: 14px;
+  border-radius: 8px;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--foreground) 24%, transparent);
 }
 
@@ -253,11 +246,9 @@ pre {
   z-index: 0;
   pointer-events: none;
   border: 1px solid color-mix(in srgb, var(--foreground) 20%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--muted-foreground) 18%, transparent);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--foreground) 6%, transparent),
-    var(--console-control-shadow);
+  border-radius: 6px;
+  background: var(--muted);
+  box-shadow: none;
   transition:
     transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
     width 180ms cubic-bezier(0.16, 1, 0.3, 1),
@@ -275,7 +266,7 @@ pre {
   gap: 10px;
   padding: 8px 10px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: 6px;
   background: transparent;
   color: var(--foreground);
   cursor: pointer;
@@ -285,7 +276,7 @@ pre {
 .mode-selector-row:not(.mode-selector-row--active):hover,
 .mode-selector-row:not(.mode-selector-row--active):focus-visible {
   border-color: color-mix(in srgb, var(--foreground) 18%, var(--border));
-  background: color-mix(in srgb, var(--muted) 72%, var(--surface-raised));
+  background: var(--muted);
 }
 
 .mode-selector-row--active {
@@ -354,7 +345,7 @@ pre {
   padding: 0 6px;
   border: 1px solid color-mix(in srgb, var(--foreground) 16%, var(--border));
   border-radius: 6px;
-  background: color-mix(in srgb, var(--surface-raised) 86%, var(--foreground) 6%);
+  background: var(--surface-raised);
   color: var(--foreground);
   font: inherit;
   font-size: 10px;
@@ -368,10 +359,8 @@ pre {
   justify-content: center;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 999px;
-  background: rgba(10, 10, 12, 0.96);
-  box-shadow:
-    0 14px 28px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  background: #0f0f0f;
+  box-shadow: var(--console-pill-shadow);
   contain: layout paint;
 }
 
@@ -403,7 +392,7 @@ pre {
   width: 100%;
   height: 100%;
   border-radius: inherit;
-  background: rgba(248, 248, 246, 0.94);
+  background: #f4f4f2;
   content: "";
   transform-origin: center;
   will-change: transform, opacity;
@@ -554,7 +543,7 @@ pre {
 .model-row[data-popup-open],
 .provider-row:hover,
 .provider-row[data-popup-open] {
-  transform: translateY(-1px);
+  transform: none;
 }
 
 .mode-row-chevron,
@@ -614,10 +603,7 @@ pre {
 }
 
 :root:not([data-window="pill"]):not([data-window="mode-selector"]) body {
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--foreground) 4%, transparent), transparent 18rem),
-    linear-gradient(90deg, color-mix(in srgb, var(--foreground) 3%, transparent) 1px, transparent 1px) 0 0 / 56px 56px,
-    var(--background);
+  background: var(--background);
   color: var(--foreground);
 }
 
@@ -638,17 +624,13 @@ pre {
 }
 
 #root > .grid.h-screen {
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--background) 94%, var(--foreground) 6%), var(--background) 46%),
-    var(--background);
+  background: var(--background);
 }
 
 aside.flex.min-w-0.flex-col {
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--surface) 86%, var(--foreground) 14%), var(--surface) 58%),
-    var(--surface);
+  background: var(--surface);
   border-color: color-mix(in srgb, var(--border) 86%, var(--foreground) 14%);
-  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--foreground) 7%, transparent);
+  box-shadow: none;
 }
 
 aside > .flex.min-h-20 {
@@ -656,12 +638,10 @@ aside > .flex.min-h-20 {
 }
 
 aside .h-10.w-10 {
-  background: linear-gradient(145deg, var(--foreground), color-mix(in srgb, var(--foreground) 72%, var(--muted-foreground)));
+  background: var(--foreground);
   border-color: color-mix(in srgb, var(--foreground) 52%, var(--border));
   color: var(--console-on-strong);
-  box-shadow:
-    0 10px 24px color-mix(in srgb, var(--foreground) 20%, transparent),
-    var(--console-control-shadow);
+  box-shadow: none;
 }
 
 aside button {
@@ -673,21 +653,19 @@ aside button {
 }
 
 aside button:hover {
-  background: color-mix(in srgb, var(--muted) 78%, var(--foreground) 22%);
+  background: var(--muted);
 }
 
 aside button[data-active] {
-  background: linear-gradient(135deg, var(--foreground), color-mix(in srgb, var(--foreground) 78%, var(--muted-foreground)));
+  background: var(--foreground);
   color: var(--console-on-strong);
-  box-shadow:
-    inset 3px 0 0 var(--muted-foreground),
-    0 10px 22px color-mix(in srgb, var(--foreground) 20%, transparent);
+  box-shadow: inset 3px 0 0 var(--muted-foreground);
 }
 
 .min-h-screen > header.sticky {
-  background: color-mix(in srgb, var(--background) 90%, transparent);
+  background: var(--background);
   border-color: var(--border);
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--foreground) 6%, transparent);
+  box-shadow: none;
 }
 
 section.rounded-md.border.border-border.bg-surface,
@@ -700,8 +678,8 @@ article.rounded-md.border.border-border.bg-surface,
 .rounded-md.border.border-border.bg-muted\/50 {
   border-color: color-mix(in srgb, var(--border) 88%, var(--console-contrast) 12%);
   border-radius: 8px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 94%, var(--foreground) 6%), var(--surface));
-  box-shadow: var(--console-panel-shadow), var(--console-control-shadow);
+  background: var(--surface);
+  box-shadow: var(--console-panel-shadow);
 }
 
 .rounded-md.border.border-border.bg-muted\/20,
@@ -709,7 +687,7 @@ article.rounded-md.border.border-border.bg-surface,
 .rounded-md.border.border-border.bg-muted\/40,
 .rounded-md.border.border-border.bg-muted\/50 {
   background: color-mix(in srgb, var(--muted) 66%, var(--surface));
-  box-shadow: var(--console-control-shadow);
+  box-shadow: none;
 }
 
 .border-t.border-border,
@@ -721,7 +699,7 @@ article.rounded-md.border.border-border.bg-surface,
 button.inline-flex.rounded-md.border,
 button.h-9.w-9.rounded-md {
   border-radius: 7px;
-  box-shadow: var(--console-control-shadow);
+  box-shadow: none;
   transition:
     background-color 140ms ease,
     border-color 140ms ease,
@@ -732,20 +710,18 @@ button.h-9.w-9.rounded-md {
 
 button.inline-flex.rounded-md.border:hover,
 button.h-9.w-9.rounded-md:hover {
-  transform: translateY(-1px);
+  transform: none;
 }
 
 button.bg-brand {
-  background: linear-gradient(180deg, var(--brand), var(--brand-strong));
+  background: var(--brand);
   border-color: color-mix(in srgb, var(--brand-strong) 82%, var(--foreground));
   color: var(--console-on-strong);
-  box-shadow:
-    0 10px 22px color-mix(in srgb, var(--brand) 24%, transparent),
-    var(--console-control-shadow);
+  box-shadow: none;
 }
 
 button.bg-brand:hover {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--brand-strong) 88%, var(--foreground)), var(--brand-strong));
+  background: var(--brand-strong);
 }
 
 button.bg-surface-raised,
@@ -764,10 +740,10 @@ input.bg-surface,
 textarea.bg-surface,
 button.flex.min-h-9.w-full.bg-surface,
 button.flex.min-h-11.w-full.bg-surface {
-  background: color-mix(in srgb, var(--surface) 88%, var(--background));
+  background: var(--surface);
   border-color: color-mix(in srgb, var(--border) 88%, var(--foreground) 12%);
   border-radius: 7px;
-  box-shadow: var(--console-control-shadow);
+  box-shadow: none;
 }
 
 input.bg-surface:focus,
@@ -775,9 +751,7 @@ textarea.bg-surface:focus,
 button.flex.min-h-9.w-full.bg-surface:focus-visible,
 button.flex.min-h-11.w-full.bg-surface:focus {
   border-color: color-mix(in srgb, var(--console-fill) 70%, var(--border));
-  box-shadow:
-    0 0 0 3px var(--console-focus),
-    var(--console-control-shadow);
+  box-shadow: 0 0 0 3px var(--console-focus);
 }
 
 input::placeholder,
@@ -789,7 +763,7 @@ span.inline-flex.items-center.rounded.border {
   border-color: color-mix(in srgb, var(--border) 76%, var(--console-contrast) 24%);
   background: color-mix(in srgb, var(--muted) 68%, var(--console-contrast-deep) 32%);
   color: var(--muted-foreground);
-  box-shadow: var(--console-control-shadow);
+  box-shadow: none;
 }
 
 span.inline-flex.items-center.rounded.border.text-foreground {
@@ -801,16 +775,16 @@ span.inline-flex.items-center.rounded.border.text-foreground {
 .inline-flex.max-w-full.items-center.rounded-full {
   background: color-mix(in srgb, var(--surface-raised) 74%, var(--console-fill-soft) 26%);
   border-color: color-mix(in srgb, var(--border) 80%, var(--console-fill) 20%);
-  box-shadow: var(--console-control-shadow);
+  box-shadow: none;
 }
 
 .mode-row,
 .model-row,
 .provider-row {
-  background: color-mix(in srgb, var(--surface) 88%, var(--background));
+  background: var(--surface);
   border-color: color-mix(in srgb, var(--border) 88%, var(--console-contrast) 12%);
   border-radius: 8px;
-  box-shadow: var(--console-control-shadow);
+  box-shadow: none;
 }
 
 .mode-row:hover,
@@ -822,17 +796,17 @@ span.inline-flex.items-center.rounded.border.text-foreground {
 .mode-row.bg-muted,
 .model-row.bg-muted,
 .provider-row.bg-muted {
-  background: linear-gradient(90deg, color-mix(in srgb, var(--console-contrast) 18%, var(--muted)), var(--surface));
+  background: var(--muted);
   border-color: color-mix(in srgb, var(--console-fill) 36%, var(--border));
 }
 
 .mode-glyph,
 .provider-glyph {
-  background: linear-gradient(145deg, color-mix(in srgb, var(--surface-raised) 78%, var(--console-contrast) 22%), var(--surface-raised));
+  background: var(--surface-raised);
   border-color: color-mix(in srgb, var(--border) 72%, var(--console-edge) 28%);
   color: var(--foreground);
   border-radius: 8px;
-  box-shadow: var(--console-control-shadow);
+  box-shadow: none;
 }
 
 .model-glyph {
@@ -843,7 +817,7 @@ span.inline-flex.items-center.rounded.border.text-foreground {
   border-color: var(--model-glyph-border);
   color: var(--model-glyph-icon);
   border-radius: 8px;
-  box-shadow: var(--console-control-shadow);
+  box-shadow: none;
 }
 
 .mode-glyph.scale-105,
@@ -856,34 +830,26 @@ span.inline-flex.items-center.rounded.border.text-foreground {
   background: var(--model-glyph-bg);
   border-color: color-mix(in srgb, var(--model-glyph-border) 76%, var(--foreground));
   color: var(--model-glyph-icon);
-  box-shadow:
-    var(--console-control-shadow),
-    0 0 0 1px color-mix(in srgb, var(--model-glyph-border) 28%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--model-glyph-border) 28%, transparent);
 }
 
 .mode-dialog-backdrop,
-[class~="bg-black/70"].fixed.inset-0 {
+[class~="bg-black/50"].fixed.inset-0 {
   background: var(--console-overlay);
-  backdrop-filter: blur(8px);
+  backdrop-filter: none;
 }
 
 .mode-dialog-popup,
 .model-popover-popup,
 [role="dialog"] {
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--surface-raised) 92%, var(--console-contrast) 8%), var(--surface-raised)),
-    var(--surface-raised);
+  background: var(--surface-raised);
   border-color: color-mix(in srgb, var(--border) 74%, var(--console-edge) 26%);
   border-radius: 8px;
-  box-shadow:
-    var(--console-dialog-shadow),
-    0 0 0 1px color-mix(in srgb, var(--foreground) 6%, transparent) inset;
+  box-shadow: var(--console-dialog-shadow);
 }
 
 .model-popover-popup {
-  box-shadow:
-    var(--console-popover-shadow),
-    0 0 0 1px color-mix(in srgb, var(--foreground) 6%, transparent) inset;
+  box-shadow: var(--console-popover-shadow);
 }
 
 [role="listbox"] {
@@ -898,18 +864,13 @@ span.inline-flex.items-center.rounded.border.text-foreground {
 }
 
 .recording-pill {
-  background:
-    linear-gradient(180deg, color-mix(in srgb, #171717 86%, var(--console-contrast) 14%), #0f0f0f),
-    #0f0f0f;
+  background: #0f0f0f;
   border-color: color-mix(in srgb, var(--console-fill) 34%, rgba(255, 255, 255, 0.12));
-  box-shadow:
-    var(--console-pill-shadow),
-    0 0 0 1px color-mix(in srgb, var(--console-edge) 18%, transparent) inset,
-    inset 0 1px 0 var(--console-pill-inset);
+  box-shadow: var(--console-pill-shadow);
 }
 
 .recording-wave__bar::before {
-  background: linear-gradient(180deg, var(--console-fill), color-mix(in srgb, var(--console-edge) 50%, var(--console-fill)));
+  background: var(--console-fill);
 }
 
 .recording-wave--muted .recording-wave__bar::before {
@@ -921,7 +882,7 @@ span.inline-flex.items-center.rounded.border.text-foreground {
 }
 
 .h-full.rounded-full.bg-foreground {
-  background: linear-gradient(90deg, var(--console-fill), var(--console-contrast));
+  background: var(--console-fill);
 }
 
 @media (prefers-reduced-motion: reduce) {

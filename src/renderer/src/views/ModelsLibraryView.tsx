@@ -209,7 +209,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
                   <Popover.Portal>
                     <Popover.Positioner side="bottom" align="start" sideOffset={8} className="z-50 outline-none">
                       <Popover.Popup
-                        className="model-popover-popup overflow-y-auto rounded-md border border-border bg-surface-raised p-4 text-sm text-foreground shadow-2xl shadow-black/40 outline-none"
+                        className="model-popover-popup overflow-y-auto rounded-md border border-border bg-surface-raised p-4 text-sm text-foreground shadow-[var(--console-popover-shadow)] outline-none"
                         style={{ width: "min(36rem, calc(100vw - 2rem))", maxHeight: "calc(100vh - 7rem)" }}
                       >
                         <ModelPopover
@@ -378,8 +378,8 @@ function ModelPopover({
                 <Trash2 size={18} /> Delete
               </Dialog.Trigger>
               <Dialog.Portal>
-                <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/70" />
-                <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-2xl outline-none">
+                <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/50" />
+                <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-[var(--console-dialog-shadow)] outline-none">
                   <Dialog.Title className="m-0 text-base font-semibold text-foreground">Delete downloaded model?</Dialog.Title>
                   <Dialog.Description className="m-0 mt-2 text-sm leading-6 text-muted-foreground">
                     This will remove the local download for {item.name}. The model can be downloaded again later.
@@ -512,8 +512,8 @@ function ProviderSetupDialog({
 
   return (
     <Dialog.Portal>
-      <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/70" />
-      <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] w-[min(calc(100vw-2rem),30rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-2xl outline-none">
+      <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/50" />
+      <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] w-[min(calc(100vw-2rem),30rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-[var(--console-dialog-shadow)] outline-none">
         <form
           className="flex flex-col gap-4"
           onSubmit={(event) => {

@@ -277,9 +277,9 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
         }}
       >
         <Dialog.Portal>
-          <Dialog.Backdrop className="mode-dialog-backdrop fixed inset-0 z-40 bg-black/70" />
+          <Dialog.Backdrop className="mode-dialog-backdrop fixed inset-0 z-40 bg-black/50" />
           <Dialog.Popup
-            className="mode-dialog-popup fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-3rem)] overflow-y-auto rounded-md border border-border bg-surface-raised p-4 text-sm text-foreground shadow-2xl shadow-black/40 outline-none"
+            className="mode-dialog-popup fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-3rem)] overflow-y-auto rounded-md border border-border bg-surface-raised p-4 text-sm text-foreground shadow-[var(--console-dialog-shadow)] outline-none"
             style={{ width: "min(36rem, calc(100vw - 2rem))" }}
           >
             {openMode && (

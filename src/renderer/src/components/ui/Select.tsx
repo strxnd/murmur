@@ -56,7 +56,7 @@ export function Select<TValue extends string = string>({
         <BaseSelect.Positioner sideOffset={6} className="z-50 outline-none">
           <BaseSelect.Popup
             className={cn(
-              "max-h-72 min-w-[var(--anchor-width)] overflow-y-auto rounded-md border border-border bg-surface-raised p-1 text-sm text-foreground shadow-2xl shadow-black/40 outline-none",
+              "max-h-72 min-w-[var(--anchor-width)] overflow-y-auto rounded-md border border-border bg-surface-raised p-1 text-sm text-foreground shadow-[var(--console-listbox-shadow)] outline-none",
               popupClassName
             )}
           >

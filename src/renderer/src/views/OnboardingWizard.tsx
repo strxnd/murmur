@@ -355,7 +355,7 @@ export function OnboardingWizard({
   return (
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/70" />
+        <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/50" />
         <Dialog.Popup className="fixed inset-0 z-[80] flex h-dvh w-dvw flex-col overflow-hidden border border-border bg-surface outline-none">
           <header className="flex items-start justify-between gap-4 border-b border-border p-4">
             <div className="min-w-0">
