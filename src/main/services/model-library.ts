@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, createWriteStream, existsSync, mkdirSync, openSync, readSync, rmSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { canActivateModel, isModelProviderUsable } from "../../shared/model-activation";
+import { canActivateModel, isLlmProviderUsable, isModelProviderUsable } from "../../shared/model-activation";
 import { modelCatalog } from "../../shared/model-catalog";
 import type {
   LlmProviderConfig,
@@ -536,11 +536,21 @@ export class ModelLibraryService {
 
   private async refreshDiscoveredLocalModels(): Promise<void> {
     const state = this.storage.getState();
-    const providers = state.llmProviders.filter(isBuiltInDiscoverableLlmProvider);
-    let catalog = state.modelLibrary.catalog;
+    const providers = state.llmProviders.filter(isDynamicLlmProvider);
+    let catalog = pruneDynamicProviderModels(state.modelLibrary.catalog, providers);
 
     for (const storedProvider of providers) {
-      const provider = this.storage.resolveLlmProviderSecret(storedProvider) as LlmProviderConfig & { type: "ollama" | "lmstudio" };
+      const provider = this.storage.resolveLlmProviderSecret(storedProvider);
+      if (provider.type === "custom_openai_compatible") {
+        catalog = mergeManualOpenAiCompatibleModels(
+          catalog,
+          provider as LlmProviderConfig & { type: "custom_openai_compatible" },
+          new Date().toISOString()
+        );
+        continue;
+      }
+      if (!isDiscoverableLlmProvider(provider)) continue;
+
       if (!provider.enabled) {
         catalog = updateDiscoveredProviderAvailability(catalog, provider, false, `${provider.name} is disabled.`);
         continue;
@@ -729,8 +739,10 @@ function isDiscoverableLlmProvider(provider: LlmProviderConfig): provider is Llm
   return provider.type === "ollama" || provider.type === "lmstudio";
 }
 
-function isBuiltInDiscoverableLlmProvider(provider: LlmProviderConfig): provider is LlmProviderConfig & { type: "ollama" | "lmstudio" } {
-  return provider.id === provider.type && isDiscoverableLlmProvider(provider);
+function isDynamicLlmProvider(
+  provider: LlmProviderConfig
+): provider is LlmProviderConfig & { type: "ollama" | "lmstudio" | "custom_openai_compatible" } {
+  return isDiscoverableLlmProvider(provider) || provider.type === "custom_openai_compatible";
 }
 
 function mergeDiscoveredProviderModels(
@@ -740,7 +752,7 @@ function mergeDiscoveredProviderModels(
   now: string
 ): ModelCatalogItem[] {
   const uniqueModels = uniqueModelNames(models);
-  const discoveredById = new Map(uniqueModels.map((model) => [discoveredModelId(provider.type, model), discoveredModelItem(provider, model, now)]));
+  const discoveredById = new Map(uniqueModels.map((model) => [dynamicModelId(provider, model), discoveredModelItem(provider, model, now)]));
   const seenIds = new Set<string>();
   const merged = catalog.map((item) => {
     if (!isDiscoveredFromProvider(item, provider)) return item;
@@ -770,9 +782,43 @@ function mergeDiscoveredProviderModels(
   return merged;
 }
 
+function mergeManualOpenAiCompatibleModels(
+  catalog: ModelCatalogItem[],
+  provider: LlmProviderConfig & { type: "custom_openai_compatible" },
+  now: string
+): ModelCatalogItem[] {
+  const uniqueModels = uniqueModelNames(provider.models ?? []);
+  const manualById = new Map(uniqueModels.map((model) => [dynamicModelId(provider, model), manualOpenAiCompatibleModelItem(provider, model, now)]));
+  const seenIds = new Set<string>();
+  const merged = catalog.flatMap((item) => {
+    if (!isManualFromProvider(item, provider)) return [item];
+
+    const replacement = manualById.get(item.id);
+    if (!replacement) return [];
+
+    seenIds.add(item.id);
+    return [replacement];
+  });
+
+  for (const [id, item] of manualById) {
+    if (!seenIds.has(id) && !merged.some((candidate) => candidate.id === id)) {
+      merged.push(item);
+    }
+  }
+
+  return merged;
+}
+
+function pruneDynamicProviderModels(catalog: ModelCatalogItem[], providers: LlmProviderConfig[]): ModelCatalogItem[] {
+  const providerModelProviders = new Map(providers.map((provider) => [provider.id, providerModelProvider(provider)]));
+  return catalog.filter(
+    (item) => !isDynamicProviderModel(item) || providerModelProviders.get(item.discovery!.providerId) === item.provider
+  );
+}
+
 function updateDiscoveredProviderAvailability(
   catalog: ModelCatalogItem[],
-  provider: LlmProviderConfig,
+  provider: LlmProviderConfig & { type: "ollama" | "lmstudio" },
   reachable: boolean,
   message: string
 ): ModelCatalogItem[] {
@@ -789,8 +835,28 @@ function updateDiscoveredProviderAvailability(
   });
 }
 
-function isDiscoveredFromProvider(item: ModelCatalogItem, provider: Pick<LlmProviderConfig, "id" | "type">): boolean {
-  return item.discovery?.providerId === provider.id && item.provider === provider.type;
+function isDynamicProviderModel(item: ModelCatalogItem): boolean {
+  return Boolean(item.discovery?.providerId && (item.tags.includes("discovered") || item.tags.includes("manual")));
+}
+
+function isDiscoveredFromProvider(
+  item: ModelCatalogItem,
+  provider: Pick<LlmProviderConfig, "id" | "type">
+): boolean {
+  return item.discovery?.providerId === provider.id && item.provider === providerModelProvider(provider) && item.tags.includes("discovered");
+}
+
+function isManualFromProvider(
+  item: ModelCatalogItem,
+  provider: Pick<LlmProviderConfig, "id" | "type">
+): boolean {
+  return item.discovery?.providerId === provider.id && item.provider === providerModelProvider(provider) && item.tags.includes("manual");
+}
+
+function providerModelProvider(provider: Pick<LlmProviderConfig, "type">): ModelCatalogItem["provider"] {
+  if (provider.type === "custom_openai_compatible") return "openai_compatible";
+  if (provider.type === "ollama" || provider.type === "lmstudio") return provider.type;
+  return "openai_compatible";
 }
 
 function discoveredModelItem(
@@ -799,7 +865,7 @@ function discoveredModelItem(
   now: string
 ): ModelCatalogItem {
   return {
-    id: discoveredModelId(provider.type, model),
+    id: dynamicModelId(provider, model),
     name: model,
     kind: "language",
     provider: provider.type,
@@ -815,14 +881,47 @@ function discoveredModelItem(
       message: `Available from ${provider.name}.`
     },
     defaultProviderConfig: {
+      providerId: provider.id,
       llmProviderType: provider.type,
+      baseUrl: provider.baseUrl,
       model
     }
   };
 }
 
-function discoveredModelId(provider: "ollama" | "lmstudio", model: string): string {
-  return `${provider}:${model}`;
+function manualOpenAiCompatibleModelItem(
+  provider: LlmProviderConfig & { type: "custom_openai_compatible" },
+  model: string,
+  now: string
+): ModelCatalogItem {
+  const reachable = isLlmProviderUsable(provider);
+  return {
+    id: dynamicModelId(provider, model),
+    name: model,
+    kind: "language",
+    provider: "openai_compatible",
+    description: `${provider.name} OpenAI-compatible language model.`,
+    isCloud: provider.isCloud,
+    isOffline: !provider.isCloud,
+    tags: ["llm", provider.isCloud ? "remote" : "local", "openai-compatible", "manual"],
+    downloadStrategy: "none",
+    discovery: {
+      providerId: provider.id,
+      lastSeenAt: now,
+      reachable,
+      message: reachable ? `Configured on ${provider.name}.` : `${provider.name} is disabled or missing required connection settings.`
+    },
+    defaultProviderConfig: {
+      providerId: provider.id,
+      llmProviderType: "custom_openai_compatible",
+      baseUrl: provider.baseUrl,
+      model
+    }
+  };
+}
+
+function dynamicModelId(provider: Pick<LlmProviderConfig, "id">, model: string): string {
+  return `${provider.id}:${model}`;
 }
 
 async function fetchModelNames(

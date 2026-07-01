@@ -1,6 +1,7 @@
 import type {
   AppSettings,
   AppStateSnapshot,
+  AutomationPermissionReport,
   AutoModeRule,
   LlmProviderConfig,
   ModelDownloadState,
@@ -19,6 +20,7 @@ import type {
 } from "../../../shared/types";
 import {
   appStateSnapshotSchema,
+  automationPermissionReportSchema,
   completeRecordingPayloadSchema,
   copyResultSchema,
   modelDownloadStateSchema,
@@ -35,6 +37,10 @@ export const murmurClient = {
   getState: (): Promise<AppStateSnapshot> => window.murmur.getState().then(parseState),
   getPillState: (): Promise<PillStateSnapshot> => window.murmur.getPillState().then(parsePillState),
   getModeSelectorState: (): Promise<ModeSelectorStateSnapshot> => window.murmur.getModeSelectorState().then(parseModeSelectorState),
+  getAutomationPermissionStatus: (): Promise<AutomationPermissionReport> =>
+    window.murmur.getAutomationPermissionStatus().then(parseAutomationPermissionReport),
+  requestAutomationPermission: (): Promise<AutomationPermissionReport> =>
+    window.murmur.requestAutomationPermission().then(parseAutomationPermissionReport),
   updateSettings: (patch: Partial<AppSettings>): Promise<AppStateSnapshot> => window.murmur.updateSettings(patch).then(parseState),
   beginHotkeyCapture: (): Promise<void> => window.murmur.beginHotkeyCapture().then(() => undefined),
   endHotkeyCapture: (): Promise<void> => window.murmur.endHotkeyCapture().then(() => undefined),
@@ -115,6 +121,10 @@ function parsePillState(value: unknown): PillStateSnapshot {
 
 function parseModeSelectorState(value: unknown): ModeSelectorStateSnapshot {
   return modeSelectorStateSnapshotSchema.parse(value) as ModeSelectorStateSnapshot;
+}
+
+function parseAutomationPermissionReport(value: unknown): AutomationPermissionReport {
+  return automationPermissionReportSchema.parse(value) as AutomationPermissionReport;
 }
 
 function parseProviderValidation(value: unknown): ProviderValidationResult {

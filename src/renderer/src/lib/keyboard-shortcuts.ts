@@ -87,10 +87,11 @@ export function keyboardEventToAccelerator(event: KeyboardShortcutEvent): Keyboa
 
 function modifierAccelerators(event: KeyboardShortcutEvent): string[] {
   const altGraph = event.getModifierState?.("AltGraph") ?? false;
+  const isMac = /mac|iphone|ipad|ipod/i.test(globalThis.navigator?.platform ?? "");
   const modifiers: string[] = [];
 
-  if (event.ctrlKey) modifiers.push("CommandOrControl");
-  if (event.metaKey) modifiers.push("Super");
+  if (event.ctrlKey) modifiers.push(isMac ? "Control" : "CommandOrControl");
+  if (event.metaKey) modifiers.push(isMac ? "Command" : "Super");
 
   if (altGraph) {
     modifiers.push("AltGr");

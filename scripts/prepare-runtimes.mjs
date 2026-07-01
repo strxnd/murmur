@@ -37,13 +37,21 @@ const currentKey = currentPlatformKey();
 for (const platformKey of platformKeys) {
   console.log(`Preparing STT runtimes for ${platformKey}`);
   for (const accelerator of accelerators) {
-    await prepareSherpaOnnx(platformKey, accelerator);
-    if (platformKey === currentKey) {
-      await prepareWhisperCpp(platformKey, accelerator);
-    } else if (platformArg === "all") {
-      console.warn(`Skipping whisper.cpp ${accelerator} build for ${platformKey}; cross-compilation is not configured. Build it on that platform.`);
+    if (sherpaAsset(platformKey, accelerator)) {
+      await prepareSherpaOnnx(platformKey, accelerator);
     } else {
-      throw new Error(`Cannot build whisper.cpp for ${platformKey} on ${currentKey}. Run this script on the target platform.`);
+      console.warn(`Skipping Sherpa ONNX ${accelerator} for ${platformKey}; no source asset is configured.`);
+    }
+    if (supportsWhisperCpp(platformKey, accelerator)) {
+      if (platformKey === currentKey) {
+        await prepareWhisperCpp(platformKey, accelerator);
+      } else if (platformArg === "all") {
+        console.warn(`Skipping whisper.cpp ${accelerator} build for ${platformKey}; cross-compilation is not configured. Build it on that platform.`);
+      } else {
+        throw new Error(`Cannot build whisper.cpp for ${platformKey} on ${currentKey}. Run this script on the target platform.`);
+      }
+    } else {
+      console.warn(`Skipping whisper.cpp ${accelerator} for ${platformKey}; that variant is not supported.`);
     }
   }
 }
@@ -60,13 +68,13 @@ function readAcceleratorArg(args) {
   const index = args.indexOf("--accelerator");
   if (index === -1) return "cpu";
   const value = args[index + 1];
-  if (!value) throw new Error("--accelerator needs a value: cpu, cuda, or all.");
-  if (!["cpu", "cuda", "all"].includes(value)) throw new Error(`Unsupported accelerator ${value}.`);
+  if (!value) throw new Error("--accelerator needs a value: cpu, cuda, apple, or all.");
+  if (!["cpu", "cuda", "apple", "all"].includes(value)) throw new Error(`Unsupported accelerator ${value}.`);
   return value;
 }
 
 function resolveAccelerators(value) {
-  if (value === "all") return ["cpu", "cuda"];
+  if (value === "all") return ["cpu", "cuda", "apple"];
   return [value];
 }
 
@@ -87,10 +95,10 @@ function currentPlatformKey() {
 
 async function prepareSherpaOnnx(platformKey, accelerator) {
   const runtime = manifest.runtimes["sherpa-onnx"];
-  const asset = runtime.assets[platformKey]?.[accelerator] ?? (accelerator === "cpu" ? runtime.assets[platformKey] : undefined);
+  const asset = sherpaAsset(platformKey, accelerator);
   if (!asset?.name || !asset.sha256) {
     throw new Error(
-      `No Sherpa ONNX ${accelerator} source asset is configured for ${platformKey}. Repackage upstream GPU archives into Murmur tar.gz assets before app cataloging.`
+      `No Sherpa ONNX ${accelerator} source asset is configured for ${platformKey}. Repackage upstream archives into Murmur tar.gz assets before app cataloging.`
     );
   }
 
@@ -153,6 +161,7 @@ async function prepareWhisperCpp(platformKey, accelerator) {
       "-DGGML_NATIVE=OFF"
     ];
     if (accelerator === "cuda") cmakeArgs.push("-DGGML_CUDA=ON");
+    if (accelerator === "apple") cmakeArgs.push("-DGGML_METAL=ON");
     await run("cmake", cmakeArgs);
     await run("cmake", ["--build", buildDir, "--config", "Release", "--target", "whisper-server"]);
 
@@ -206,7 +215,7 @@ function copySharedLibraries(buildDir, dest, platformKey) {
 function isSharedLibrary(file) {
   const name = basename(file);
   return (
-    /\.so(?:\.\d+)*$/.test(name)
+    /\.so(?:\.\d+)*$/.test(name) || /\.dylib$/.test(name)
   );
 }
 
@@ -218,6 +227,18 @@ function chmodExecutables(root, platformKey) {
 
 function runtimeDirForVariant(runtimeDir, accelerator) {
   return accelerator === "cpu" ? runtimeDir : `${runtimeDir}-${accelerator}`;
+}
+
+function sherpaAsset(platformKey, accelerator) {
+  const runtime = manifest.runtimes["sherpa-onnx"];
+  return runtime.assets[platformKey]?.[accelerator] ?? undefined;
+}
+
+function supportsWhisperCpp(platformKey, accelerator) {
+  if (accelerator === "cpu") return manifest.platforms.includes(platformKey);
+  if (accelerator === "cuda") return platformKey.startsWith("linux-");
+  if (accelerator === "apple") return platformKey === "darwin-arm64";
+  return false;
 }
 
 function singleChildDirectory(dir) {

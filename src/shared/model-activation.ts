@@ -17,6 +17,7 @@ const providerLabels: Record<ModelProvider, string> = {
   ollama: "Ollama",
   lmstudio: "LM Studio",
   openai: "OpenAI",
+  openai_compatible: "OpenAI-compatible",
   anthropic: "Anthropic",
   google: "Google"
 };
@@ -97,7 +98,7 @@ export function llmProviderFromModel(item: ModelCatalogItem, providers: LlmProvi
   const config = item.defaultProviderConfig;
   if (item.kind !== "language" || !config?.llmProviderType) return null;
 
-  const providerId = llmProviderId(item);
+  const providerId = config.providerId ?? item.discovery?.providerId ?? llmProviderId(item);
   const existing = providers.find((provider) => provider.id === providerId);
   return {
     id: existing?.id ?? providerId,

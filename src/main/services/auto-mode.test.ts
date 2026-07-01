@@ -5,10 +5,10 @@ import { resolveModeByContext } from "./auto-mode";
 
 describe("resolveModeByContext", () => {
   it("uses the highest-priority enabled matching rule", () => {
-    const context = contextSnapshot({ browserDomain: "mail.google.com", appName: "Firefox" });
+    const context = contextSnapshot({ appName: "Firefox", windowTitle: "Inbox - Work Mail" });
     const rules: AutoModeRule[] = [
       rule({ id: "disabled", modeId: "note", priority: 100, enabled: false, match: { appName: "Firefox" } }),
-      rule({ id: "domain", modeId: "mail", priority: 10, match: { domainWildcard: "*.google.com" } }),
+      rule({ id: "window", modeId: "mail", priority: 10, match: { windowTitleIncludes: "work mail" } }),
       rule({ id: "app", modeId: "message", priority: 5, match: { appName: "fire" } })
     ];
 

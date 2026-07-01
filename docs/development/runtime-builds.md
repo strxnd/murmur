@@ -14,8 +14,10 @@ Local STT runtime build inputs are defined in [`scripts/runtime-manifest.json`](
 Sherpa ONNX source assets:
 
 - `linux-x64` CPU: `sherpa-onnx-v1.13.2-linux-x64-shared-no-tts.tar.bz2`
+- `darwin-arm64` CPU: `sherpa-onnx-v1.13.2-osx-arm64-shared-no-tts.tar.bz2`
+- `darwin-x64` CPU: `sherpa-onnx-v1.13.2-osx-x64-shared-no-tts.tar.bz2`
 
-GPU runtime assets published for app download must be Murmur `tar.gz` archives with pinned SHA-256 metadata in `src/shared/stt-runtime-catalog.ts`. Publish CUDA runtime archives on runtime-only GitHub releases, not app release tags. Do not catalog Sherpa upstream `tar.bz2` GPU archives directly for app downloads; repackage them deterministically as Murmur `tar.gz` assets first.
+Accelerated runtime assets published for app download must be Murmur `tar.gz` archives with pinned SHA-256 metadata in `src/shared/stt-runtime-catalog.ts`. Publish CUDA and Apple runtime archives on runtime-only GitHub releases, not app release tags. Do not catalog Sherpa upstream `tar.bz2` GPU archives directly for app downloads; repackage them deterministically as Murmur `tar.gz` assets first.
 
 ## Whisper Patch
 
@@ -31,10 +33,16 @@ Prepare current-platform runtimes:
 mise run runtimes:prepare
 ```
 
-Prepare optional whisper.cpp GPU variants on compatible Linux hosts:
+Prepare optional whisper.cpp CUDA variants on compatible Linux hosts:
 
 ```sh
 npm run runtimes:prepare -- --accelerator cuda
+```
+
+Prepare optional whisper.cpp Apple acceleration on Apple Silicon macOS hosts:
+
+```sh
+npm run runtimes:prepare -- --accelerator apple
 ```
 
 Check current-platform runtime readiness:
@@ -54,7 +62,7 @@ mise run runtimes:manifest-check:release
 ```
 
 `runtimes:stage` copies exactly one prepared platform from `vendor/runtimes/<platform-key>/` into `.cache/bundled-runtimes/runtimes/<platform-key>/` for `electron-builder` to place under `<process.resourcesPath>/runtimes/`.
-Only CPU runtimes are staged into packaged app resources. GPU variants are optional installs and may download in packaged builds only when their Murmur release URL, size, and SHA-256 are configured.
+Only CPU runtimes are staged into packaged app resources. Accelerated variants are optional installs and may download in packaged builds only when their Murmur release URL, size, and SHA-256 are configured.
 Set `MURMUR_RUNTIME_VENDOR_ROOT` or `MURMUR_RUNTIME_STAGING_ROOT` to override those source and staging roots when testing the staging script.
 
 For explicit-target packaging, pass the requested target:
@@ -65,21 +73,21 @@ npm run runtimes:stage -- --platform linux-x64
 
 `runtimes:package` writes local packaging archives to `dist/runtimes/` and prints size and SHA-256 values. Those values must match `src/shared/stt-runtime-catalog.ts` for `runtimes:manifest-check` to pass.
 
-To package an optional GPU runtime after preparing it:
+To package an optional accelerated runtime after preparing it:
 
 ```sh
 npm run runtimes:package -- --accelerator cuda
 ```
 
-Murmur app releases should publish only the Electron app artifacts from `mise run dist`. Optional GPU runtime archives referenced by `src/shared/stt-runtime-catalog.ts` live on separate runtime-only releases, such as `stt-runtimes-0.1.0`. Runtime release versions, runtime bundle versions, and upstream runtime versions are SemVer values without a leading `v`; external source tags may still include their upstream prefix.
+Murmur app releases should publish only the Electron app artifacts from `mise run dist`. Optional accelerated runtime archives referenced by `src/shared/stt-runtime-catalog.ts` live on separate runtime-only releases, such as `stt-runtimes-0.1.0`. Runtime release versions, runtime bundle versions, and upstream runtime versions are SemVer values without a leading `v`; external source tags may still include their upstream prefix.
 
-To publish prepared GPU runtime archives:
+To publish prepared accelerated runtime archives:
 
 ```sh
 gh release create stt-runtimes-0.1.0 \
   dist/runtimes/murmur-stt-runtime-*-cuda-0.1.0.tar.gz \
   --repo strxnd/murmur \
-  --title "Murmur STT GPU runtimes 0.1.0" \
+  --title "Murmur STT runtimes 0.1.0" \
   --notes "Optional CUDA STT runtime archives for Murmur."
 ```
 
@@ -89,7 +97,7 @@ If the runtime release already exists:
 gh release upload stt-runtimes-0.1.0 dist/runtimes/murmur-stt-runtime-*-cuda-0.1.0.tar.gz --repo strxnd/murmur
 ```
 
-CPU runtime files are staged into packaged app resources; GPU runtime archives are downloaded into the user cache only after their runtime release URL, size, and SHA-256 are pinned.
+CPU runtime files are staged into packaged app resources; accelerated runtime archives are downloaded into the user cache only after their runtime release URL, size, and SHA-256 are pinned.
 
 ## Manual Smoke Tests
 

@@ -85,6 +85,62 @@ describe("StorageService", () => {
     expect(reopened.getState().settings.modeSelectorHotkey).toBe("Alt+Shift+M");
   });
 
+  it("migrates legacy clipboard_restore selected-text capture to enabled", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        settings: {
+          activeModeId: "default",
+          theme: "dark",
+          selectedTextCapture: "clipboard_restore"
+        }
+      })
+    );
+
+    expect(jsonStorage(paths).getState().settings.selectedTextCapture).toBe("enabled");
+  });
+
+  it("drops legacy domain-only auto-mode rules during normalization", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        settings: {
+          activeModeId: "default",
+          theme: "dark"
+        },
+        autoModeRules: [
+          {
+            id: "domain-only",
+            name: "Domain only",
+            modeId: "mail",
+            enabled: true,
+            priority: 5,
+            match: { domainWildcard: "*.example.test" }
+          },
+          {
+            id: "mixed",
+            name: "Mixed",
+            modeId: "message",
+            enabled: true,
+            priority: 10,
+            match: { domain: "chat.example.test", appName: "Chat" }
+          }
+        ]
+      })
+    );
+
+    expect(jsonStorage(paths).getState().autoModeRules).toEqual([
+      expect.objectContaining({
+        id: "mixed",
+        match: { appName: "Chat" }
+      })
+    ]);
+  });
+
   it("drops obsolete STT setup settings during migration", () => {
     const paths = testPaths();
     mkdirSync(paths.configDir, { recursive: true });
@@ -109,7 +165,7 @@ describe("StorageService", () => {
     expect(settings.sttSetupCompletedAt).toBeUndefined();
     expect(settings.onboardingSkippedAt).toBeUndefined();
     expect(settings.onboardingCompletedAt).toBeUndefined();
-    expect(settings.gpuRuntimeInstallPromptDismissedAt).toBeUndefined();
+    expect(settings.accelerationRuntimeInstallPromptDismissedAt).toBeUndefined();
   });
 
   it("preserves onboarding completion timestamps", () => {
@@ -405,7 +461,7 @@ describe("StorageService", () => {
     expect(customMode).not.toHaveProperty("presetId");
   });
 
-  it("preserves disabled selected-text capture while normalizing paste automation", () => {
+  it("preserves disabled selected-text capture while dropping legacy paste automation", () => {
     const paths = testPaths();
     mkdirSync(paths.configDir, { recursive: true });
     writeFileSync(
@@ -423,7 +479,7 @@ describe("StorageService", () => {
     const storage = jsonStorage(paths);
     const settings = storage.getState().settings;
 
-    expect(settings.pasteMethod).toBe("clipboard_restore");
+    expect(settings).not.toHaveProperty("pasteMethod");
     expect(settings.selectedTextCapture).toBe("disabled");
   });
 
@@ -456,15 +512,15 @@ describe("StorageService", () => {
     expect(reopened.getState().settings.trayCloseNoticeShownAt).toBe(trayCloseNoticeShownAt);
   });
 
-  it("persists the GPU runtime install prompt dismissal timestamp", () => {
+  it("persists the acceleration runtime install prompt dismissal timestamp", () => {
     const paths = testPaths();
     const storage = jsonStorage(paths);
-    const gpuRuntimeInstallPromptDismissedAt = "2026-06-29T00:00:00.000Z";
+    const accelerationRuntimeInstallPromptDismissedAt = "2026-06-29T00:00:00.000Z";
 
-    storage.updateSettings({ gpuRuntimeInstallPromptDismissedAt });
+    storage.updateSettings({ accelerationRuntimeInstallPromptDismissedAt });
     const reopened = jsonStorage(paths);
 
-    expect(reopened.getState().settings.gpuRuntimeInstallPromptDismissedAt).toBe(gpuRuntimeInstallPromptDismissedAt);
+    expect(reopened.getState().settings.accelerationRuntimeInstallPromptDismissedAt).toBe(accelerationRuntimeInstallPromptDismissedAt);
   });
 
   it("writes history state to the data dir", () => {

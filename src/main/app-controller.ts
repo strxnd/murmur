@@ -52,7 +52,7 @@ import {
   llmProviderFromModel,
   transcriptionProviderFromModel
 } from "../shared/model-activation";
-import { buildProcessingPrompt, buildVocabularyPrompt, contextForLlmPrompt } from "../shared/prompts";
+import { buildProcessingPrompt, buildVocabularyPrompt } from "../shared/prompts";
 import { resolveModeByContext } from "./services/auto-mode";
 import { createId } from "./services/ids";
 import { registerElectronShortcutActions, registerModeSelectorNavigationShortcuts } from "./services/electron-global-shortcuts";
@@ -66,15 +66,17 @@ import { isTrustedRendererUrl, resolveRendererSource, type RendererSource } from
 import { getSttUsability, sttRuntimeIdForModel, SttSetupService } from "./services/stt-setup";
 import { TranscriptionService } from "./services/stt";
 import { SttRuntimeService } from "./services/stt-runtime";
-import { SttGpuProbeService } from "./services/stt-gpu-probe";
+import { SttAccelerationProbeService } from "./services/stt-gpu-probe";
 import { resolveAppPaths, type AppPaths } from "./services/app-paths";
 import { NativeDesktopGlobalShortcutService } from "./services/native-global-shortcuts";
 import { TextAutomationService } from "./services/text-automation";
+import { AutomationPermissionService } from "./services/automation-permissions";
 import {
   shortcutDescriptionForActivationMode,
   shortcutDescriptionForModeSelector,
   XdgGlobalShortcutService
 } from "./services/xdg-global-shortcuts";
+import { MacosEventTapReleaseService } from "./services/macos-event-tap-hotkeys";
 import {
   app,
   BrowserWindow,
@@ -110,10 +112,12 @@ export class AppController {
   private textAutomation = new TextAutomationService();
   private context = new ContextService(this.textAutomation);
   private paste = new PasteService(this.textAutomation);
+  private automationPermissions = new AutomationPermissionService();
   private runtimeService: SttRuntimeService;
-  private gpuProbe = new SttGpuProbeService();
+  private accelerationProbe = new SttAccelerationProbeService();
   private portalHotkeys = new XdgGlobalShortcutService();
   private nativeHotkeys = new NativeDesktopGlobalShortcutService();
+  private macosReleaseHotkeys = new MacosEventTapReleaseService();
   private paths: AppPaths;
   private rendererSource: RendererSource;
   private stt: TranscriptionService;
@@ -175,6 +179,7 @@ export class AppController {
     globalShortcut.unregisterAll();
     this.portalHotkeys.dispose();
     this.nativeHotkeys.dispose();
+    this.macosReleaseHotkeys.unregister();
     this.textAutomation.dispose();
     this.context.dispose();
     this.stt.dispose();
@@ -188,6 +193,7 @@ export class AppController {
   }
 
   async initialize(): Promise<void> {
+    await this.automationPermissions.initialize();
     await this.textAutomation.initialize();
     await this.context.initialize();
     await this.paste.initialize();
@@ -498,6 +504,12 @@ export class AppController {
     handle("app:get-state", () => this.getSnapshot());
     handle("app:get-pill-state", () => this.getPillSnapshot());
     handle("app:get-mode-selector-state", () => this.getModeSelectorSnapshot());
+    handle("automation:permission-status", () => this.automationPermissions.status());
+    handle("automation:permission-request", () => {
+      const report = this.automationPermissions.request();
+      this.broadcastState();
+      return report;
+    });
     handle("settings:update", async (_event, payload) => {
       const patch = parseIpcPayload(settingsUpdatePayloadSchema, payload, "settings:update") as Partial<AppSettings>;
       const state = this.storage.updateSettings(patch);
@@ -634,6 +646,8 @@ export class AppController {
     on("recording:level", (_event, payload) => this.forwardRecordingLevel(payload));
     handle("onboarding:test-paste", async (_event, payload) => {
       const text = parseIpcPayload(ipcTextPayloadSchema, payload, "onboarding:test-paste");
+      const automation = this.ensureAutomationReadyForUserAction("paste test");
+      if (!automation.ready) return { pasted: false, message: automation.message };
       const result = await this.paste.insertText(text);
       this.broadcastState();
       return result;
@@ -643,7 +657,11 @@ export class AppController {
       clipboard.writeText(text);
       return { ok: true };
     });
-    handle("history:repaste", (_event, payload) => this.paste.insertText(parseIpcPayload(ipcTextPayloadSchema, payload, "history:repaste")));
+    handle("history:repaste", (_event, payload) => {
+      const automation = this.ensureAutomationReadyForUserAction("history paste");
+      if (!automation.ready) return { pasted: false, message: automation.message };
+      return this.paste.insertText(parseIpcPayload(ipcTextPayloadSchema, payload, "history:repaste"));
+    });
     handle("history:delete", (_event, payload) => {
       const id = parseIpcPayload(ipcIdPayloadSchema, payload, "history:delete");
       this.storage.deleteHistory(id);
@@ -696,6 +714,28 @@ export class AppController {
     this.configureModeSelectorWindow();
   }
 
+  private ensureAutomationReadyForUserAction(action: string): { ready: true } | { ready: false; message: string } {
+    const current = this.automationPermissions.status();
+    if (current.status === "not_required" || current.status === "trusted") {
+      this.textAutomation.refreshStatus();
+      return { ready: true };
+    }
+
+    const requested = current.canPrompt ? this.automationPermissions.request() : current;
+    if (requested.status === "trusted") {
+      this.textAutomation.refreshStatus();
+      this.broadcastState();
+      return { ready: true };
+    }
+
+    const detail = requested.diagnostics[0] ?? "automation permission is unavailable.";
+    this.broadcastState();
+    return {
+      ready: false,
+      message: `Cannot start ${action}: ${detail}`
+    };
+  }
+
   private async beginHotkeyCapture(): Promise<void> {
     this.hotkeyCaptureDepth += 1;
     await this.registerHotkeys();
@@ -723,6 +763,7 @@ export class AppController {
     globalShortcut.unregisterAll();
     await this.portalHotkeys.unregister();
     await this.nativeHotkeys.unregister();
+    this.macosReleaseHotkeys.unregister();
     this.resetHotkeyCapabilities();
 
     if (generation !== this.hotkeyRegistrationGeneration) return;
@@ -783,7 +824,7 @@ export class AppController {
       return;
     }
 
-    if (portalResult.registered) {
+    if (portalResult.registered && !(settings.activationMode === "push_to_talk" && !portalResult.actionResults.activation.pushToTalkRelease)) {
       this.hotkeyBackend = "xdg_desktop_portal";
       this.applyHotkeyRegistrationResults({
         activation: portalResult.actionResults.activation,
@@ -791,6 +832,9 @@ export class AppController {
         backendDiagnostics: portalResult.diagnostics
       });
       return;
+    }
+    if (portalResult.registered) {
+      await this.portalHotkeys.unregister();
     }
 
     const nativeResult = await this.nativeHotkeys.register({
@@ -804,19 +848,21 @@ export class AppController {
       return;
     }
 
-    if (nativeResult.registered && nativeResult.backend) {
+    if (
+      nativeResult.registered &&
+      nativeResult.backend &&
+      !(settings.activationMode === "push_to_talk" && !nativeResult.pushToTalkRelease)
+    ) {
       this.hotkeyBackend = nativeResult.backend;
       this.applyHotkeyRegistrationResults({
         activation: nativeResult.actionResults.activation,
         modeSelector: nativeResult.actionResults["mode-selector"],
         backendDiagnostics: nativeResult.diagnostics
       });
-      if (settings.activationMode === "push_to_talk" && !nativeResult.pushToTalkRelease) {
-        this.hotkeyDiagnostics.push(
-          `${this.hotkeyBackendLabel(nativeResult.backend)} does not expose key release events; push-to-talk uses press to start and stop recording.`
-        );
-      }
       return;
+    }
+    if (nativeResult.registered) {
+      await this.nativeHotkeys.unregister();
     }
 
     const fallbackActivationDiagnostics = [
@@ -831,24 +877,97 @@ export class AppController {
       ...nativeResult.diagnostics,
       ...nativeResult.actionResults["mode-selector"].diagnostics
     ];
-    const electronResult = registerElectronShortcutActions(globalShortcut, [
-      {
-        id: "activation",
-        label: "activation",
-        accelerator: settings.activationHotkey,
-        onActivated: () => {
-          void this.handleActivationHotkey(`${settings.activationMode}_global_hotkey`);
+
+    if (process.platform === "darwin" && settings.activationMode === "push_to_talk") {
+      const macosPermission = this.automationPermissions.status();
+      const releaseResult =
+        macosPermission.status === "trusted"
+          ? await this.macosReleaseHotkeys.register(settings.activationHotkey, () => {
+              void this.handlePushToTalkDeactivated();
+            })
+          : {
+              registered: false,
+              diagnostics: macosPermission.diagnostics.length
+                ? macosPermission.diagnostics
+                : ["macOS Accessibility permission is required for push-to-talk release detection."]
+            };
+      const electronResult = registerElectronShortcutActions(globalShortcut, [
+        {
+          id: "activation",
+          label: "activation",
+          accelerator: settings.activationHotkey,
+          onActivated: () => {
+            void this.handlePushToTalkActivated();
+          }
+        },
+        {
+          id: "mode-selector",
+          label: "mode selector",
+          accelerator: settings.modeSelectorHotkey,
+          onActivated: () => {
+            this.showModeSelectorWindow();
+          }
         }
-      },
-      {
-        id: "mode-selector",
-        label: "mode selector",
-        accelerator: settings.modeSelectorHotkey,
-        onActivated: () => {
-          this.showModeSelectorWindow();
-        }
+      ]);
+      const activationResult = electronResult.actionResults.activation;
+      const modeSelectorResult = electronResult.actionResults["mode-selector"];
+      this.hotkeyBackend = "macos_event_tap";
+      this.hotkeyRegistered = activationResult.registered && releaseResult.registered;
+      this.hotkeyPushToTalkRelease = releaseResult.registered;
+      this.hotkeyTriggerDescription = releaseResult.triggerDescription;
+      this.hotkeyDiagnostics = this.hotkeyRegistered
+        ? releaseResult.diagnostics
+        : [...fallbackActivationDiagnostics, ...activationResult.diagnostics, ...releaseResult.diagnostics];
+      this.modeSelectorHotkeyRegistered = modeSelectorResult.registered;
+      this.modeSelectorHotkeyTriggerDescription = undefined;
+      this.modeSelectorHotkeyDiagnostics = modeSelectorResult.registered
+        ? []
+        : [...fallbackModeSelectorDiagnostics, ...modeSelectorResult.diagnostics];
+      if (!this.hotkeyRegistered) {
+        this.hotkeyDiagnostics.push("Push-to-talk registration is unavailable because release detection is not ready.");
       }
-    ]);
+      if (!modeSelectorResult.registered) {
+        this.modeSelectorHotkeyDiagnostics.push(`Global mode selector shortcut is not registered: ${settings.modeSelectorHotkey}.`);
+      }
+      return;
+    }
+
+    const electronActions =
+      settings.activationMode === "push_to_talk"
+        ? [
+            {
+              id: "mode-selector" as const,
+              label: "mode selector",
+              accelerator: settings.modeSelectorHotkey,
+              onActivated: () => {
+                this.showModeSelectorWindow();
+              }
+            }
+          ]
+        : [
+            {
+              id: "activation" as const,
+              label: "activation",
+              accelerator: settings.activationHotkey,
+              onActivated: () => {
+                void this.handleActivationHotkey(`${settings.activationMode}_global_hotkey`);
+              }
+            },
+            {
+              id: "mode-selector" as const,
+              label: "mode selector",
+              accelerator: settings.modeSelectorHotkey,
+              onActivated: () => {
+                this.showModeSelectorWindow();
+              }
+            }
+          ];
+    const electronResult = registerElectronShortcutActions(globalShortcut, electronActions);
+    if (settings.activationMode === "push_to_talk") {
+      electronResult.actionResults.activation.diagnostics.push(
+        "Push-to-talk requires a hotkey backend that reports key release events; Electron globalShortcut activation is unavailable."
+      );
+    }
     const activationResult = electronResult.actionResults.activation;
     const modeSelectorResult = electronResult.actionResults["mode-selector"];
     this.hotkeyBackend = "electron_global_shortcut";
@@ -867,11 +986,6 @@ export class AppController {
     if (!activationResult.registered) this.hotkeyDiagnostics.push(`Global activation shortcut is not registered: ${settings.activationHotkey}.`);
     if (!modeSelectorResult.registered) {
       this.modeSelectorHotkeyDiagnostics.push(`Global mode selector shortcut is not registered: ${settings.modeSelectorHotkey}.`);
-    }
-    if (settings.activationMode === "push_to_talk") {
-      this.hotkeyDiagnostics.push(
-        "Electron globalShortcut does not expose key release events; push-to-talk uses press to start and stop recording."
-      );
     }
   }
 
@@ -952,6 +1066,19 @@ export class AppController {
     if (["transcribing", "processing", "pasting"].includes(this.session.status)) return this.getSnapshot();
 
     const persisted = this.storage.getState();
+    const automation = this.ensureAutomationReadyForUserAction("dictation");
+    if (!automation.ready) {
+      this.session = {
+        ...defaultSession,
+        id: createId("blocked"),
+        status: "error",
+        modeId: persisted.settings.activeModeId,
+        error: automation.message
+      };
+      this.broadcastState();
+      return this.getSnapshot();
+    }
+
     const sttUsability = getSttUsability(persisted, this.runtimeService, this.paths);
     if (!sttUsability.usable) {
       this.session = {
@@ -1131,8 +1258,7 @@ export class AppController {
       if (mode.aiEnabled && llmProvider) {
         this.session = { ...this.session, status: "processing" };
         this.broadcastState();
-        const promptContext = this.contextForLlm(llmProvider, persisted.settings, context);
-        const prompt = buildProcessingPrompt({ mode, context: promptContext, rawTranscript: transcription.text, vocabularyPrompt });
+        const prompt = buildProcessingPrompt({ mode, context, rawTranscript: transcription.text, vocabularyPrompt });
         try {
           const processed = await this.llm.process({
             provider: llmProvider,
@@ -1182,7 +1308,6 @@ export class AppController {
         appName: context.appName,
         appId: context.appId,
         windowTitle: context.windowTitle,
-        browserDomain: context.browserDomain,
         createdAt: new Date().toISOString(),
         recordingStartedAt,
         recordingStoppedAt,
@@ -1249,7 +1374,6 @@ export class AppController {
       appName: item.appName,
       appId: item.appId,
       windowTitle: item.windowTitle,
-      browserDomain: item.browserDomain,
       capturedAt: new Date().toISOString(),
       sourceQuality: "fallback",
       diagnostics: ["Reprocessed from history."]
@@ -1257,7 +1381,7 @@ export class AppController {
     const vocabularyPrompt = buildVocabularyPrompt(state.vocabulary);
     const prompt = buildProcessingPrompt({
       mode,
-      context: this.contextForLlm(provider, state.settings, context),
+      context,
       rawTranscript: item.rawTranscript,
       vocabularyPrompt
     });
@@ -1273,13 +1397,6 @@ export class AppController {
     });
     this.broadcastState();
     return this.getSnapshot();
-  }
-
-  private contextForLlm(provider: LlmProviderConfig, settings: AppSettings, context: ContextSnapshot): ContextSnapshot {
-    return contextForLlmPrompt(context, {
-      providerIsCloud: provider.isCloud,
-      shareContextWithCloudLlm: settings.shareContextWithCloudLlm
-    });
   }
 
   private failSession(message: string): AppStateSnapshot {
@@ -1617,7 +1734,7 @@ export class AppController {
       sttRuntimes: this.runtimeService.getAvailabilities(),
       stt: {
         diagnostics: this.stt.getDiagnostics(),
-        gpuProbe: this.gpuProbe.getReport()
+        accelerationProbe: this.accelerationProbe.getReport()
       },
       hotkeys: {
         backend: this.hotkeyBackend,
@@ -1634,11 +1751,10 @@ export class AppController {
       context: {
         backend: contextFlags.appMetadata ? "desktop_metadata" : "clipboard_fallback",
         appMetadata: contextFlags.appMetadata,
-        focusedText: contextFlags.focusedText,
         selectedText: contextFlags.selectedText,
-        browserDomain: contextFlags.browserDomain,
         diagnostics: this.context.getDiagnostics()
       },
+      automation: this.automationPermissions.getReport(),
       paste: {
         backend: pasteCapability.backend,
         automationAvailable: pasteCapability.automationAvailable,

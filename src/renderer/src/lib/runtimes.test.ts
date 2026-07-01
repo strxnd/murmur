@@ -6,7 +6,7 @@ import type {
   SttRuntimeId,
   SttRuntimeInstallState
 } from "../../../shared/types";
-import { gpuRuntimePromptState, uniqueRuntimeInstallStates } from "./runtimes";
+import { accelerationRuntimePromptState, uniqueRuntimeInstallStates } from "./runtimes";
 
 describe("renderer runtime helpers", () => {
   it("sorts variant-keyed runtime states", () => {
@@ -31,14 +31,14 @@ describe("renderer runtime helpers", () => {
       }
     });
 
-    const prompt = gpuRuntimePromptState(snapshot);
+    const prompt = accelerationRuntimePromptState(snapshot);
 
     expect(prompt?.accelerators).toEqual(["cuda"]);
     expect(prompt?.candidates.map((item) => item.variantKey)).toEqual([cuda.variantKey]);
     expect(prompt?.installable.map((item) => item.variantKey)).toEqual([cuda.variantKey]);
   });
 
-  it("keeps the prompt visible while a detected GPU runtime is installing", () => {
+  it("keeps the prompt visible while a detected accelerator runtime is installing", () => {
     const cuda = runtime("whisper.cpp", "cuda", "downloading", false);
     const snapshot = state({
       nvidia: true,
@@ -47,14 +47,14 @@ describe("renderer runtime helpers", () => {
       }
     });
 
-    const prompt = gpuRuntimePromptState(snapshot);
+    const prompt = accelerationRuntimePromptState(snapshot);
 
     expect(prompt?.accelerators).toEqual(["cuda"]);
     expect(prompt?.candidates.map((item) => item.variantKey)).toEqual([cuda.variantKey]);
     expect(prompt?.installable).toEqual([]);
   });
 
-  it("does not prompt after the GPU runtime prompt is dismissed", () => {
+  it("does not prompt after the acceleration runtime prompt is dismissed", () => {
     const cuda = runtime("whisper.cpp", "cuda", "not_installed", true);
     const snapshot = state({
       nvidia: true,
@@ -64,7 +64,7 @@ describe("renderer runtime helpers", () => {
       }
     });
 
-    expect(gpuRuntimePromptState(snapshot)).toBeNull();
+    expect(accelerationRuntimePromptState(snapshot)).toBeNull();
   });
 });
 
@@ -80,7 +80,7 @@ function state({
   return {
     settings: {
       ...defaultSettings,
-      gpuRuntimeInstallPromptDismissedAt: dismissed ? "2026-01-01T00:00:00.000Z" : undefined
+      accelerationRuntimeInstallPromptDismissedAt: dismissed ? "2026-01-01T00:00:00.000Z" : undefined
     },
     modes: defaultModes,
     transcriptionProviders: defaultTranscriptionProviders,
@@ -101,8 +101,9 @@ function state({
       sttRuntimes: {},
       stt: {
         diagnostics: [],
-        gpuProbe: {
+        accelerationProbe: {
           nvidia: { available: nvidia, devices: nvidia ? ["Test NVIDIA GPU"] : [], diagnostics: [] },
+          apple: { available: false, devices: [], diagnostics: [] },
           diagnostics: []
         }
       },
@@ -119,9 +120,13 @@ function state({
       context: {
         backend: "clipboard_fallback",
         appMetadata: false,
-        focusedText: false,
         selectedText: false,
-        browserDomain: false,
+        diagnostics: []
+      },
+      automation: {
+        status: "not_required",
+        permissionRequired: false,
+        canPrompt: false,
         diagnostics: []
       },
       paste: {

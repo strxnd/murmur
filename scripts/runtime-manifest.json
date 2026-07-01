@@ -1,5 +1,5 @@
 {
-  "platforms": ["linux-x64"],
+  "platforms": ["linux-x64", "darwin-arm64", "darwin-x64"],
   "runtimes": {
     "whisper.cpp": {
       "version": "1.8.6",
@@ -20,6 +20,18 @@
           "cuda": {
             "name": "sherpa-onnx-v1.13.2-cuda-12.x-cudnn-9.x-linux-x64-gpu.tar.bz2",
             "sha256": "bd113c93a18ba0f9b6e0cac46ab6a6a17606bdd7b771b6eaee0cbd6f96ce63fe"
+          }
+        },
+        "darwin-arm64": {
+          "cpu": {
+            "name": "sherpa-onnx-v1.13.2-osx-arm64-shared-no-tts.tar.bz2",
+            "sha256": "d880aaa79d36b784168a0398b278813d57ba8e135f468894b8f134b664e2e225"
+          }
+        },
+        "darwin-x64": {
+          "cpu": {
+            "name": "sherpa-onnx-v1.13.2-osx-x64-shared-no-tts.tar.bz2",
+            "sha256": "d1819cce38390d5b51ff38cb15a1b32e47c6ffe15882926211054b1f95e01357"
           }
         }
       }

@@ -115,7 +115,7 @@ function state({
           message: "runtime"
         }
       },
-      stt: { diagnostics: [], gpuProbe: emptyGpuProbe() },
+      stt: { diagnostics: [], accelerationProbe: emptyAccelerationProbe() },
       hotkeys: {
         backend: "electron_global_shortcut",
         pushToTalkRelease: false,
@@ -129,9 +129,13 @@ function state({
       context: {
         backend: "clipboard_fallback",
         appMetadata: false,
-        focusedText: false,
         selectedText: false,
-        browserDomain: false,
+        diagnostics: []
+      },
+      automation: {
+        status: "not_required",
+        permissionRequired: false,
+        canPrompt: false,
         diagnostics: []
       },
       paste: {
@@ -164,9 +168,10 @@ function runtime(id: "whisper.cpp" | "sherpa-onnx", status: SttRuntimeInstallSta
   };
 }
 
-function emptyGpuProbe() {
+function emptyAccelerationProbe() {
   return {
     nvidia: { available: false, devices: [], diagnostics: [] },
+    apple: { available: false, devices: [], diagnostics: [] },
     diagnostics: []
   };
 }

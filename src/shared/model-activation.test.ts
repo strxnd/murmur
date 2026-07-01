@@ -48,6 +48,43 @@ describe("llmProviderFromModel", () => {
     expect(llmProviderFromModel(anthropic!)?.id).toBe("anthropic");
     expect(llmProviderFromModel(google!)?.id).toBe("google");
   });
+
+  it("maps dynamic local models to the provider that discovered them", () => {
+    const provider = {
+      id: "team-ollama",
+      type: "ollama" as const,
+      name: "Team Ollama",
+      baseUrl: "http://127.0.0.1:12434",
+      isCloud: false,
+      defaultModel: "fallback",
+      enabled: true
+    };
+    const model = {
+      id: "team-ollama:llama3.1:8b",
+      name: "llama3.1:8b",
+      kind: "language" as const,
+      provider: "ollama" as const,
+      isCloud: false,
+      isOffline: true,
+      tags: ["llm", "local", "ollama", "discovered"],
+      downloadStrategy: "none" as const,
+      discovery: {
+        providerId: provider.id,
+        reachable: true
+      },
+      defaultProviderConfig: {
+        providerId: provider.id,
+        llmProviderType: "ollama" as const,
+        model: "llama3.1:8b"
+      }
+    };
+
+    expect(llmProviderFromModel(model, [provider])).toMatchObject({
+      id: "team-ollama",
+      baseUrl: "http://127.0.0.1:12434",
+      defaultModel: "llama3.1:8b"
+    });
+  });
 });
 
 describe("provider usability", () => {

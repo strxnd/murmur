@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type {
   AppSettings,
   AppStateSnapshot,
+  AutomationPermissionReport,
   AutoModeRule,
   LlmProviderConfig,
   ModelDownloadState,
@@ -23,6 +24,8 @@ const api = {
   getState: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("app:get-state"),
   getPillState: (): Promise<PillStateSnapshot> => ipcRenderer.invoke("app:get-pill-state"),
   getModeSelectorState: (): Promise<ModeSelectorStateSnapshot> => ipcRenderer.invoke("app:get-mode-selector-state"),
+  getAutomationPermissionStatus: (): Promise<AutomationPermissionReport> => ipcRenderer.invoke("automation:permission-status"),
+  requestAutomationPermission: (): Promise<AutomationPermissionReport> => ipcRenderer.invoke("automation:permission-request"),
   updateSettings: (patch: Partial<AppSettings>): Promise<AppStateSnapshot> => ipcRenderer.invoke("settings:update", patch),
   beginHotkeyCapture: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("hotkeys:capture-start"),
   endHotkeyCapture: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("hotkeys:capture-end"),

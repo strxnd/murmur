@@ -9,7 +9,6 @@ const searchableHistoryFields = [
   "modeName",
   "appName",
   "windowTitle",
-  "browserDomain",
   "transcriptionProviderType",
   "transcriptionModel",
   "llmProviderType",

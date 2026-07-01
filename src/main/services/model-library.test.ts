@@ -421,6 +421,91 @@ describe("ModelLibraryService", () => {
     }
   });
 
+  it("discovers models from custom Ollama and LM Studio provider URLs", async () => {
+    const { service, storage } = setup("available");
+    const ollamaServer = await jsonRouteServer({
+      "/api/tags": { models: [{ model: "custom-llama:latest" }] }
+    });
+    const lmStudioServer = await jsonRouteServer({
+      "/api/v0/models": { data: [{ id: "custom/studio-model", type: "llm" }] }
+    });
+    storage.setLlmProviders([
+      ...storage.getState().llmProviders,
+      {
+        id: "team-ollama",
+        type: "ollama",
+        name: "Team Ollama",
+        baseUrl: ollamaServer.url,
+        isCloud: false,
+        enabled: true
+      },
+      {
+        id: "team-lmstudio",
+        type: "lmstudio",
+        name: "Team LM Studio",
+        baseUrl: `${lmStudioServer.url}/v1`,
+        isCloud: false,
+        enabled: true
+      }
+    ]);
+
+    try {
+      const snapshot = await service.getLibrary();
+
+      expect(snapshot.catalog.find((item) => item.id === "team-ollama:custom-llama:latest")).toMatchObject({
+        provider: "ollama",
+        discovery: { providerId: "team-ollama", reachable: true },
+        defaultProviderConfig: { providerId: "team-ollama", llmProviderType: "ollama", model: "custom-llama:latest" }
+      });
+      expect(snapshot.catalog.find((item) => item.id === "team-lmstudio:custom/studio-model")).toMatchObject({
+        provider: "lmstudio",
+        discovery: { providerId: "team-lmstudio", reachable: true },
+        defaultProviderConfig: { providerId: "team-lmstudio", llmProviderType: "lmstudio", model: "custom/studio-model" }
+      });
+    } finally {
+      await closeServer(ollamaServer.server);
+      await closeServer(lmStudioServer.server);
+    }
+  });
+
+  it("adds manual OpenAI-compatible provider models to the catalog and activates them", async () => {
+    const { service, storage } = setup("available");
+    storage.setLlmProviders([
+      ...storage.getState().llmProviders,
+      {
+        id: "custom-openai-compatible",
+        type: "custom_openai_compatible",
+        name: "Custom OpenAI-compatible",
+        baseUrl: "https://models.example.test/v1",
+        apiKey: "sk-test",
+        isCloud: true,
+        models: ["custom-model-a", "custom-model-b"],
+        enabled: true
+      }
+    ]);
+
+    const library = await service.getLibrary();
+    const model = library.catalog.find((item) => item.id === "custom-openai-compatible:custom-model-a");
+
+    expect(model).toMatchObject({
+      name: "custom-model-a",
+      provider: "openai_compatible",
+      isCloud: true,
+      isOffline: false,
+      discovery: { providerId: "custom-openai-compatible", reachable: true },
+      defaultProviderConfig: {
+        providerId: "custom-openai-compatible",
+        llmProviderType: "custom_openai_compatible",
+        baseUrl: "https://models.example.test/v1",
+        model: "custom-model-a"
+      }
+    });
+
+    const activated = await service.activateModel("custom-openai-compatible:custom-model-a");
+
+    expect(activated.activeModelIds.language).toBe("custom-openai-compatible:custom-model-a");
+  });
+
   it("sends LM Studio provider auth headers while discovering models", async () => {
     const { service, storage } = setup("available");
     let nativeAuth: string | undefined;
@@ -674,17 +759,40 @@ function slowModelServer(chunks: string[], delayMs: number): Promise<{ server: S
 
 function unsafeTarBz2(): Buffer {
   const root = tempRoot();
-  const sourceDir = join(root, "archive-src");
+  const tarPath = join(root, "unsafe.tar");
   const archivePath = join(root, "unsafe.tar.bz2");
-  mkdirSync(sourceDir, { recursive: true });
-  writeFileSync(join(sourceDir, "payload.txt"), "payload");
-  const result = spawnSync("tar", ["-cjf", archivePath, "--transform=s|payload.txt|../payload.txt|", "-C", sourceDir, "payload.txt"], {
-    encoding: "utf8"
-  });
+  writeFileSync(tarPath, tarWithSingleFile("../payload.txt", "payload"));
+  const result = spawnSync("bzip2", ["-c", tarPath]);
   if (result.status !== 0) {
-    throw new Error(`Could not create unsafe tar fixture: ${result.stderr}`);
+    throw new Error(`Could not create unsafe tar fixture: ${result.stderr.toString("utf8")}`);
   }
+  writeFileSync(archivePath, result.stdout);
   return readFileSync(archivePath);
+}
+
+function tarWithSingleFile(name: string, contents: string): Buffer {
+  const body = Buffer.from(contents);
+  const header = Buffer.alloc(512, 0);
+  header.write(name, 0, Math.min(Buffer.byteLength(name), 100), "utf8");
+  writeTarOctal(header, 100, 8, 0o644);
+  writeTarOctal(header, 108, 8, 0);
+  writeTarOctal(header, 116, 8, 0);
+  writeTarOctal(header, 124, 12, body.length);
+  writeTarOctal(header, 136, 12, 0);
+  header.fill(0x20, 148, 156);
+  header.write("0", 156, "ascii");
+  header.write("ustar", 257, "ascii");
+  header.write("00", 263, "ascii");
+  const checksum = header.reduce((total, byte) => total + byte, 0);
+  writeTarOctal(header, 148, 8, checksum);
+  const padding = Buffer.alloc((512 - (body.length % 512)) % 512, 0);
+  return Buffer.concat([header, body, padding, Buffer.alloc(1024, 0)]);
+}
+
+function writeTarOctal(header: Buffer, offset: number, length: number, value: number): void {
+  const text = value.toString(8).padStart(length - 1, "0");
+  header.write(text.slice(-length + 1), offset, length - 1, "ascii");
+  header[offset + length - 1] = 0;
 }
 
 function sha256(value: string | Buffer): string {

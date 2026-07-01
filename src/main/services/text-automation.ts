@@ -1,9 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { LinuxTextAutomationService } from "./linux-text-automation";
+import { MacosTextAutomationService } from "./macos-text-automation";
 
 export type AutomationResultStatus = "success" | "unavailable" | "denied" | "failed";
 export type TextAutomationBackendId =
   | "linux_native_helper"
+  | "macos_accessibility_helper"
   | "wtype"
   | "xdotool"
   | "ydotool"
@@ -18,6 +20,10 @@ export interface AutomationResult {
   diagnostics: string[];
   backend?: TextAutomationBackendId;
   attemptedBackends?: TextAutomationBackendId[];
+}
+
+export interface SelectedTextAutomationResult extends AutomationResult {
+  text?: string;
 }
 
 export interface TextAutomationCapability {
@@ -36,6 +42,8 @@ export interface TextAutomationBackend {
   dispose(): void;
   pasteClipboard(): Promise<AutomationResult>;
   copySelection(): Promise<AutomationResult>;
+  readSelectedText?(): Promise<SelectedTextAutomationResult>;
+  refreshStatus?(): void;
   getCapability(): TextAutomationCapability;
   getDiagnostics(): string[];
 }
@@ -48,7 +56,7 @@ export class TextAutomationService {
   private operationQueue: Promise<void> = Promise.resolve();
   private exclusiveContext = new AsyncLocalStorage<boolean>();
 
-  constructor(private readonly backend: TextAutomationBackend = new LinuxTextAutomationService()) {}
+  constructor(private readonly backend: TextAutomationBackend = createTextAutomationBackend()) {}
 
   initialize(): Promise<void> {
     return this.backend.initialize();
@@ -68,12 +76,30 @@ export class TextAutomationService {
     return this.enqueue(() => this.backend.copySelection());
   }
 
+  readSelectedText(): Promise<SelectedTextAutomationResult> {
+    if (!this.backend.readSelectedText) {
+      return Promise.resolve({
+        success: false,
+        status: "unavailable",
+        message: "Selected text reads are not supported by this automation backend.",
+        diagnostics: this.backend.getDiagnostics(),
+        backend: this.backend.getCapability().backend
+      });
+    }
+    if (this.exclusiveContext.getStore()) return this.backend.readSelectedText();
+    return this.enqueue(() => this.backend.readSelectedText!());
+  }
+
   runExclusive<T>(operation: () => Promise<T>): Promise<T> {
     return this.enqueue(() => this.exclusiveContext.run(true, operation));
   }
 
   getCapability(): TextAutomationCapability {
     return this.backend.getCapability();
+  }
+
+  refreshStatus(): void {
+    this.backend.refreshStatus?.();
   }
 
   getDiagnostics(): string[] {
@@ -87,5 +113,54 @@ export class TextAutomationService {
       () => undefined
     );
     return run;
+  }
+}
+
+export function createTextAutomationBackend(platform: NodeJS.Platform = process.platform): TextAutomationBackend {
+  if (platform === "linux") return new LinuxTextAutomationService();
+  if (platform === "darwin") return new MacosTextAutomationService();
+  return new UnavailableTextAutomationService(platform);
+}
+
+class UnavailableTextAutomationService implements TextAutomationBackend {
+  constructor(private readonly platform: string) {}
+
+  async initialize(): Promise<void> {
+    await Promise.resolve();
+  }
+
+  dispose(): void {
+    return undefined;
+  }
+
+  pasteClipboard(): Promise<AutomationResult> {
+    return Promise.resolve(this.result());
+  }
+
+  copySelection(): Promise<AutomationResult> {
+    return Promise.resolve(this.result());
+  }
+
+  getCapability(): TextAutomationCapability {
+    return {
+      backend: "clipboard_only",
+      automationAvailable: false,
+      permissionRequired: false,
+      diagnostics: [`Text automation is unavailable on unsupported platform ${this.platform}.`]
+    };
+  }
+
+  getDiagnostics(): string[] {
+    return this.getCapability().diagnostics;
+  }
+
+  private result(): AutomationResult {
+    return {
+      success: false,
+      status: "unavailable",
+      message: `Text automation is unavailable on unsupported platform ${this.platform}.`,
+      diagnostics: this.getDiagnostics(),
+      backend: "clipboard_only"
+    };
   }
 }

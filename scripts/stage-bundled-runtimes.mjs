@@ -61,14 +61,14 @@ function resolvePlatformKey(target) {
 
   if (supportedSttRuntimePlatformKeys.includes(platform)) return platform;
 
-  if (platform === "linux" && arch) {
+  if ((platform === "linux" || platform === "darwin") && arch) {
     const key = `${platform}-${normalizeArch(arch)}`;
     if (supportedSttRuntimePlatformKeys.includes(key)) return key;
     throw new Error(`Unsupported runtime target ${key}. Supported: ${supportedSttRuntimePlatformKeys.join(", ")}`);
   }
 
   throw new Error(
-    `Unsupported runtime target ${arch ? `${platform}-${arch}` : platform}. Use current, a platform key, or --platform linux --arch ${supportedLinuxArchHints()}. Supported: ${supportedSttRuntimePlatformKeys.join(", ")}`
+    `Unsupported runtime target ${arch ? `${platform}-${arch}` : platform}. Use current, a platform key, or --platform linux|darwin --arch ${supportedArchHints()}. Supported: ${supportedSttRuntimePlatformKeys.join(", ")}`
   );
 }
 
@@ -84,6 +84,7 @@ function optionValue(args, name) {
 
 function platformFromEnvFlags(env) {
   if (env.npm_config_linux === "true" || env.npm_config_linux === "") return "linux";
+  if (env.npm_config_macos === "true" || env.npm_config_darwin === "true" || env.npm_config_mac === "true") return "darwin";
   return undefined;
 }
 
@@ -99,10 +100,10 @@ function normalizeArch(value) {
   return value;
 }
 
-function supportedLinuxArchHints() {
+function supportedArchHints() {
   return supportedSttRuntimePlatformKeys
-    .filter((key) => key.startsWith("linux-"))
-    .map((key) => key.slice("linux-".length))
+    .map((key) => key.split("-").at(-1))
+    .filter((value, index, values) => value && values.indexOf(value) === index)
     .join("|");
 }
 

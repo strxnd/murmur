@@ -19,10 +19,10 @@ This page is a maintainer-oriented checklist for common failure areas.
 
 - `sttSetup.needsSetup` means no usable STT provider or active local voice model is ready.
 - Check `capabilities.sttRuntimes` for runtime variant status and source.
-- Check `capabilities.stt.gpuProbe` for advisory NVIDIA detection. Launch and transcription success are the source of truth.
+- Check `capabilities.stt.accelerationProbe` for advisory NVIDIA or Apple acceleration detection. Launch and transcription success are the source of truth.
 - For bundled Whisper, confirm the model exists under `modelDir` and the runtime can start `whisper-server`.
 - For Sherpa ONNX, confirm `tokens.txt` plus CTC or transducer ONNX files are present.
-- Sherpa ONNX supports CPU and CUDA in this version.
+- Sherpa ONNX supports CPU and CUDA in this version; macOS Sherpa runtimes are CPU-only.
 - Use [runtime builds](../development/runtime-builds.md) for direct runtime smoke tests.
 
 ## Providers
@@ -35,8 +35,9 @@ This page is a maintainer-oriented checklist for common failure areas.
 
 - Inspect `capabilities.paste` and `capabilities.context`.
 - Selected-text capture requires text automation availability and `selectedTextCapture !== "disabled"`.
+- On macOS, `capabilities.automation` reports Accessibility permission status. Window titles, selected text, paste automation, and push-to-talk release detection require trusted Accessibility plus the bundled helper.
 - Paste always writes output to the clipboard first; automation failure leaves the output there.
-- Clipboard restore is used for selected-text capture, not final paste.
+- Clipboard restore is used for Linux selected-text capture, not final paste. macOS selected-text capture uses Accessibility APIs and does not copy through the clipboard.
 
 ## Storage
 

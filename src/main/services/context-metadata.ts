@@ -6,6 +6,7 @@ import * as dbusNative from "@homebridge/dbus-native";
 import type { BusConnection, MessageBus } from "@homebridge/dbus-native";
 import type { ContextSnapshot } from "../../shared/types";
 import { commandExists, execFileText } from "./command";
+import { MacosAutomationHelper } from "./macos-automation-helper";
 import { detectNativeShortcutBackends } from "./native-global-shortcuts";
 
 const metadataTimeoutMs = 1200;
@@ -17,7 +18,7 @@ const dbusRequestNameDoNotQueue = 4;
 const dbusRequestNamePrimaryOwner = 1;
 const dbusRequestNameAlreadyOwner = 4;
 
-export type ContextMetadataBackend = "x11" | "hyprland" | "gnome_shell" | "kde_kwin";
+export type ContextMetadataBackend = "x11" | "hyprland" | "gnome_shell" | "kde_kwin" | "macos_accessibility_helper";
 
 export interface ContextCommandAvailability {
   gdbus: boolean;
@@ -29,7 +30,7 @@ export interface ContextCommandAvailability {
   xprop: boolean;
 }
 
-type ActiveWindowMetadata = Pick<ContextSnapshot, "appName" | "appId" | "windowTitle" | "browserDomain" | "browserUrl">;
+type ActiveWindowMetadata = Pick<ContextSnapshot, "appName" | "appId" | "windowTitle">;
 
 type ContextEnv = Partial<
   Record<"DBUS_SESSION_BUS_ADDRESS" | "HYPRLAND_INSTANCE_SIGNATURE" | "XDG_CURRENT_DESKTOP" | "XDG_SESSION_TYPE", string>
@@ -76,6 +77,7 @@ export class DesktopMetadataService {
   private kdeCallbackServiceExported = false;
   private kdeCallbackServiceRequested = false;
   private pendingKdeRequests = new Map<string, PendingKdeRequest>();
+  private macosHelper = new MacosAutomationHelper();
 
   async initialize(): Promise<void> {
     this.commands = await detectCommandAvailability(process.env, process.platform);
@@ -133,6 +135,7 @@ export class DesktopMetadataService {
     if (backend === "x11") return captureX11ActiveWindow();
     if (backend === "hyprland") return captureHyprlandActiveWindow();
     if (backend === "gnome_shell") return captureGnomeShellActiveWindow();
+    if (backend === "macos_accessibility_helper") return captureMacosActiveWindow(this.macosHelper);
     return this.captureKdeActiveWindow();
   }
 
@@ -304,6 +307,7 @@ export function detectContextMetadataBackends({
   env?: ContextEnv;
   platform?: NodeJS.Platform;
 } = {}): ContextMetadataBackend[] {
+  if (platform === "darwin") return ["macos_accessibility_helper"];
   if (platform !== "linux") return [];
 
   const backends: ContextMetadataBackend[] = [];
@@ -360,6 +364,12 @@ function metadataDiagnostics(
   env: ContextEnv,
   platform: NodeJS.Platform
 ): string[] {
+  if (platform === "darwin") {
+    return backends.length > 0
+      ? ["Active app metadata available via macOS automation helper."]
+      : ["Active app metadata unavailable: macOS automation helper was not found."];
+  }
+
   if (platform !== "linux") {
     return ["Active app metadata unavailable: desktop metadata providers are only implemented for Linux sessions."];
   }
@@ -461,18 +471,28 @@ async function captureX11ActiveWindow(): Promise<ActiveWindowMetadata | null> {
   return parseX11ActiveWindow(titleOutput, xpropOutput);
 }
 
+function captureMacosActiveWindow(helper: MacosAutomationHelper): Promise<ActiveWindowMetadata | null> {
+  const result = helper.activeWindow();
+  if (!result.ok) throw new Error(result.error ?? "macOS active-window helper failed.");
+  return Promise.resolve(
+    normalizeActiveWindowMetadata({
+      appName: result.appName,
+      appId: result.appId,
+      windowTitle: result.trusted === true ? result.windowTitle : undefined
+    })
+  );
+}
+
 function normalizeActiveWindowMetadata(input: Record<string, unknown>): ActiveWindowMetadata | null {
   const appId = cleanString(input.appId);
   const appName = cleanString(input.appName) ?? appId;
   const windowTitle = cleanString(input.windowTitle);
-  const browserUrl = cleanString(input.browserUrl);
-  const browserDomain = cleanString(input.browserDomain);
-  const metadata = { appName, appId, windowTitle, browserUrl, browserDomain };
+  const metadata = { appName, appId, windowTitle };
   return hasActiveWindowMetadata(metadata) ? metadata : null;
 }
 
 function hasActiveWindowMetadata(metadata: ActiveWindowMetadata): boolean {
-  return Boolean(metadata.appName || metadata.appId || metadata.windowTitle || metadata.browserDomain || metadata.browserUrl);
+  return Boolean(metadata.appName || metadata.appId || metadata.windowTitle);
 }
 
 function parseWmClass(output: string): string[] {
@@ -584,6 +604,7 @@ function backendLabel(backend: ContextMetadataBackend): string {
   if (backend === "x11") return "X11";
   if (backend === "hyprland") return "Hyprland";
   if (backend === "gnome_shell") return "GNOME Shell";
+  if (backend === "macos_accessibility_helper") return "macOS automation helper";
   return "KWin";
 }
 

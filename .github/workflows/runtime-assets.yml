@@ -1,0 +1,51 @@
+name: Runtime Assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Runtime platform key or current"
+        required: true
+        default: current
+      accelerator:
+        description: "cpu, cuda, apple, or all"
+        required: true
+        default: all
+
+jobs:
+  package-runtime-assets:
+    name: Package runtime assets
+    runs-on: ${{ startsWith(inputs.platform, 'darwin') && (inputs.platform == 'darwin-x64' && 'macos-15-intel' || 'macos-15') || 'ubuntu-24.04' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential cmake
+
+      - name: Install mise toolchain
+        uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare runtimes
+        run: mise run runtimes:prepare -- --platform "${{ inputs.platform }}" --accelerator "${{ inputs.accelerator }}"
+
+      - name: Package runtimes
+        run: mise run runtimes:package -- --platform "${{ inputs.platform }}" --accelerator "${{ inputs.accelerator }}"
+
+      - name: Check runtime manifest
+        run: mise run runtimes:manifest-check
+
+      - name: Upload runtime archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-assets-${{ inputs.platform }}-${{ inputs.accelerator }}
+          path: dist/runtimes/*.tar.gz

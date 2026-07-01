@@ -412,7 +412,11 @@ export class SttRuntimeService {
     const env = { ...this.env };
     const dirs = this.runtimeSearchDirs(runtime);
 
-    env.LD_LIBRARY_PATH = prependPathList(dirs, env.LD_LIBRARY_PATH);
+    if (runtime.platformKey.startsWith("darwin-")) {
+      env.DYLD_LIBRARY_PATH = prependPathList(dirs, env.DYLD_LIBRARY_PATH);
+    } else {
+      env.LD_LIBRARY_PATH = prependPathList(dirs, env.LD_LIBRARY_PATH);
+    }
 
     return env;
   }
@@ -742,7 +746,7 @@ export class SttRuntimeService {
   ): string {
     const label = sttRuntimeVariantLabel(definition, accelerator);
     if (this.packaged && accelerator !== "cpu") {
-      return `${label} runtime was not found for ${platformKey}. GPU runtimes can be installed only from Murmur release assets with pinned SHA-256 metadata.`;
+      return `${label} runtime was not found for ${platformKey}. Accelerated runtimes can be installed only from Murmur release assets with pinned SHA-256 metadata.`;
     }
     return `${label} runtime was not found in bundled application resources for ${platformKey}. Reinstall Murmur or set ${this.envVar(definition, accelerator)} to a compatible binary.`;
   }
@@ -804,7 +808,7 @@ export class SttRuntimeService {
     const definition = this.definition(id);
     const platformKey = this.getPlatformKey();
     const supported = new Set(getSttRuntimeSupportedAccelerators(definition, platformKey));
-    return (["cuda", "cpu"] as const).filter((accelerator) => supported.has(accelerator));
+    return (["apple", "cuda", "cpu"] as const).filter((accelerator) => supported.has(accelerator));
   }
 
   private envVar(definition: SttRuntimeCatalogEntry, accelerator: SttRuntimeAccelerator): string {

@@ -6,13 +6,13 @@ import type {
   SttRuntimeInstallState
 } from "../../../shared/types";
 
-export type DetectedGpuAccelerator = Extract<SttRuntimeAccelerator, "cuda">;
+export type DetectedAccelerator = Extract<SttRuntimeAccelerator, "cuda" | "apple">;
 
 const runtimeOrder: SttRuntimeId[] = ["whisper.cpp", "sherpa-onnx"];
-const acceleratorOrder: SttRuntimeAccelerator[] = ["cpu", "cuda"];
+const acceleratorOrder: SttRuntimeAccelerator[] = ["cpu", "apple", "cuda"];
 
-export interface GpuRuntimePromptState {
-  accelerators: DetectedGpuAccelerator[];
+export interface AccelerationRuntimePromptState {
+  accelerators: DetectedAccelerator[];
   candidates: SttRuntimeInstallState[];
   installable: SttRuntimeInstallState[];
 }
@@ -25,16 +25,17 @@ export function uniqueRuntimeInstallStates(state: AppStateSnapshot): SttRuntimeI
   return Array.from(byVariant.values()).sort(compareRuntimeStates);
 }
 
-export function detectedGpuAccelerators(state: AppStateSnapshot): DetectedGpuAccelerator[] {
-  const detected: DetectedGpuAccelerator[] = [];
-  if (state.capabilities.stt.gpuProbe.nvidia.available) detected.push("cuda");
+export function detectedAccelerators(state: AppStateSnapshot): DetectedAccelerator[] {
+  const detected: DetectedAccelerator[] = [];
+  if (state.capabilities.stt.accelerationProbe.apple.available) detected.push("apple");
+  if (state.capabilities.stt.accelerationProbe.nvidia.available) detected.push("cuda");
   return detected;
 }
 
-export function gpuRuntimePromptState(state: AppStateSnapshot): GpuRuntimePromptState | null {
-  if (state.settings.gpuRuntimeInstallPromptDismissedAt) return null;
+export function accelerationRuntimePromptState(state: AppStateSnapshot): AccelerationRuntimePromptState | null {
+  if (state.settings.accelerationRuntimeInstallPromptDismissedAt) return null;
 
-  const accelerators = detectedGpuAccelerators(state);
+  const accelerators = detectedAccelerators(state);
   if (accelerators.length === 0) return null;
 
   const detected = new Set<SttRuntimeAccelerator>(accelerators);
@@ -90,6 +91,7 @@ export function userRuntimeStatusMessage(runtime: SttRuntimeInstallState): strin
 }
 
 export function acceleratorLabel(accelerator: SttRuntimeAccelerator): string {
+  if (accelerator === "apple") return "Apple";
   if (accelerator === "cuda") return "CUDA";
   return "CPU";
 }

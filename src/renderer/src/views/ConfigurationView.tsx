@@ -16,16 +16,14 @@ import { Input } from "../components/ui/Input";
 import { Panel } from "../components/ui/Panel";
 import { ProgressBar } from "../components/ui/ProgressBar";
 import { Select, type SelectItem } from "../components/ui/Select";
-import { Switch } from "../components/ui/Switch";
 import { useAudioDevices } from "../hooks/useAudioDevices";
 import { murmurClient } from "../lib/murmur-client";
 import {
   acceleratorLabel,
-  detectedGpuAccelerators,
+  detectedAccelerators as detectAccelerators,
   isRuntimeBusy,
   runtimeProgressValue,
-  uniqueRuntimeInstallStates,
-  type DetectedGpuAccelerator
+  uniqueRuntimeInstallStates
 } from "../lib/runtimes";
 import { useMurmurStore } from "../state/murmur-store";
 
@@ -41,7 +39,6 @@ const clearLocalDataConfirmationPhrase = "CLEAR LOCAL DATA";
 const editableSettingsKeys = [
   "theme",
   "textRetentionDays",
-  "shareContextWithCloudLlm",
   "activationMode",
   "activationHotkey",
   "modeSelectorHotkey",
@@ -299,18 +296,6 @@ export function ConfigurationView({
             <Field label="Typing baseline WPM" error={form.formState.errors.settings?.typingBaselineWpm?.message}>
               <Input type="number" min={1} {...form.register("settings.typingBaselineWpm", { valueAsNumber: true })} />
             </Field>
-            <Controller
-              control={form.control}
-              name="settings.shareContextWithCloudLlm"
-              render={({ field }) => (
-                <Switch
-                  className="col-span-full rounded-md border border-border bg-muted/30 px-3 py-2"
-                  label="Share context with cloud LLMs"
-                  checked={Boolean(field.value)}
-                  onCheckedChange={field.onChange}
-                />
-              )}
-            />
           </div>
         </Panel>
 
@@ -383,15 +368,15 @@ interface AccelerationRow {
   progress: number | null;
 }
 
-const accelerationOrder: SttRuntimeAccelerator[] = ["cpu", "cuda"];
+const accelerationOrder: SttRuntimeAccelerator[] = ["cpu", "apple", "cuda"];
 
 function AccelerationPanel({ state }: { state: AppStateSnapshot }): JSX.Element {
-  const detectedAccelerators = detectedGpuAccelerators(state);
+  const detectedAccelerators = detectAccelerators(state);
   const runtimes = uniqueRuntimeInstallStates(state);
   const rows = accelerationOrder
     .map((accelerator) => accelerationRow(accelerator, runtimes, detectedAccelerators))
     .filter((row): row is AccelerationRow => Boolean(row));
-  const summary = detectedAccelerators.length > 0 ? "GPU detected" : "CPU baseline";
+  const summary = detectedAccelerators.length > 0 ? "Accelerator detected" : "CPU baseline";
 
   return (
     <Panel title="Acceleration" actions={<Badge tone={detectedAccelerators.length > 0 ? "success" : "neutral"}>{summary}</Badge>}>
@@ -427,9 +412,9 @@ function AccelerationStatusRow({ row }: { row: AccelerationRow }): JSX.Element {
 function accelerationRow(
   accelerator: SttRuntimeAccelerator,
   runtimes: SttRuntimeInstallState[],
-  detectedAccelerators: DetectedGpuAccelerator[]
+  detectedAccelerators: SttRuntimeAccelerator[]
 ): AccelerationRow | null {
-  const detected = accelerator === "cpu" || detectedAccelerators.includes(accelerator as DetectedGpuAccelerator);
+  const detected = accelerator === "cpu" || detectedAccelerators.includes(accelerator);
   const matches = runtimes.filter((runtime) => runtime.accelerator === accelerator);
   const ready = matches.filter((runtime) => runtime.status === "ready");
   const busy = matches.find(isRuntimeBusy);
@@ -464,7 +449,7 @@ function accelerationRow(
       accelerator,
       title,
       status: "Needs attention",
-      detail: `${runtimeProofLabel(failed)} can be retried when GPU acceleration is offered on Home.`,
+      detail: `${runtimeProofLabel(failed)} can be retried when acceleration is offered on Home.`,
       tone: "danger",
       progress: null
     };
@@ -478,10 +463,10 @@ function accelerationRow(
     status: accelerator === "cpu" ? "Not ready" : "Not installed",
     detail:
       accelerator === "cpu"
-        ? "Local dictation uses CPU when GPU acceleration is unavailable."
+        ? "Local dictation uses CPU when acceleration is unavailable."
         : canInstall
-          ? "A compatible GPU was detected. Install GPU acceleration from Home."
-          : "A compatible GPU was detected. GPU acceleration is not available yet.",
+          ? "A compatible accelerator was detected. Install acceleration from Home."
+          : "A compatible accelerator was detected. Acceleration is not available yet.",
     tone: "warning",
     progress: null
   };

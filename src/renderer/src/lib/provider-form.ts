@@ -19,12 +19,8 @@ export const customTranscriptionProviderTypes = [
 ] as const satisfies ReadonlyArray<TranscriptionProviderType>;
 
 export const customLlmProviderTypes = [
-  "ollama",
   "lmstudio",
-  "llama_cpp_openai",
-  "openai",
-  "anthropic",
-  "google",
+  "ollama",
   "custom_openai_compatible"
 ] as const satisfies ReadonlyArray<LlmProviderType>;
 
@@ -207,6 +203,7 @@ export function createCustomLlmProvider(
       apiKey: "",
       isCloud: true,
       defaultModel: "",
+      models: [],
       enabled: false
     },
     type
@@ -258,7 +255,7 @@ export function llmProviderTypeLabel(type: LlmProviderType): string {
     openai: "OpenAI",
     anthropic: "Anthropic",
     google: "Google Gemini",
-    custom_openai_compatible: "Custom OpenAI-compatible"
+    custom_openai_compatible: "OpenAI-compatible"
   };
   return labels[type];
 }
@@ -313,24 +310,12 @@ function transcriptionProviderTypePreset(type: (typeof customTranscriptionProvid
 
 function llmProviderTypePreset(type: (typeof customLlmProviderTypes)[number]): Partial<LlmProviderConfig> {
   if (type === "ollama") {
-    return { name: "Ollama", baseUrl: "http://127.0.0.1:11434", isCloud: false, defaultModel: "llama3.1" };
+    return { name: "Ollama", baseUrl: "http://127.0.0.1:11434", isCloud: false, defaultModel: "llama3.1", models: undefined };
   }
   if (type === "lmstudio") {
-    return { name: "LM Studio", baseUrl: "http://127.0.0.1:1234/v1", isCloud: false, defaultModel: "local-model" };
+    return { name: "LM Studio", baseUrl: "http://127.0.0.1:1234/v1", isCloud: false, defaultModel: "local-model", models: undefined };
   }
-  if (type === "llama_cpp_openai") {
-    return { name: "llama.cpp OpenAI-compatible", baseUrl: "http://127.0.0.1:8080/v1", isCloud: false, defaultModel: undefined };
-  }
-  if (type === "openai") {
-    return { name: "OpenAI", baseUrl: "https://api.openai.com/v1", isCloud: true, defaultModel: "gpt-4.1-mini" };
-  }
-  if (type === "anthropic") {
-    return { name: "Anthropic", baseUrl: "https://api.anthropic.com", isCloud: true, defaultModel: "claude-sonnet-4-6" };
-  }
-  if (type === "google") {
-    return { name: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta", isCloud: true, defaultModel: "gemini-2.5-flash" };
-  }
-  return { name: "Custom OpenAI-compatible LLM", baseUrl: "", isCloud: true, defaultModel: undefined };
+  return { name: "OpenAI-compatible LLM", baseUrl: "", isCloud: true, defaultModel: undefined, models: [] };
 }
 
 function normalizeTranscriptionProviderDraft(provider: TranscriptionProviderConfig): TranscriptionProviderConfig {
@@ -348,14 +333,29 @@ function normalizeTranscriptionProviderDraft(provider: TranscriptionProviderConf
 }
 
 function normalizeLlmProviderDraft(provider: LlmProviderConfig): LlmProviderConfig {
+  const isOpenAiCompatible = provider.type === "custom_openai_compatible";
   return {
     ...provider,
     name: provider.name.trim(),
     baseUrl: trimmedOptional(provider.baseUrl),
     apiKey: provider.apiKey?.trim() ?? "",
     apiKeySecretId: trimmedOptional(provider.apiKeySecretId),
-    defaultModel: trimmedOptional(provider.defaultModel)
+    defaultModel: isOpenAiCompatible ? undefined : trimmedOptional(provider.defaultModel),
+    models: isOpenAiCompatible ? normalizeModelIds([...(provider.models ?? []), provider.defaultModel]) : undefined
   };
+}
+
+function normalizeModelIds(models: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const model of models) {
+    if (typeof model !== "string") continue;
+    const trimmed = model.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    normalized.push(trimmed);
+  }
+  return normalized;
 }
 
 function trimmedOptional(value: string | undefined): string | undefined {

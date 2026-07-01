@@ -7,6 +7,11 @@ const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = join(repoRoot, "resources", "linux-fast-paste.c");
 const output = join(repoRoot, "resources", "bin", "linux-fast-paste");
 
+if (process.platform !== "linux") {
+  process.stdout.write("Skipping Linux helper build on non-Linux host.\n");
+  process.exit(0);
+}
+
 await mkdir(dirname(output), { recursive: true });
 
 const compiler = process.env.CC || "cc";

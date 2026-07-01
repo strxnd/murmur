@@ -30,13 +30,14 @@ export type ModelProvider =
   | "ollama"
   | "lmstudio"
   | "openai"
+  | "openai_compatible"
   | "anthropic"
   | "google";
 
 export type ModelDownloadStrategy = "direct_file" | "archive" | "ollama_pull" | "none";
 export type ModelDownloadStatus = "not_downloaded" | "downloading" | "downloaded" | "error";
 export type SttRuntimeId = "whisper.cpp" | "sherpa-onnx";
-export type SttRuntimeAccelerator = "cpu" | "cuda";
+export type SttRuntimeAccelerator = "cpu" | "cuda" | "apple";
 export type SttAccelerationPreference = "auto" | SttRuntimeAccelerator;
 export type SttRuntimeVariantKey = string;
 export type SttRuntimeActionTarget =
@@ -103,10 +104,6 @@ export interface ContextSnapshot {
   appName?: string;
   appId?: string;
   windowTitle?: string;
-  browserUrl?: string;
-  browserDomain?: string;
-  focusedRole?: string;
-  focusedText?: string;
   selectedText?: string;
   clipboardText?: string;
   capturedAt: string;
@@ -160,6 +157,7 @@ export interface ModelCatalogItem {
     message?: string;
   };
   defaultProviderConfig?: {
+    providerId?: string;
     sttProviderType?: TranscriptionProviderType;
     llmProviderType?: LlmProviderType;
     baseUrl?: string;
@@ -210,6 +208,7 @@ export interface LlmProviderConfig {
   apiKey?: string;
   isCloud: boolean;
   defaultModel?: string;
+  models?: string[];
   enabled: boolean;
 }
 
@@ -220,8 +219,6 @@ export interface AutoModeRule {
   priority: number;
   enabled: boolean;
   match: {
-    domain?: string;
-    domainWildcard?: string;
     appId?: string;
     appName?: string;
     windowTitleIncludes?: string;
@@ -240,9 +237,7 @@ export interface VocabularyEntry {
 export interface AppSettings {
   theme: "system" | "light" | "dark";
   textRetentionDays: number;
-  shareContextWithCloudLlm: boolean;
-  selectedTextCapture: "disabled" | "clipboard_restore";
-  pasteMethod: "clipboard_restore" | "clipboard_only";
+  selectedTextCapture: "disabled" | "enabled";
   activeModeId: string;
   activationMode: ActivationMode;
   activationHotkey: string;
@@ -252,7 +247,7 @@ export interface AppSettings {
   typingBaselineWpm: number;
   sttAccelerationPreference: SttAccelerationPreference;
   trayCloseNoticeShownAt?: string;
-  gpuRuntimeInstallPromptDismissedAt?: string;
+  accelerationRuntimeInstallPromptDismissedAt?: string;
   sttSetupSkippedAt?: string;
   sttSetupCompletedAt?: string;
   onboardingSkippedAt?: string;
@@ -279,7 +274,6 @@ export interface DictationHistoryItem {
   appName?: string;
   appId?: string;
   windowTitle?: string;
-  browserDomain?: string;
   createdAt: string;
   recordingStartedAt?: string;
   recordingStoppedAt?: string;
@@ -363,8 +357,22 @@ export interface GpuProbeAdapterReport {
   diagnostics: string[];
 }
 
-export interface SttGpuProbeReport {
+export interface AccelerationProbeReport {
   nvidia: GpuProbeAdapterReport;
+  apple: GpuProbeAdapterReport;
+  diagnostics: string[];
+}
+
+export type AutomationPermissionStatus =
+  | "not_required"
+  | "not_determined_or_denied"
+  | "trusted"
+  | "trusted_but_helper_failed";
+
+export interface AutomationPermissionReport {
+  status: AutomationPermissionStatus;
+  permissionRequired: boolean;
+  canPrompt: boolean;
   diagnostics: string[];
 }
 
@@ -372,10 +380,16 @@ export interface CapabilityReport {
   sttRuntimes: Record<SttRuntimeVariantKey, SttRuntimeAvailability>;
   stt: {
     diagnostics: string[];
-    gpuProbe: SttGpuProbeReport;
+    accelerationProbe: AccelerationProbeReport;
   };
   hotkeys: {
-    backend: "xdg_desktop_portal" | "gnome_custom_shortcut" | "kde_kglobalaccel" | "hyprland_bind" | "electron_global_shortcut";
+    backend:
+      | "xdg_desktop_portal"
+      | "gnome_custom_shortcut"
+      | "kde_kglobalaccel"
+      | "hyprland_bind"
+      | "macos_event_tap"
+      | "electron_global_shortcut";
     pushToTalkRelease: boolean;
     registered: boolean;
     triggerDescription?: string;
@@ -385,18 +399,28 @@ export interface CapabilityReport {
   context: {
     backend: "desktop_metadata" | "clipboard_fallback";
     appMetadata: boolean;
-    focusedText: boolean;
     selectedText: boolean;
-    browserDomain: boolean;
     diagnostics: string[];
   };
+  automation: AutomationPermissionReport;
   paste: {
-    backend: "linux_native_helper" | "wtype" | "xdotool" | "ydotool" | "xdg_remote_desktop_keyboard" | "clipboard_only";
+    backend:
+      | "linux_native_helper"
+      | "macos_accessibility_helper"
+      | "wtype"
+      | "xdotool"
+      | "ydotool"
+      | "xdg_remote_desktop_keyboard"
+      | "clipboard_only";
     automationAvailable: boolean;
     permissionRequired: boolean;
     diagnostics: string[];
-    availableBackends?: Array<"linux_native_helper" | "wtype" | "xdotool" | "ydotool" | "xdg_remote_desktop_keyboard" | "clipboard_only">;
-    attemptedBackends?: Array<"linux_native_helper" | "wtype" | "xdotool" | "ydotool" | "xdg_remote_desktop_keyboard" | "clipboard_only">;
+    availableBackends?: Array<
+      "linux_native_helper" | "macos_accessibility_helper" | "wtype" | "xdotool" | "ydotool" | "xdg_remote_desktop_keyboard" | "clipboard_only"
+    >;
+    attemptedBackends?: Array<
+      "linux_native_helper" | "macos_accessibility_helper" | "wtype" | "xdotool" | "ydotool" | "xdg_remote_desktop_keyboard" | "clipboard_only"
+    >;
     missingTools?: string[];
     setupHints?: string[];
   };

@@ -55,6 +55,7 @@ const providers: Array<{ value: "all" | ModelProvider; label: string }> = [
   { value: "ollama", label: "Ollama" },
   { value: "lmstudio", label: "LM Studio" },
   { value: "openai", label: "OpenAI" },
+  { value: "openai_compatible", label: "OpenAI-compatible" },
   { value: "anthropic", label: "Anthropic" },
   { value: "google", label: "Google" }
 ];
@@ -70,6 +71,7 @@ const filters: Array<{ id: ModelFilter; label: string }> = [
 const accelerationItems: Array<{ value: SttAccelerationPreference; label: string }> = [
   { value: "auto", label: "Auto acceleration" },
   { value: "cpu", label: "CPU" },
+  { value: "apple", label: "Apple" },
   { value: "cuda", label: "CUDA" }
 ];
 
@@ -679,6 +681,11 @@ function modelGlyphStyle(provider: ModelProvider): CSSProperties {
       "--model-glyph-border": "#e0e0e0",
       "--model-glyph-icon": "#111111"
     } as CSSProperties,
+    openai_compatible: {
+      "--model-glyph-bg": "#ffffff",
+      "--model-glyph-border": "#e0e0e0",
+      "--model-glyph-icon": "#111111"
+    } as CSSProperties,
     anthropic: {
       "--model-glyph-bg": "#d97757",
       "--model-glyph-border": "#d97757",
@@ -734,7 +741,7 @@ const nvidiaLogoPath = [
 ].join(" ");
 
 function providerIcon(provider: ModelProvider): ProviderIcon | null {
-  if (provider === "openai" || provider === "whisper_cpp") return OpenAiMark;
+  if (provider === "openai" || provider === "openai_compatible" || provider === "whisper_cpp") return OpenAiMark;
   if (provider === "nvidia") return NvidiaMark;
   if (provider === "anthropic") return AnthropicMark;
   if (provider === "google") return GoogleMark;

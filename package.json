@@ -1,7 +1,7 @@
 {
   "name": "murmur",
   "version": "0.1.0",
-  "description": "System-wide AI dictation for Linux Wayland.",
+  "description": "System-wide AI dictation for Linux and macOS.",
   "author": {
     "name": "Kumar Aarav",
     "email": "kumaraarav@kumaraarav.dev"
@@ -28,9 +28,11 @@
     "runtimes:manifest-check": "node scripts/check-runtime-manifest.mjs",
     "runtimes:manifest-check:release": "node scripts/check-runtime-manifest.mjs --release",
     "linux-helper:build": "node scripts/build-linux-fast-paste.mjs",
+    "macos-helper:build": "node scripts/build-macos-helper.mjs",
+    "native-helpers:build": "npm run linux-helper:build && npm run macos-helper:build",
     "release:prepare": "node scripts/prepare-release.mjs",
-    "pack": "npm run build && npm run linux-helper:build && npm run runtimes:manifest-check && npm run runtimes:stage && electron-builder --dir",
-    "dist": "npm run build && npm run linux-helper:build && npm run runtimes:manifest-check && npm run runtimes:stage && electron-builder"
+    "pack": "npm run build && npm run native-helpers:build && npm run runtimes:manifest-check && npm run runtimes:stage && electron-builder --dir",
+    "dist": "npm run build && npm run native-helpers:build && npm run runtimes:manifest-check && npm run runtimes:stage && electron-builder"
   },
   "build": {
     "appId": "dev.kumaraarav.murmur",
@@ -48,6 +50,20 @@
         "rpm"
       ]
     },
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "minimumSystemVersion": "13.0",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Murmur records microphone audio only while dictation is active."
+      }
+    },
     "files": [
       "out/**",
       "package.json"
@@ -57,7 +73,8 @@
         "from": "resources/bin",
         "to": "bin",
         "filter": [
-          "linux-fast-paste"
+          "linux-fast-paste",
+          "murmur-macos-helper"
         ]
       },
       {

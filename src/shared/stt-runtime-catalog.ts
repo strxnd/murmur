@@ -24,12 +24,13 @@ export interface SttRuntimeCatalogEntry {
   variants?: Record<string, Partial<Record<SttRuntimeAccelerator, SttRuntimeAsset>>>;
 }
 
-export const supportedSttRuntimePlatformKeys = ["linux-x64"] as const;
-export const sttRuntimeAccelerators = ["cpu", "cuda"] as const satisfies SttRuntimeAccelerator[];
-export const sttGpuRuntimeReleaseVersion = "0.1.0";
-export const sttGpuRuntimeReleaseTag = `stt-runtimes-${sttGpuRuntimeReleaseVersion}`;
+export const supportedSttRuntimePlatformKeys = ["linux-x64", "darwin-arm64", "darwin-x64"] as const;
+export const sttRuntimeAccelerators = ["cpu", "cuda", "apple"] as const satisfies SttRuntimeAccelerator[];
+export const sttRuntimeReleaseVersion = "0.1.0";
+export const sttRuntimeReleaseTag = `stt-runtimes-${sttRuntimeReleaseVersion}`;
+export const sttGpuRuntimeReleaseVersion = sttRuntimeReleaseVersion;
 
-const sttGpuRuntimeReleaseBaseUrl = `https://github.com/strxnd/murmur/releases/download/${sttGpuRuntimeReleaseTag}`;
+const sttRuntimeReleaseBaseUrl = `https://github.com/strxnd/murmur/releases/download/${sttRuntimeReleaseTag}`;
 
 export const sttRuntimeCatalog: Record<SttRuntimeId, SttRuntimeCatalogEntry> = {
   "whisper.cpp": {
@@ -39,7 +40,8 @@ export const sttRuntimeCatalog: Record<SttRuntimeId, SttRuntimeCatalogEntry> = {
     envVar: "MURMUR_WHISPER_CPP_SERVER",
     acceleratorEnvVars: {
       cpu: "MURMUR_WHISPER_CPP_SERVER",
-      cuda: "MURMUR_WHISPER_CPP_CUDA_SERVER"
+      cuda: "MURMUR_WHISPER_CPP_CUDA_SERVER",
+      apple: "MURMUR_WHISPER_CPP_APPLE_SERVER"
     },
     upstreamVersion: "1.8.6",
     version: "0.1.0",
@@ -50,7 +52,9 @@ export const sttRuntimeCatalog: Record<SttRuntimeId, SttRuntimeCatalogEntry> = {
         "murmur-stt-runtime-whisper.cpp-1.8.6-linux-x64-0.1.0.tar.gz",
         3720870,
         "d59417162bbf89aaecbf6c348a385da67dd71fcdbb6cf62066a53ae49ea685b1"
-      )
+      ),
+      "darwin-arm64": runtimeAsset("murmur-stt-runtime-whisper.cpp-1.8.6-darwin-arm64-0.1.0.tar.gz"),
+      "darwin-x64": runtimeAsset("murmur-stt-runtime-whisper.cpp-1.8.6-darwin-x64-0.1.0.tar.gz")
     },
     variants: {
       "linux-x64": {
@@ -59,9 +63,20 @@ export const sttRuntimeCatalog: Record<SttRuntimeId, SttRuntimeCatalogEntry> = {
           430368535,
           "c91b1b9a97e8a95ee8689cf364fd3ad85d24b6101789b02e33bf547e560ec778",
           {
-            url: gpuRuntimeReleaseUrl("murmur-stt-runtime-whisper.cpp-1.8.6-linux-x64-cuda-0.1.0.tar.gz"),
+            url: runtimeReleaseUrl("murmur-stt-runtime-whisper.cpp-1.8.6-linux-x64-cuda-0.1.0.tar.gz"),
             abi: "CUDA",
             runtimeDir: "whisper.cpp-cuda"
+          }
+        )
+      },
+      "darwin-arm64": {
+        apple: runtimeAsset(
+          "murmur-stt-runtime-whisper.cpp-1.8.6-darwin-arm64-apple-0.1.0.tar.gz",
+          undefined,
+          undefined,
+          {
+            abi: "Metal",
+            runtimeDir: "whisper.cpp-apple"
           }
         )
       }
@@ -85,7 +100,9 @@ export const sttRuntimeCatalog: Record<SttRuntimeId, SttRuntimeCatalogEntry> = {
         "murmur-stt-runtime-sherpa-onnx-1.13.2-linux-x64-0.1.0.tar.gz",
         25574920,
         "563f226035c3905279ac01bf123f7b4f0faa1baa96cae7f2fece96f9e73530b1"
-      )
+      ),
+      "darwin-arm64": runtimeAsset("murmur-stt-runtime-sherpa-onnx-1.13.2-darwin-arm64-0.1.0.tar.gz"),
+      "darwin-x64": runtimeAsset("murmur-stt-runtime-sherpa-onnx-1.13.2-darwin-x64-0.1.0.tar.gz")
     },
     variants: {
       "linux-x64": {
@@ -94,7 +111,7 @@ export const sttRuntimeCatalog: Record<SttRuntimeId, SttRuntimeCatalogEntry> = {
           225775663,
           "41d0c216303b3e1de55924fc68df877e25f66590fdb3551d326cb531832ac745",
           {
-            url: gpuRuntimeReleaseUrl("murmur-stt-runtime-sherpa-onnx-1.13.2-linux-x64-cuda-0.1.0.tar.gz"),
+            url: runtimeReleaseUrl("murmur-stt-runtime-sherpa-onnx-1.13.2-linux-x64-cuda-0.1.0.tar.gz"),
             abi: "CUDA 12.x/cuDNN 9.x",
             runtimeDir: "sherpa-onnx-cuda"
           }
@@ -159,6 +176,7 @@ export function parseSttRuntimeVariantKey(value: string): {
 
 export function sttRuntimeVariantLabel(entry: SttRuntimeCatalogEntry, accelerator: SttRuntimeAccelerator): string {
   if (accelerator === "cpu") return entry.label;
+  if (accelerator === "apple") return `${entry.label} Apple`;
   return `${entry.label} ${accelerator.toUpperCase()}`;
 }
 
@@ -177,8 +195,8 @@ function runtimeAsset(assetName: string, sizeBytes?: number, sha256?: string, pa
   };
 }
 
-function gpuRuntimeReleaseUrl(assetName: string): string {
-  return `${sttGpuRuntimeReleaseBaseUrl}/${assetName}`;
+function runtimeReleaseUrl(assetName: string): string {
+  return `${sttRuntimeReleaseBaseUrl}/${assetName}`;
 }
 
 export function isSemverVersion(value: string): boolean {
@@ -190,5 +208,5 @@ function isSttRuntimeId(value: string): value is SttRuntimeId {
 }
 
 function isSttRuntimeAccelerator(value: string): value is SttRuntimeAccelerator {
-  return value === "cpu" || value === "cuda";
+  return value === "cpu" || value === "cuda" || value === "apple";
 }

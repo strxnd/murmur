@@ -13,7 +13,7 @@ const {
   getSttRuntimeSupportedAccelerators,
   getSttRuntimeVariantAsset,
   isSemverVersion,
-  sttGpuRuntimeReleaseVersion,
+  sttRuntimeReleaseVersion,
   sttRuntimeCatalog,
   supportedSttRuntimePlatformKeys
 } = await loadCatalog(catalogPath);
@@ -21,8 +21,8 @@ const {
 let failed = false;
 let releaseChecks = 0;
 
-if (!isSemverVersion(sttGpuRuntimeReleaseVersion)) {
-  failed = report(`STT GPU runtime release version must be SemVer: ${sttGpuRuntimeReleaseVersion}`);
+if (!isSemverVersion(sttRuntimeReleaseVersion)) {
+  failed = report(`STT runtime release version must be SemVer: ${sttRuntimeReleaseVersion}`);
 }
 
 for (const [runtimeId, runtime] of Object.entries(sttRuntimeCatalog)) {

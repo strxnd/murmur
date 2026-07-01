@@ -1,26 +1,41 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { cpus } from "node:os";
 import { join } from "node:path";
-import type { GpuProbeAdapterReport, SttGpuProbeReport } from "../../shared/types";
+import type { AccelerationProbeReport, GpuProbeAdapterReport } from "../../shared/types";
 
 const probeTimeoutMs = 1500;
 
-export class SttGpuProbeService {
-  getReport(): SttGpuProbeReport {
-    if (process.platform !== "linux") {
+export class SttAccelerationProbeService {
+  getReport(): AccelerationProbeReport {
+    if (process.platform === "linux") {
+      const nvidia = probeNvidia();
       return {
-        nvidia: emptyAdapter("NVIDIA probe is Linux-only."),
-        diagnostics: ["STT GPU acceleration is currently probed only on Linux."]
+        nvidia,
+        apple: emptyAdapter("Apple acceleration is macOS Apple Silicon-only."),
+        diagnostics: [
+          "Acceleration probe is advisory only; runtime launch and transcription success decide readiness.",
+          ...nvidia.diagnostics
+        ]
       };
     }
 
-    const nvidia = probeNvidia();
+    if (process.platform === "darwin") {
+      const apple = probeApple();
+      return {
+        nvidia: emptyAdapter("NVIDIA CUDA acceleration is Linux-only."),
+        apple,
+        diagnostics: [
+          "Acceleration probe is advisory only; runtime launch and transcription success decide readiness.",
+          ...apple.diagnostics
+        ]
+      };
+    }
+
     return {
-      nvidia,
-      diagnostics: [
-        "GPU probe is advisory only; runtime launch and transcription success decide readiness.",
-        ...nvidia.diagnostics
-      ]
+      nvidia: emptyAdapter("NVIDIA CUDA acceleration is Linux-only."),
+      apple: emptyAdapter("Apple acceleration is macOS Apple Silicon-only."),
+      diagnostics: ["Acceleration probing is unavailable on this platform."]
     };
   }
 }
@@ -43,6 +58,14 @@ function probeNvidia(): GpuProbeAdapterReport {
   const available = devices.length > 0 || existsSync("/dev/nvidiactl");
   if (!available) diagnostics.push("No NVIDIA CUDA-capable device was detected.");
   return { available, devices, diagnostics };
+}
+
+function probeApple(): GpuProbeAdapterReport {
+  if (process.arch !== "arm64") {
+    return emptyAdapter("Apple acceleration requires Apple Silicon.");
+  }
+  const devices = [`Apple Silicon (${cpus()[0]?.model ?? "arm64"})`];
+  return { available: true, devices, diagnostics: ["Apple Silicon detected."] };
 }
 
 function emptyAdapter(message: string): GpuProbeAdapterReport {

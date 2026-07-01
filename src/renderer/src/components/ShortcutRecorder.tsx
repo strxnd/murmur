@@ -138,26 +138,29 @@ export function ShortcutRecorder({
 
 function shortcutDisplayParts(shortcut: string): string[] {
   if (!shortcut) return [];
+  const isMac = /mac|iphone|ipad|ipod/i.test(globalThis.navigator?.platform ?? "");
 
   return shortcut.split("+").flatMap((part, index) => {
     const label = shortcutPartLabel(part);
-    return index === 0 ? [label] : ["+", label];
+    if (index === 0 || isMac) return [label];
+    return ["+", label];
   });
 }
 
 function shortcutPartLabel(part: string): string {
   const isMac = /mac|iphone|ipad|ipod/i.test(globalThis.navigator?.platform ?? "");
   const labels: Record<string, string> = {
-    Alt: "Alt",
+    Alt: isMac ? "⌥" : "Alt",
     AltGr: "AltGr",
-    Command: "Cmd",
-    CommandOrControl: isMac ? "Cmd" : "Ctrl",
-    Control: "Ctrl",
+    Command: isMac ? "⌘" : "Cmd",
+    CommandOrControl: isMac ? "⌘" : "Ctrl",
+    Control: isMac ? "⌃" : "Ctrl",
     Escape: "Esc",
-    Option: "Opt",
+    Option: isMac ? "⌥" : "Opt",
     Return: "Enter",
     Space: "Space",
-    Super: "Super"
+    Shift: isMac ? "⇧" : "Shift",
+    Super: isMac ? "⌘" : "Super"
   };
 
   return labels[part] ?? part;

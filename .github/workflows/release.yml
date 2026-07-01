@@ -9,18 +9,12 @@ permissions:
   contents: write
 
 jobs:
-  draft-linux-release:
-    name: Draft Linux release
+  validate:
+    name: Validate release
     runs-on: ubuntu-24.04
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install system packaging dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes build-essential cmake rpm
 
       - name: Install mise toolchain
         uses: jdx/mise-action@v2
@@ -65,18 +59,83 @@ jobs:
       - name: Check runtime release URLs
         run: mise run runtimes:manifest-check:release
 
+  build:
+    name: Build ${{ matrix.name }}
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            runner: ubuntu-24.04
+            artifact: linux-artifacts
+          - name: macos-x64
+            runner: macos-15-intel
+            artifact: macos-x64-artifacts
+          - name: macos-arm64
+            runner: macos-15
+            artifact: macos-arm64-artifacts
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux packaging dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential cmake rpm
+
+      - name: Install mise toolchain
+        uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Prepare STT runtimes
         run: |
           mise run runtimes:prepare
           mise run runtimes:doctor
 
-      - name: Build Linux artifacts
+      - name: Build artifacts
         run: mise run dist
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
+            dist/*.dmg
+            dist/*.zip
+            dist/latest-*.yml
+          if-no-files-found: error
+
+  draft-release:
+    name: Draft GitHub release
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-artifacts"
+          path: dist
+          merge-multiple: true
 
       - name: Generate and verify checksums
         run: |
           node scripts/generate-linux-release-checksums.mjs
-          (cd dist && sha256sum -c SHA256SUMS-linux.txt)
+          (cd dist && sha256sum -c SHA256SUMS.txt)
 
       - name: Create draft GitHub release
         env:
@@ -88,8 +147,10 @@ jobs:
             dist/*.AppImage
             dist/*.deb
             dist/*.rpm
-            dist/latest-linux.yml
-            dist/SHA256SUMS-linux.txt
+            dist/*.dmg
+            dist/*.zip
+            dist/latest-*.yml
+            dist/SHA256SUMS.txt
           )
 
           gh release create "$tag" "${artifacts[@]}" \

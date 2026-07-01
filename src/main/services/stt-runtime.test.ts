@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import { SttRuntimeService } from "./stt-runtime";
 import { sttRuntimeCatalog } from "../../shared/stt-runtime-catalog";
@@ -503,18 +504,7 @@ function sha256(value: string | Buffer): string {
 }
 
 function unsafeTarGz(): Buffer {
-  const root = tempRoot();
-  const sourceDir = join(root, "archive-src");
-  const archivePath = join(root, "unsafe.tar.gz");
-  mkdirSync(sourceDir, { recursive: true });
-  writeFileSync(join(sourceDir, "payload.txt"), "payload");
-  const result = spawnSync("tar", ["-czf", archivePath, "--transform=s|payload.txt|../payload.txt|", "-C", sourceDir, "payload.txt"], {
-    encoding: "utf8"
-  });
-  if (result.status !== 0) {
-    throw new Error(`Could not create unsafe tar fixture: ${result.stderr}`);
-  }
-  return readFileSync(archivePath);
+  return gzipSync(tarWithSingleFile("../payload.txt", "payload"));
 }
 
 function safeTarGz(): Buffer {
@@ -530,6 +520,31 @@ function safeTarGz(): Buffer {
     throw new Error(`Could not create safe tar fixture: ${result.stderr}`);
   }
   return readFileSync(archivePath);
+}
+
+function tarWithSingleFile(name: string, contents: string): Buffer {
+  const body = Buffer.from(contents);
+  const header = Buffer.alloc(512, 0);
+  header.write(name, 0, Math.min(Buffer.byteLength(name), 100), "utf8");
+  writeTarOctal(header, 100, 8, 0o644);
+  writeTarOctal(header, 108, 8, 0);
+  writeTarOctal(header, 116, 8, 0);
+  writeTarOctal(header, 124, 12, body.length);
+  writeTarOctal(header, 136, 12, 0);
+  header.fill(0x20, 148, 156);
+  header.write("0", 156, "ascii");
+  header.write("ustar", 257, "ascii");
+  header.write("00", 263, "ascii");
+  const checksum = header.reduce((total, byte) => total + byte, 0);
+  writeTarOctal(header, 148, 8, checksum);
+  const padding = Buffer.alloc((512 - (body.length % 512)) % 512, 0);
+  return Buffer.concat([header, body, padding, Buffer.alloc(1024, 0)]);
+}
+
+function writeTarOctal(header: Buffer, offset: number, length: number, value: number): void {
+  const text = value.toString(8).padStart(length - 1, "0");
+  header.write(text.slice(-length + 1), offset, length - 1, "ascii");
+  header[offset + length - 1] = 0;
 }
 
 function arrayBufferFromBuffer(buffer: Buffer): ArrayBuffer {

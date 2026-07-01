@@ -23,6 +23,7 @@ import type {
   ModelKind,
   ModelDownloadState,
   ModelLibrarySnapshot,
+  ModelProvider,
   ModeConfig,
   ModeIconKey,
   ReleaseNote,
@@ -53,11 +54,25 @@ type LegacyModeConfig = Omit<Partial<ModeConfig>, "kind"> & {
   presetId?: string;
 };
 
-interface LegacySettings extends Partial<AppSettings> {
+type LegacySettings = Partial<Omit<AppSettings, "selectedTextCapture">> & {
   toggleHotkey?: string;
   pushToTalkHotkey?: string;
   cancelHotkey?: string;
-}
+  gpuRuntimeInstallPromptDismissedAt?: string;
+  pasteMethod?: "clipboard_restore" | "clipboard_only";
+  selectedTextCapture?: "disabled" | "enabled" | "clipboard_restore";
+};
+
+type LegacyAutoModeRule = Omit<AutoModeRule, "match"> & {
+  match?: AutoModeRule["match"] & {
+    domain?: string;
+    domainWildcard?: string;
+  };
+};
+
+type LegacyDictationHistoryItem = DictationHistoryItem & {
+  browserDomain?: string;
+};
 
 const removedSoundVolumeSettingKey = ["auto", "Increase", "Mic", "Volume"].join("");
 const require = createRequire(import.meta.url);
@@ -77,13 +92,11 @@ const builtInModeIds = new Set(builtInModeDefaults.map((mode) => mode.id));
 const removedReleaseNoteIds = new Set(["initial-prototype"]);
 const activationModes = new Set<ActivationMode>(["toggle", "push_to_talk"]);
 const recordingPillPositions = new Set<RecordingPillPosition>(["bottom_left", "bottom_center", "bottom_right"]);
-const sttAccelerationPreferences = new Set<AppSettings["sttAccelerationPreference"]>(["auto", "cpu", "cuda"]);
+const sttAccelerationPreferences = new Set<AppSettings["sttAccelerationPreference"]>(["auto", "cpu", "cuda", "apple"]);
 const appSettingKeys = [
   "theme",
   "textRetentionDays",
-  "shareContextWithCloudLlm",
   "selectedTextCapture",
-  "pasteMethod",
   "activeModeId",
   "activationMode",
   "activationHotkey",
@@ -93,7 +106,7 @@ const appSettingKeys = [
   "typingBaselineWpm",
   "sttAccelerationPreference",
   "trayCloseNoticeShownAt",
-  "gpuRuntimeInstallPromptDismissedAt",
+  "accelerationRuntimeInstallPromptDismissedAt",
   "sttSetupSkippedAt",
   "sttSetupCompletedAt",
   "onboardingSkippedAt",
@@ -159,7 +172,7 @@ export class StorageService {
       llmProviders: this.redactLlmProviderSecrets(this.normalizeLlmProviders(state.llmProviders)),
       autoModeRules: this.normalizeAutoModeRules(state.autoModeRules ?? defaultAutoModeRules, modes),
       vocabulary: state.vocabulary ?? [],
-      history: state.history ?? [],
+      history: this.normalizeHistory(state.history),
       modelLibrary: this.normalizeModelLibrary(state.modelLibrary),
       releaseNotes: this.normalizeReleaseNotes(state.releaseNotes)
     };
@@ -567,16 +580,17 @@ export class StorageService {
       recordingPillPosition: recordingPillPositions.has(currentSettings.recordingPillPosition as RecordingPillPosition)
         ? (currentSettings.recordingPillPosition as RecordingPillPosition)
         : defaultSettings.recordingPillPosition,
-      selectedTextCapture: currentSettings.selectedTextCapture === "disabled" ? "disabled" : "clipboard_restore",
-      pasteMethod: "clipboard_restore",
+      selectedTextCapture: currentSettings.selectedTextCapture === "disabled" ? "disabled" : "enabled",
       sttAccelerationPreference: sttAccelerationPreferences.has(currentSettings.sttAccelerationPreference as AppSettings["sttAccelerationPreference"])
         ? (currentSettings.sttAccelerationPreference as AppSettings["sttAccelerationPreference"])
         : defaultSettings.sttAccelerationPreference,
       trayCloseNoticeShownAt:
         typeof currentSettings.trayCloseNoticeShownAt === "string" ? currentSettings.trayCloseNoticeShownAt : undefined,
-      gpuRuntimeInstallPromptDismissedAt:
-        typeof currentSettings.gpuRuntimeInstallPromptDismissedAt === "string"
-          ? currentSettings.gpuRuntimeInstallPromptDismissedAt
+      accelerationRuntimeInstallPromptDismissedAt:
+        typeof currentSettings.accelerationRuntimeInstallPromptDismissedAt === "string"
+          ? currentSettings.accelerationRuntimeInstallPromptDismissedAt
+          : typeof legacySettings.gpuRuntimeInstallPromptDismissedAt === "string"
+            ? legacySettings.gpuRuntimeInstallPromptDismissedAt
           : undefined
     };
     const modeIds = new Set(modes.map((mode) => mode.id));
@@ -642,11 +656,20 @@ export class StorageService {
     };
   }
 
-  private normalizeAutoModeRules(rules: AutoModeRule[], modes: ModeConfig[]): AutoModeRule[] {
+  private normalizeAutoModeRules(rules: LegacyAutoModeRule[], modes: ModeConfig[]): AutoModeRule[] {
     const modeIds = new Set(modes.map((mode) => mode.id));
     return rules
-      .map((rule) => ({ ...rule, modeId: legacyModeIdMap.get(rule.modeId) ?? rule.modeId }))
-      .filter((rule) => !removedLegacyModeIds.has(rule.modeId) && modeIds.has(rule.modeId));
+      .map((rule) => ({
+        ...rule,
+        modeId: legacyModeIdMap.get(rule.modeId) ?? rule.modeId,
+        match: {
+          appId: rule.match?.appId,
+          appName: rule.match?.appName,
+          windowTitleIncludes: rule.match?.windowTitleIncludes
+        }
+      }))
+      .filter((rule) => !removedLegacyModeIds.has(rule.modeId) && modeIds.has(rule.modeId))
+      .filter((rule) => Boolean(rule.match.appId || rule.match.appName || rule.match.windowTitleIncludes));
   }
 
   private normalizeModeIconKey(mode: LegacyModeConfig | undefined, fallback: ModeIconKey): ModeIconKey {
@@ -739,6 +762,39 @@ export class StorageService {
         })),
       activeModelIds
     };
+  }
+
+  private normalizeHistory(history: LegacyDictationHistoryItem[] | undefined): DictationHistoryItem[] {
+    return (history ?? []).map((item) => {
+      const normalized: DictationHistoryItem = {
+        id: item.id,
+        audioPath: item.audioPath,
+        rawTranscript: item.rawTranscript,
+        processedOutput: item.processedOutput,
+        modeId: item.modeId,
+        modeName: item.modeName,
+        transcriptionProviderId: item.transcriptionProviderId,
+        transcriptionProviderType: item.transcriptionProviderType,
+        transcriptionModel: item.transcriptionModel,
+        transcriptionProviderCloud: item.transcriptionProviderCloud,
+        transcriptionStreamingMode: item.transcriptionStreamingMode,
+        transcriptionAccelerator: item.transcriptionAccelerator,
+        llmProviderId: item.llmProviderId,
+        llmProviderType: item.llmProviderType,
+        llmModel: item.llmModel,
+        llmProviderCloud: item.llmProviderCloud,
+        appName: item.appName,
+        appId: item.appId,
+        windowTitle: item.windowTitle,
+        createdAt: item.createdAt,
+        recordingStartedAt: item.recordingStartedAt,
+        recordingStoppedAt: item.recordingStoppedAt,
+        recordingDurationMs: item.recordingDurationMs,
+        rawWordCount: item.rawWordCount,
+        processedWordCount: item.processedWordCount
+      };
+      return normalized;
+    });
   }
 
   private normalizeReleaseNotes(releaseNotes: ReleaseNote[] | undefined): ReleaseNote[] {
@@ -869,6 +925,16 @@ const llmProviderTypes = new Set<LlmProviderType>([
   "google",
   "custom_openai_compatible"
 ]);
+const modelProviders = new Set<ModelProvider>([
+  "whisper_cpp",
+  "nvidia",
+  "ollama",
+  "lmstudio",
+  "openai",
+  "openai_compatible",
+  "anthropic",
+  "google"
+]);
 const removedLlmProviderIds = new Set(["openrouter", "groq"]);
 const removedLlmProviderTypes = new Set(["openrouter", "groq"]);
 const removedLlmProviderNames = new Set(["openrouter", "groq"]);
@@ -925,6 +991,7 @@ function normalizeLlmProvider(
   const type = llmProviderTypes.has(source.type as LlmProviderType)
     ? (source.type as LlmProviderType)
     : (defaultProvider?.type ?? "custom_openai_compatible");
+  const isOpenAiCompatible = type === "custom_openai_compatible";
 
   return {
     id: isNonEmptyString(source.id) ? source.id : (defaultProvider?.id ?? "custom-llm"),
@@ -934,7 +1001,8 @@ function normalizeLlmProvider(
     apiKeySecretId: isNonEmptyString(source.apiKeySecretId) ? source.apiKeySecretId : defaultProvider?.apiKeySecretId,
     apiKey: typeof source.apiKey === "string" ? source.apiKey : defaultProvider?.apiKey,
     isCloud: typeof source.isCloud === "boolean" ? source.isCloud : Boolean(defaultProvider?.isCloud),
-    defaultModel: isNonEmptyString(source.defaultModel) ? source.defaultModel : defaultProvider?.defaultModel,
+    defaultModel: isOpenAiCompatible ? undefined : isNonEmptyString(source.defaultModel) ? source.defaultModel : defaultProvider?.defaultModel,
+    models: isOpenAiCompatible ? normalizeProviderModelIds([source.models, source.defaultModel]) : undefined,
     enabled: typeof source.enabled === "boolean" ? source.enabled : Boolean(defaultProvider?.enabled)
   };
 }
@@ -974,21 +1042,24 @@ function normalizedModelCatalog(catalog: Array<Partial<ModelCatalogItem>> | unde
 }
 
 function normalizeDiscoveredModelCatalogItem(item: Partial<ModelCatalogItem>): ModelCatalogItem | null {
-  if (!isNonEmptyString(item.id) || item.kind !== "language" || !isDiscoveryProvider(item.provider)) return null;
+  const provider = item.provider;
+  if (!isNonEmptyString(item.id) || item.kind !== "language" || !isDynamicModelProvider(provider)) return null;
   const discovery = item.discovery;
   if (!discovery || !isNonEmptyString(discovery.providerId)) return null;
   const model = item.defaultProviderConfig?.model;
+  const llmProviderType = item.defaultProviderConfig?.llmProviderType;
   if (!isNonEmptyString(model)) return null;
+  if (!llmProviderType || !llmProviderTypes.has(llmProviderType)) return null;
 
   return {
     id: item.id,
     name: isNonEmptyString(item.name) ? item.name : model,
     kind: "language",
-    provider: item.provider,
-    description: isNonEmptyString(item.description) ? item.description : `${providerDisplayName(item.provider)} local language model.`,
-    isCloud: false,
-    isOffline: true,
-    tags: normalizeTags(item.tags, ["llm", "local", item.provider, "discovered"]),
+    provider,
+    description: isNonEmptyString(item.description) ? item.description : `${providerDisplayName(provider)} language model.`,
+    isCloud: Boolean(item.isCloud),
+    isOffline: Boolean(item.isOffline),
+    tags: normalizeTags(item.tags, ["llm", "local", provider, "discovered"]),
     downloadStrategy: "none",
     discovery: {
       providerId: discovery.providerId,
@@ -997,14 +1068,18 @@ function normalizeDiscoveredModelCatalogItem(item: Partial<ModelCatalogItem>): M
       message: isNonEmptyString(discovery.message) ? discovery.message : undefined
     },
     defaultProviderConfig: {
-      llmProviderType: item.provider,
+      providerId: isNonEmptyString(item.defaultProviderConfig?.providerId)
+        ? item.defaultProviderConfig.providerId
+        : discovery.providerId,
+      llmProviderType,
+      baseUrl: isNonEmptyString(item.defaultProviderConfig?.baseUrl) ? item.defaultProviderConfig.baseUrl : undefined,
       model
     }
   };
 }
 
-function isDiscoveryProvider(provider: unknown): provider is "ollama" | "lmstudio" {
-  return provider === "ollama" || provider === "lmstudio";
+function isDynamicModelProvider(provider: unknown): provider is ModelProvider {
+  return typeof provider === "string" && modelProviders.has(provider as ModelProvider);
 }
 
 function normalizeTags(tags: unknown, fallback: string[]): string[] {
@@ -1012,8 +1087,27 @@ function normalizeTags(tags: unknown, fallback: string[]): string[] {
   return normalized.length > 0 ? normalized : fallback;
 }
 
-function providerDisplayName(provider: "ollama" | "lmstudio"): string {
-  return provider === "ollama" ? "Ollama" : "LM Studio";
+function providerDisplayName(provider: ModelProvider): string {
+  if (provider === "ollama") return "Ollama";
+  if (provider === "lmstudio") return "LM Studio";
+  if (provider === "openai_compatible") return "OpenAI-compatible";
+  return provider;
+}
+
+function normalizeProviderModelIds(values: unknown[]): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const value of values) {
+    const models = Array.isArray(value) ? value : [value];
+    for (const model of models) {
+      if (!isNonEmptyString(model)) continue;
+      const trimmed = model.trim();
+      if (seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      normalized.push(trimmed);
+    }
+  }
+  return normalized;
 }
 
 function normalizeExamples(examples: unknown): ModeConfig["examples"] {

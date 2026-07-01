@@ -96,6 +96,7 @@ function providerLabel(provider: ModelCatalogItem["provider"]): string {
     ollama: "Ollama",
     lmstudio: "LM Studio",
     openai: "OpenAI",
+    openai_compatible: "OpenAI-compatible",
     anthropic: "Anthropic",
     google: "Google"
   };

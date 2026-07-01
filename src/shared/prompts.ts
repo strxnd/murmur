@@ -26,8 +26,6 @@ export function buildProcessingPrompt(options: {
   const contextLines = [
     mode.context.app && context.appName ? `Active app: ${context.appName}` : "",
     mode.context.app && context.windowTitle ? `Window title: ${context.windowTitle}` : "",
-    mode.context.app && context.browserDomain ? `Browser domain: ${context.browserDomain}` : "",
-    mode.context.app && context.focusedText ? `Focused field/editor text:\n${clip(context.focusedText, 4000)}` : "",
     mode.context.selectedText && context.selectedText ? `Selected text:\n${clip(context.selectedText, 4000)}` : "",
     mode.context.clipboardText && context.clipboardText ? `Recent clipboard text:\n${clip(context.clipboardText, 2500)}` : ""
   ].filter(Boolean);
@@ -55,19 +53,6 @@ export function buildProcessingPrompt(options: {
   ]
     .filter(Boolean)
     .join("\n\n");
-}
-
-export function contextForLlmPrompt(
-  context: ContextSnapshot,
-  options: { providerIsCloud: boolean; shareContextWithCloudLlm: boolean }
-): ContextSnapshot {
-  if (!options.providerIsCloud || options.shareContextWithCloudLlm) return context;
-
-  return {
-    capturedAt: context.capturedAt,
-    sourceQuality: "unavailable",
-    diagnostics: [...context.diagnostics, "Cloud LLM context sharing is disabled."]
-  };
 }
 
 function clip(value: string, max: number): string {

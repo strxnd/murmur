@@ -67,6 +67,7 @@ audio/
 vendor/runtimes/
 .plans/
 resources/bin/linux-fast-paste
+resources/bin/murmur-macos-helper
 
 # Local Codex artifacts
 .codex/audits/

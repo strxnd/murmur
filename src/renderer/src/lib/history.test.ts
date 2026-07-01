@@ -12,7 +12,7 @@ describe("history helpers", () => {
   it("indexes searchable history fields case-insensitively", () => {
     const indexed = indexHistoryForSearch([
       historyItem({ id: "one", rawTranscript: "Call Alice", appName: "Slack" }),
-      historyItem({ id: "two", processedOutput: "Ship the release", browserDomain: "github.com" })
+      historyItem({ id: "two", processedOutput: "Ship the release", appName: "GitHub Desktop" })
     ]);
 
     expect(filterIndexedHistoryItems(indexed, "alice").map((item) => item.id)).toEqual(["one"]);

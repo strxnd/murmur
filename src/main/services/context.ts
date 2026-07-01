@@ -44,15 +44,11 @@ export class ContextService {
 
   getCapabilityFlags(): {
     appMetadata: boolean;
-    focusedText: boolean;
     selectedText: boolean;
-    browserDomain: boolean;
   } {
     return {
       appMetadata: this.metadata.hasAppMetadataProvider(),
-      focusedText: false,
-      selectedText: this.textAutomation.getCapability().automationAvailable,
-      browserDomain: false
+      selectedText: this.textAutomation.getCapability().automationAvailable
     };
   }
 
@@ -61,8 +57,14 @@ export class ContextService {
     const activeWindow = await this.metadata.capture(diagnostics);
     let selectedText: string | undefined;
 
-    if ((options.selectedText ?? true) && this.textAutomation.getCapability().automationAvailable) {
-      selectedText = await this.captureSelectionViaClipboard(diagnostics);
+    const textAutomationCapability = this.textAutomation.getCapability();
+    if ((options.selectedText ?? true) && textAutomationCapability.automationAvailable) {
+      if (textAutomationCapability.backend === "macos_accessibility_helper") {
+        selectedText = await this.captureSelectionViaAccessibility(diagnostics);
+        selectedText ??= await this.captureSelectionViaClipboard(diagnostics);
+      } else {
+        selectedText = await this.captureSelectionViaClipboard(diagnostics);
+      }
     }
 
     const now = Date.now();
@@ -72,9 +74,7 @@ export class ContextService {
         ? currentClipboard
         : undefined;
 
-    const hasAppMetadata = Boolean(
-      activeWindow.appName || activeWindow.appId || activeWindow.windowTitle || activeWindow.browserDomain || activeWindow.browserUrl
-    );
+    const hasAppMetadata = Boolean(activeWindow.appName || activeWindow.appId || activeWindow.windowTitle);
     const quality =
       hasAppMetadata && selectedText
         ? "full"
@@ -143,6 +143,15 @@ export class ContextService {
         restoreClipboardSnapshot(original);
       }
     });
+  }
+
+  private async captureSelectionViaAccessibility(diagnostics: string[]): Promise<string | undefined> {
+    const result = await this.textAutomation.readSelectedText();
+    if (!result.success) {
+      diagnostics.push(result.message);
+      return undefined;
+    }
+    return result.text;
   }
 
   private async pollClipboardChange(sentinel: string): Promise<string | undefined> {

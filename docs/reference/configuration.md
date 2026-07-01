@@ -28,14 +28,13 @@ interface AppStateSnapshot {
 Important settings:
 
 - `theme`: `system`, `light`, or `dark`.
-- `selectedTextCapture`: `disabled` or `clipboard_restore`.
-- `pasteMethod`: currently normalized to `clipboard_restore`.
+- `selectedTextCapture`: `disabled` or `enabled`.
 - `activationMode`: `toggle` or `push_to_talk`.
 - `activationHotkey`: Electron accelerator string.
 - `modeSelectorHotkey`: Electron accelerator string for the centered mode selector overlay.
 - `recordingPillPosition`: `bottom_left`, `bottom_center`, or `bottom_right`.
-- `sttAccelerationPreference`: `auto`, `cpu`, or `cuda` for Murmur-managed local STT runtimes only.
-- `gpuRuntimeInstallPromptDismissedAt`: timestamp recorded when the first-entry GPU runtime install prompt is dismissed.
+- `sttAccelerationPreference`: `auto`, `cpu`, `cuda`, or `apple` for Murmur-managed local STT runtimes only.
+- `accelerationRuntimeInstallPromptDismissedAt`: timestamp recorded when the first-entry accelerated runtime install prompt is dismissed.
 
 ## Modes
 
@@ -76,7 +75,7 @@ LLM provider types:
 
 ## Rules and Vocabulary
 
-`AutoModeRule` matches on domain, domain wildcard, app id, app name, or window title text. Enabled rules are sorted by descending priority.
+`AutoModeRule` matches on app id, app name, or window title text. Enabled rules are sorted by descending priority.
 
 `VocabularyEntry` contributes domain terms and pronunciations to the vocabulary prompt when enabled.
 
@@ -88,4 +87,4 @@ LLM provider types:
 
 ## Capabilities
 
-`CapabilityReport` describes detected runtime variants, advisory STT GPU probe output, hotkey, context, paste, and storage capabilities. It is computed at snapshot time and is not stored directly in config.
+`CapabilityReport` describes detected runtime variants, advisory STT acceleration probe output, hotkey, automation permission, context, paste, and storage capabilities. It is computed at snapshot time and is not stored directly in config.

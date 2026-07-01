@@ -11,9 +11,9 @@ describe("IPC payload schemas", () => {
     expect(result.success).toBe(false);
   });
 
-  it("accepts the GPU runtime prompt dismissal setting", () => {
+  it("accepts the acceleration runtime prompt dismissal setting", () => {
     const result = settingsUpdatePayloadSchema.safeParse({
-      gpuRuntimeInstallPromptDismissedAt: "2026-06-29T00:00:00.000Z"
+      accelerationRuntimeInstallPromptDismissedAt: "2026-06-29T00:00:00.000Z"
     });
 
     expect(result.success).toBe(true);

@@ -1,20 +1,36 @@
-import { app, globalShortcut, Menu } from "./electron-api";
+import { app, dialog, globalShortcut, Menu } from "./electron-api";
 import { AppController } from "./app-controller";
+import { isSupportedPlatform, unsupportedPlatformMessage } from "./services/platform-support";
 
-if (process.platform === "linux") {
+if (!isSupportedPlatform(process.platform)) {
+  const message = unsupportedPlatformMessage(process.platform);
+  app.whenReady()
+    .then(() => {
+      dialog.showErrorBox("Unsupported platform", message);
+      app.quit();
+    })
+    .catch(() => app.quit());
+} else if (process.platform === "linux") {
   const linuxApp = app as typeof app & { setDesktopName?: (desktopName: string) => void };
   linuxApp.setDesktopName?.("dev.murmur.app.desktop");
-}
 
-Menu.setApplicationMenu(null);
+  startApp();
+} else {
+  startApp();
+}
 
 let controller: AppController | null = null;
 let controllerInitialization: Promise<AppController> | null = null;
 
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
-  app.quit();
-} else {
+function startApp(): void {
+  Menu.setApplicationMenu(null);
+
+  const gotLock = app.requestSingleInstanceLock();
+  if (!gotLock) {
+    app.quit();
+    return;
+  }
+
   app.on("second-instance", () => {
     showControllerWindow();
   });

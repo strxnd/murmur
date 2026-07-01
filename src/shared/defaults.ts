@@ -13,12 +13,10 @@ import { modelCatalog } from "./model-catalog";
 export const defaultSettings: AppSettings = {
   theme: "dark",
   textRetentionDays: 90,
-  shareContextWithCloudLlm: false,
-  selectedTextCapture: "clipboard_restore",
-  pasteMethod: "clipboard_restore",
+  selectedTextCapture: "enabled",
   activeModeId: "default",
   activationMode: "toggle",
-  activationHotkey: "CommandOrControl+Alt+Space",
+  activationHotkey: "Alt+Space",
   modeSelectorHotkey: "Alt+Shift+K",
   recordingPillPosition: "bottom_center",
   typingBaselineWpm: 40,
@@ -44,7 +42,7 @@ export const defaultModes: ModeConfig[] = [
     name: "Default",
     aiEnabled: true,
     instructionPrompt:
-      "Use application, selected text, focused field, and clipboard context to produce text that fits the user's current task. If the transcript is a command about selected text, transform only that selected text. Otherwise, produce polished dictation for the active app.",
+      "Use application, selected text, and clipboard context to produce text that fits the user's current task. If the transcript is a command about selected text, transform only that selected text. Otherwise, produce polished dictation for the active app.",
     examples: [],
     language: "auto",
     context: { app: true, selectedText: true, clipboardText: true }

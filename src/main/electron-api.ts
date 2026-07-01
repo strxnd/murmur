@@ -12,3 +12,5 @@ export const Notification = electronApi.Notification;
 export const screen = electronApi.screen;
 export const safeStorage = electronApi.safeStorage;
 export const Tray = electronApi.Tray;
+export const dialog = electronApi.dialog;
+export const systemPreferences = electronApi.systemPreferences;

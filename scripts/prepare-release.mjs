@@ -39,7 +39,7 @@ async function main() {
   await checkGitStatus(initialGitStatus);
 
   const runDist = await chooseStep({
-    label: "Build Linux app artifacts with npm run dist",
+    label: "Build current-platform app artifacts with npm run dist",
     skip: options.skipDist
   });
   const runRuntimePackage = await chooseStep({
@@ -47,7 +47,7 @@ async function main() {
     skip: options.skipRuntimePackage
   });
   const runChecksums = await chooseStep({
-    label: "Generate and verify dist/SHA256SUMS-linux.txt",
+    label: "Generate and verify dist/SHA256SUMS.txt",
     skip: options.skipChecksums,
     enabled: runDist || runRuntimePackage
   });
@@ -155,7 +155,7 @@ Default preparation:
   - prepare and verify current-platform STT runtimes
   - build app artifacts with npm run dist
   - package current-platform runtime archives into dist/runtimes
-  - generate and verify dist/SHA256SUMS-linux.txt
+  - generate and verify dist/SHA256SUMS.txt
 
 Options:
   -y, --yes                         run non-interactively with defaults
@@ -263,7 +263,7 @@ function buildSteps({ runDist, runRuntimePackage, runChecksums }) {
   steps.push(commandStep("Verify current-platform STT runtimes", "npm", ["run", "runtimes:doctor"]));
 
   if (runDist) {
-    steps.push(commandStep("Build Linux app artifacts", "npm", ["run", "dist"]));
+    steps.push(commandStep("Build current-platform app artifacts", "npm", ["run", "dist"]));
   }
 
   if (runRuntimePackage) {
@@ -271,8 +271,8 @@ function buildSteps({ runDist, runRuntimePackage, runChecksums }) {
   }
 
   if (runChecksums) {
-    steps.push(commandStep("Generate Linux SHA-256 checksums", "node", ["scripts/generate-linux-release-checksums.mjs"]));
-    steps.push(commandStep("Verify Linux SHA-256 checksums", "sha256sum", ["-c", "SHA256SUMS-linux.txt"], join(repoRoot, "dist")));
+    steps.push(commandStep("Generate SHA-256 checksums", "node", ["scripts/generate-linux-release-checksums.mjs"]));
+    steps.push(commandStep("Verify SHA-256 checksums", "sha256sum", ["-c", "SHA256SUMS.txt"], join(repoRoot, "dist")));
   }
 
   return steps;
@@ -411,9 +411,9 @@ async function findReleaseArtifacts(root) {
 }
 
 function isReleaseArtifact(path) {
-  if (/^[^/]+\.(AppImage|deb|rpm)$/.test(path)) return true;
-  if (path === "latest-linux.yml") return true;
-  if (path === "SHA256SUMS-linux.txt") return true;
+  if (/^[^/]+\.(AppImage|deb|rpm|dmg|zip)$/.test(path)) return true;
+  if (/^latest-.*\.yml$/.test(path)) return true;
+  if (path === "SHA256SUMS.txt") return true;
   return /^runtimes\/[^/]+\.tar\.gz$/.test(path);
 }
 

@@ -9,7 +9,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
 const options = readOptions(process.argv.slice(2));
 const distDir = resolve(repoRoot, options.distDir);
-const outputPath = resolve(repoRoot, options.outputPath ?? join(options.distDir, "SHA256SUMS-linux.txt"));
+const outputPath = resolve(repoRoot, options.outputPath ?? join(options.distDir, "SHA256SUMS.txt"));
 const outputRelativePath = toPosixPath(relative(distDir, outputPath));
 
 const artifacts = (await findArtifacts(distDir))
@@ -17,7 +17,7 @@ const artifacts = (await findArtifacts(distDir))
   .sort((a, b) => compareStrings(a.relativePath, b.relativePath));
 
 if (artifacts.length === 0) {
-  console.error(`No Linux release artifacts found in ${toDisplayPath(distDir)}.`);
+  console.error(`No release artifacts found in ${toDisplayPath(distDir)}.`);
   console.error("Run `mise run dist` first, then generate checksums from the populated dist/ directory.");
   process.exitCode = 1;
 } else {
@@ -65,13 +65,13 @@ function readValue(args, index, name) {
 }
 
 function printHelp() {
-  console.log(`Usage: node scripts/generate-linux-release-checksums.mjs [--dist dist] [--output dist/SHA256SUMS-linux.txt]
+  console.log(`Usage: node scripts/generate-linux-release-checksums.mjs [--dist dist] [--output dist/SHA256SUMS.txt]
 
-Writes a deterministic SHA-256 manifest for Linux release payloads:
-  - top-level AppImage, deb, and rpm packages in dist/
+Writes a deterministic SHA-256 manifest for release payloads:
+  - top-level AppImage, deb, rpm, dmg, and zip packages in dist/
   - runtime tar.gz archives under dist/runtimes/ when present
 
-Metadata files such as latest-linux.yml and .blockmap files are intentionally excluded.`);
+Metadata files such as latest-linux.yml, latest-mac.yml, and .blockmap files are intentionally excluded.`);
 }
 
 async function findArtifacts(root) {
@@ -101,7 +101,7 @@ async function findArtifacts(root) {
 }
 
 function isLinuxReleasePayload(path) {
-  if (/^[^/]+\.(AppImage|deb|rpm)$/.test(path)) return true;
+  if (/^[^/]+\.(AppImage|deb|rpm|dmg|zip)$/.test(path)) return true;
   return /^runtimes\/[^/]+\.tar\.gz$/.test(path);
 }
 

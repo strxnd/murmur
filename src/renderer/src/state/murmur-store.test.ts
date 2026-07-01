@@ -110,8 +110,9 @@ function testSnapshot(): AppStateSnapshot {
       },
       stt: {
         diagnostics: [],
-        gpuProbe: {
+        accelerationProbe: {
           nvidia: { available: false, devices: [], diagnostics: [] },
+          apple: { available: false, devices: [], diagnostics: [] },
           diagnostics: []
         }
       },
@@ -128,9 +129,13 @@ function testSnapshot(): AppStateSnapshot {
       context: {
         backend: "clipboard_fallback",
         appMetadata: false,
-        focusedText: false,
         selectedText: false,
-        browserDomain: false,
+        diagnostics: []
+      },
+      automation: {
+        status: "not_required",
+        permissionRequired: false,
+        canPrompt: false,
         diagnostics: []
       },
       paste: {

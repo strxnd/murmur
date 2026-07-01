@@ -8,7 +8,7 @@ import { IconButton } from "../components/ui/IconButton";
 import { Panel } from "../components/ui/Panel";
 import { Toolbar } from "../components/ui/Toolbar";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
-import { gpuRuntimePromptState, isRuntimeBusy } from "../lib/runtimes";
+import { accelerationRuntimePromptState, isRuntimeBusy } from "../lib/runtimes";
 import { recordingUnavailableReason, shouldShowSttSetupCallout } from "../lib/stt-setup";
 import { useMurmurStore } from "../state/murmur-store";
 
@@ -34,7 +34,7 @@ export function HomeView({
       <section className="grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[640px]:grid-cols-1">
         <StatCard label="Average speed" value={metrics.averageSpeed} detail="spoken words per recorded minute" />
         <StatCard label="Words" value={metrics.words} detail="raw transcript words" />
-        <StatCard label="Apps used" value={metrics.appsUsed} detail="unique captured apps and domains" />
+        <StatCard label="Apps used" value={metrics.appsUsed} detail="unique captured apps" />
         <StatCard label="Time saved" value={metrics.timeSaved} detail={`baseline ${state.settings.typingBaselineWpm} WPM`} />
       </section>
 
@@ -143,7 +143,7 @@ function SttSetupCallout({
 }
 
 function GpuRuntimeInstallCallout({ state }: { state: AppStateSnapshot }): JSX.Element | null {
-  const prompt = gpuRuntimePromptState(state);
+  const prompt = accelerationRuntimePromptState(state);
   const updateSettings = useMurmurStore((store) => store.updateSettings);
   const downloadSttRuntime = useMurmurStore((store) => store.downloadSttRuntime);
   const [isInstalling, setIsInstalling] = useState(false);
@@ -154,19 +154,19 @@ function GpuRuntimeInstallCallout({ state }: { state: AppStateSnapshot }): JSX.E
   const hasError = prompt.candidates.some((runtime) => runtime.status === "error");
   const canInstall = prompt.installable.length > 0;
   const label = busy
-    ? "Installing GPU acceleration"
+    ? "Installing acceleration"
     : hasError
-      ? "GPU acceleration was not installed"
+      ? "Acceleration was not installed"
       : canInstall
-        ? "GPU acceleration available"
-        : "GPU detected";
+        ? "Acceleration available"
+        : "Accelerator detected";
   const buttonLabel = busy ? "Installing..." : hasError ? "Retry" : canInstall ? "Install" : "Unavailable";
 
   const dismiss = (): void => {
-    void updateSettings({ gpuRuntimeInstallPromptDismissedAt: new Date().toISOString() });
+    void updateSettings({ accelerationRuntimeInstallPromptDismissedAt: new Date().toISOString() });
   };
 
-  const installGpuRuntimes = async (): Promise<void> => {
+  const installAccelerationRuntimes = async (): Promise<void> => {
     setIsInstalling(true);
     try {
       for (const runtime of prompt.installable) {
@@ -189,15 +189,15 @@ function GpuRuntimeInstallCallout({ state }: { state: AppStateSnapshot }): JSX.E
           <span className="truncate text-sm font-medium text-foreground">{label}</span>
         </div>
         <Button
-          onClick={() => void installGpuRuntimes()}
+          onClick={() => void installAccelerationRuntimes()}
           disabled={busy || !canInstall}
-          title={canInstall ? undefined : "GPU acceleration downloads are not available yet."}
+          title={canInstall ? undefined : "Acceleration downloads are not available yet."}
           className="border-emerald-500 bg-emerald-500 text-background hover:border-emerald-600 hover:bg-emerald-600 focus-visible:ring-emerald-500/35"
         >
           {buttonLabel}
         </Button>
         <IconButton
-          title="Dismiss GPU acceleration prompt"
+          title="Dismiss acceleration prompt"
           onClick={dismiss}
           className="border-emerald-500/35 bg-emerald-500/10 hover:bg-emerald-500/15"
         >
@@ -221,7 +221,7 @@ function computeHomeMetrics(state: AppStateSnapshot): {
   const averageWpm = durationMs > 0 ? spokenWords / (durationMs / 60000) : 0;
   const appKeys = new Set(
     state.history
-      .map((item) => item.appId || item.browserDomain || item.appName)
+      .map((item) => item.appId || item.appName)
       .filter((value): value is string => Boolean(value))
   );
   const timeSavedMs = durationItems.reduce((total, item) => {

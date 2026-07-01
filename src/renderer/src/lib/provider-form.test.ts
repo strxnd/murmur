@@ -9,6 +9,7 @@ import {
   cloudCredentialValidationProviders,
   createCustomLlmProvider,
   createCustomTranscriptionProvider,
+  customLlmProviderTypes,
   customTranscriptionProviderTypes,
   isCloudCredentialLlmProvider,
   isCloudCredentialTranscriptionProvider,
@@ -60,23 +61,28 @@ describe("provider form helpers", () => {
     expect(provider).toMatchObject({
       id: "custom-llm",
       type: "custom_openai_compatible",
-      name: "Custom OpenAI-compatible LLM",
+      name: "OpenAI-compatible LLM",
       baseUrl: "",
       isCloud: true,
+      models: [],
       enabled: false
     });
   });
 
+  it("only offers local and OpenAI-compatible custom LLM provider types", () => {
+    expect(customLlmProviderTypes).toEqual(["lmstudio", "ollama", "custom_openai_compatible"]);
+  });
+
   it("applies LLM type presets and preserves API keys", () => {
     const provider = createCustomLlmProvider("custom-llm");
-    const nextProvider = applyLlmProviderType({ ...provider, apiKey: "sk-test" }, "anthropic");
+    const nextProvider = applyLlmProviderType({ ...provider, apiKey: "sk-test" }, "lmstudio");
 
     expect(nextProvider).toMatchObject({
-      type: "anthropic",
-      name: "Anthropic",
-      baseUrl: "https://api.anthropic.com",
+      type: "lmstudio",
+      name: "LM Studio",
+      baseUrl: "http://127.0.0.1:1234/v1",
       apiKey: "sk-test",
-      isCloud: true
+      isCloud: false
     });
   });
 
@@ -101,9 +107,14 @@ describe("provider form helpers", () => {
       ],
       llmProviders: [
         {
-          ...createCustomLlmProvider("custom-llm", "openai"),
+          ...createCustomLlmProvider("custom-llm"),
           apiKey: " sk-test ",
-          defaultModel: "  "
+          defaultModel: " legacy-model ",
+          models: [" model-a ", "model-a", " ", "model-b"]
+        },
+        {
+          ...createCustomLlmProvider("custom-ollama", "ollama"),
+          models: ["should-be-dropped"]
         }
       ]
     });
@@ -117,8 +128,10 @@ describe("provider form helpers", () => {
     });
     expect(values.llmProviders[0]).toMatchObject({
       apiKey: "sk-test",
-      defaultModel: undefined
+      defaultModel: undefined,
+      models: ["model-a", "model-b", "legacy-model"]
     });
+    expect(values.llmProviders[1].models).toBeUndefined();
   });
 
   it("applies one OpenAI credential to voice and language providers", () => {

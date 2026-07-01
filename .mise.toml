@@ -1,5 +1,6 @@
 [tools]
 node = "25.9.0"
+cmake = "3.31.12"
 
 [tasks.install]
 description = "Install dependencies from package-lock.json."
@@ -60,6 +61,14 @@ run = "npm run runtimes:manifest-check:release"
 [tasks."linux-helper:build"]
 description = "Build the optional native Linux keyboard helper."
 run = "npm run linux-helper:build"
+
+[tasks."macos-helper:build"]
+description = "Build the native macOS automation helper."
+run = "npm run macos-helper:build"
+
+[tasks."native-helpers:build"]
+description = "Build native automation helpers for the current host."
+run = "npm run native-helpers:build"
 
 [tasks."release:prepare"]
 description = "Prepare local release artifacts without committing, tagging, pushing, or creating releases."

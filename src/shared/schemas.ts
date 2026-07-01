@@ -24,12 +24,21 @@ export const llmProviderTypeSchema = z.enum([
   "custom_openai_compatible"
 ]);
 export const modelKindSchema = z.enum(["voice", "language"]);
-export const modelProviderSchema = z.enum(["whisper_cpp", "nvidia", "ollama", "lmstudio", "openai", "anthropic", "google"]);
+export const modelProviderSchema = z.enum([
+  "whisper_cpp",
+  "nvidia",
+  "ollama",
+  "lmstudio",
+  "openai",
+  "openai_compatible",
+  "anthropic",
+  "google"
+]);
 export const modelDownloadStrategySchema = z.enum(["direct_file", "archive", "ollama_pull", "none"]);
 export const modelDownloadStatusSchema = z.enum(["not_downloaded", "downloading", "downloaded", "error"]);
 export const sttRuntimeIdSchema = z.enum(["whisper.cpp", "sherpa-onnx"]);
-export const sttRuntimeAcceleratorSchema = z.enum(["cpu", "cuda"]);
-export const sttAccelerationPreferenceSchema = z.enum(["auto", "cpu", "cuda"]);
+export const sttRuntimeAcceleratorSchema = z.enum(["cpu", "cuda", "apple"]);
+export const sttAccelerationPreferenceSchema = z.enum(["auto", "cpu", "cuda", "apple"]);
 
 const semverPatternSource =
   "(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";
@@ -37,7 +46,7 @@ const semverStringSchema = z.string().regex(new RegExp(`^${semverPatternSource}$
 
 export const sttRuntimeVariantKeySchema = z
   .string()
-  .regex(new RegExp(`^(whisper\\.cpp|sherpa-onnx)\\|[^|]+\\|(cpu|cuda)\\|${semverPatternSource}$`));
+  .regex(new RegExp(`^(whisper\\.cpp|sherpa-onnx)\\|[^|]+\\|(cpu|cuda|apple)\\|${semverPatternSource}$`));
 export const sttRuntimeActionTargetSchema = z.union([
   sttRuntimeVariantKeySchema,
   z.object({
@@ -65,10 +74,6 @@ export const contextSnapshotSchema = z
     appName: optionalStringSchema,
     appId: optionalStringSchema,
     windowTitle: optionalStringSchema,
-    browserUrl: optionalStringSchema,
-    browserDomain: optionalStringSchema,
-    focusedRole: optionalStringSchema,
-    focusedText: optionalStringSchema,
     selectedText: optionalStringSchema,
     clipboardText: optionalStringSchema,
     capturedAt: z.string(),
@@ -126,6 +131,7 @@ export const modelCatalogItemSchema = z.object({
     .optional(),
   defaultProviderConfig: z
     .object({
+      providerId: z.string().min(1).optional(),
       sttProviderType: transcriptionProviderTypeSchema.optional(),
       llmProviderType: llmProviderTypeSchema.optional(),
       baseUrl: optionalStringSchema,
@@ -184,6 +190,7 @@ export const llmProviderConfigSchema = z
     apiKey: optionalStringSchema,
     isCloud: z.boolean(),
     defaultModel: optionalStringSchema,
+    models: z.array(z.string()).optional(),
     enabled: z.boolean()
   });
 
@@ -196,8 +203,6 @@ export const autoModeRuleSchema = z
     enabled: z.boolean(),
     match: z
       .object({
-        domain: optionalStringSchema,
-        domainWildcard: optionalStringSchema,
         appId: optionalStringSchema,
         appName: optionalStringSchema,
         windowTitleIncludes: optionalStringSchema
@@ -218,9 +223,7 @@ export const appSettingsSchema = z
   .object({
     theme: z.enum(["system", "light", "dark"]),
     textRetentionDays: z.number().min(0),
-    shareContextWithCloudLlm: z.boolean(),
-    selectedTextCapture: z.enum(["disabled", "clipboard_restore"]),
-    pasteMethod: z.enum(["clipboard_restore", "clipboard_only"]),
+    selectedTextCapture: z.enum(["disabled", "enabled"]),
     activeModeId: z.string().min(1),
     activationMode: z.enum(["toggle", "push_to_talk"]),
     activationHotkey: z.string().min(1),
@@ -230,7 +233,7 @@ export const appSettingsSchema = z
     typingBaselineWpm: z.number().min(1),
     sttAccelerationPreference: sttAccelerationPreferenceSchema.catch("auto"),
     trayCloseNoticeShownAt: optionalStringSchema,
-    gpuRuntimeInstallPromptDismissedAt: optionalStringSchema,
+    accelerationRuntimeInstallPromptDismissedAt: optionalStringSchema,
     sttSetupSkippedAt: optionalStringSchema,
     sttSetupCompletedAt: optionalStringSchema,
     onboardingSkippedAt: optionalStringSchema,
@@ -258,7 +261,6 @@ export const dictationHistoryItemSchema = z
     appName: optionalStringSchema,
     appId: optionalStringSchema,
     windowTitle: optionalStringSchema,
-    browserDomain: optionalStringSchema,
     createdAt: z.string(),
     recordingStartedAt: optionalStringSchema,
     recordingStoppedAt: optionalStringSchema,
@@ -328,12 +330,24 @@ export const sttSetupSnapshotSchema = z
   })
   .passthrough();
 
-export const sttGpuProbeReportSchema = z.object({
+export const accelerationProbeReportSchema = z.object({
   nvidia: z.object({
     available: z.boolean(),
     devices: z.array(z.string()),
     diagnostics: z.array(z.string())
   }),
+  apple: z.object({
+    available: z.boolean(),
+    devices: z.array(z.string()),
+    diagnostics: z.array(z.string())
+  }),
+  diagnostics: z.array(z.string())
+});
+
+export const automationPermissionReportSchema = z.object({
+  status: z.enum(["not_required", "not_determined_or_denied", "trusted", "trusted_but_helper_failed"]),
+  permissionRequired: z.boolean(),
+  canPrompt: z.boolean(),
   diagnostics: z.array(z.string())
 });
 
@@ -342,11 +356,18 @@ export const capabilityReportSchema = z
     sttRuntimes: z.record(sttRuntimeVariantKeySchema, sttRuntimeAvailabilitySchema),
     stt: z.object({
       diagnostics: z.array(z.string()),
-      gpuProbe: sttGpuProbeReportSchema
+      accelerationProbe: accelerationProbeReportSchema
     }),
     hotkeys: z
       .object({
-        backend: z.enum(["xdg_desktop_portal", "gnome_custom_shortcut", "kde_kglobalaccel", "hyprland_bind", "electron_global_shortcut"]),
+        backend: z.enum([
+          "xdg_desktop_portal",
+          "gnome_custom_shortcut",
+          "kde_kglobalaccel",
+          "hyprland_bind",
+          "macos_event_tap",
+          "electron_global_shortcut"
+        ]),
         pushToTalkRelease: z.boolean(),
         registered: z.boolean(),
         triggerDescription: optionalStringSchema,
@@ -361,22 +382,49 @@ export const capabilityReportSchema = z
       .object({
         backend: z.enum(["desktop_metadata", "clipboard_fallback"]),
         appMetadata: z.boolean(),
-        focusedText: z.boolean(),
         selectedText: z.boolean(),
-        browserDomain: z.boolean(),
         diagnostics: z.array(z.string())
       }),
+    automation: automationPermissionReportSchema,
     paste: z
       .object({
-        backend: z.enum(["linux_native_helper", "wtype", "xdotool", "ydotool", "xdg_remote_desktop_keyboard", "clipboard_only"]),
+        backend: z.enum([
+          "linux_native_helper",
+          "macos_accessibility_helper",
+          "wtype",
+          "xdotool",
+          "ydotool",
+          "xdg_remote_desktop_keyboard",
+          "clipboard_only"
+        ]),
         automationAvailable: z.boolean(),
         permissionRequired: z.boolean(),
         diagnostics: z.array(z.string()),
         availableBackends: z
-          .array(z.enum(["linux_native_helper", "wtype", "xdotool", "ydotool", "xdg_remote_desktop_keyboard", "clipboard_only"]))
+          .array(
+            z.enum([
+              "linux_native_helper",
+              "macos_accessibility_helper",
+              "wtype",
+              "xdotool",
+              "ydotool",
+              "xdg_remote_desktop_keyboard",
+              "clipboard_only"
+            ])
+          )
           .optional(),
         attemptedBackends: z
-          .array(z.enum(["linux_native_helper", "wtype", "xdotool", "ydotool", "xdg_remote_desktop_keyboard", "clipboard_only"]))
+          .array(
+            z.enum([
+              "linux_native_helper",
+              "macos_accessibility_helper",
+              "wtype",
+              "xdotool",
+              "ydotool",
+              "xdg_remote_desktop_keyboard",
+              "clipboard_only"
+            ])
+          )
           .optional(),
         missingTools: z.array(z.string()).optional(),
         setupHints: z.array(z.string()).optional()

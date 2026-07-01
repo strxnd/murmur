@@ -798,6 +798,19 @@ function LlmProviderEditor({
 }): JSX.Element {
   const isDefault = isDefaultLlmProvider(provider);
   const errors = form.formState.errors.llmProviders?.[index];
+  const models = provider.models ?? [];
+
+  const addModel = (): void => {
+    form.setValue(`llmProviders.${index}.models`, [...models, ""], { shouldDirty: true, shouldValidate: true });
+  };
+
+  const deleteModel = (modelIndex: number): void => {
+    form.setValue(
+      `llmProviders.${index}.models`,
+      models.filter((_model, currentIndex) => currentIndex !== modelIndex),
+      { shouldDirty: true, shouldValidate: true }
+    );
+  };
 
   return (
     <>
@@ -857,9 +870,38 @@ function LlmProviderEditor({
           <Input type="password" autoComplete="off" spellCheck={false} {...form.register(`llmProviders.${index}.apiKey`)} />
         </Field>
 
-        <Field label="Model ID" error={errors?.defaultModel?.message} className="col-span-full max-[760px]:col-span-1">
-          <Input {...form.register(`llmProviders.${index}.defaultModel`)} spellCheck={false} />
-        </Field>
+        {provider.type === "custom_openai_compatible" && (
+          <div className="col-span-full flex flex-col gap-2 rounded-md border border-border bg-muted/30 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="m-0 text-sm font-medium text-foreground">Models</p>
+              <Button size="sm" onClick={addModel}>
+                <Plus size={15} /> Add model
+              </Button>
+            </div>
+            {models.length === 0 ? (
+              <div className="flex min-h-16 items-center justify-center rounded-md border border-dashed border-border bg-surface/60 p-3 text-sm text-muted-foreground">
+                No models added.
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {models.map((_model, modelIndex) => (
+                  <div key={modelIndex} className="grid grid-cols-[minmax(0,1fr)_2.25rem] items-end gap-2">
+                    <Field label={`Model ${modelIndex + 1}`}>
+                      <Input
+                        {...form.register(`llmProviders.${index}.models.${modelIndex}`)}
+                        placeholder="Model ID"
+                        spellCheck={false}
+                      />
+                    </Field>
+                    <IconButton title="Remove model" tone="danger" onClick={() => deleteModel(modelIndex)}>
+                      <Trash2 size={18} />
+                    </IconButton>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <ValidationMessage state={validation} onDismiss={onDismissValidation} />

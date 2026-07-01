@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AutomationResult, TextAutomationBackend, TextAutomationCapability } from "./text-automation";
+import type { AutomationResult, SelectedTextAutomationResult, TextAutomationBackend, TextAutomationCapability } from "./text-automation";
 import { TextAutomationService } from "./text-automation";
 import { ContextService } from "./context";
 
@@ -52,6 +52,13 @@ class FakeBackend implements TextAutomationBackend {
   copyCalls = 0;
   onCopy: (() => void) | undefined;
   result: AutomationResult = { success: true, status: "success", message: "sent", diagnostics: [] };
+  selectedTextCalls = 0;
+  selectedTextResult: SelectedTextAutomationResult = {
+    success: false,
+    status: "unavailable",
+    message: "Selected text reads are not supported.",
+    diagnostics: []
+  };
   capability: TextAutomationCapability = {
     backend: "xdg_remote_desktop_keyboard",
     automationAvailable: true,
@@ -74,6 +81,10 @@ class FakeBackend implements TextAutomationBackend {
     this.copyCalls += 1;
     this.onCopy?.();
     return this.result;
+  }
+  async readSelectedText(): Promise<SelectedTextAutomationResult> {
+    this.selectedTextCalls += 1;
+    return this.selectedTextResult;
   }
 }
 
@@ -150,6 +161,60 @@ describe("ContextService", () => {
     const snapshot = await context.capture();
 
     expect(snapshot.selectedText).toBe("selected primary");
+    expect(clipboardHarness.get().text).toBe("previous");
+  });
+
+  it("uses macOS Accessibility selected text without copying when available", async () => {
+    const backend = new FakeBackend();
+    backend.capability = {
+      backend: "macos_accessibility_helper",
+      automationAvailable: true,
+      permissionRequired: true,
+      diagnostics: []
+    };
+    backend.selectedTextResult = {
+      success: true,
+      status: "success",
+      message: "read",
+      diagnostics: [],
+      backend: "macos_accessibility_helper",
+      text: "ax selected"
+    };
+    const context = new ContextService(new TextAutomationService(backend), 5, 1, fakePrimarySelection());
+    clipboardHarness.set({ text: "previous" });
+
+    const snapshot = await context.capture();
+
+    expect(snapshot.selectedText).toBe("ax selected");
+    expect(backend.selectedTextCalls).toBe(1);
+    expect(backend.copyCalls).toBe(0);
+    expect(clipboardHarness.get().text).toBe("previous");
+  });
+
+  it("falls back to clipboard copy when macOS Accessibility returns no selected text", async () => {
+    const backend = new FakeBackend();
+    backend.capability = {
+      backend: "macos_accessibility_helper",
+      automationAvailable: true,
+      permissionRequired: true,
+      diagnostics: []
+    };
+    backend.selectedTextResult = {
+      success: true,
+      status: "success",
+      message: "read",
+      diagnostics: [],
+      backend: "macos_accessibility_helper"
+    };
+    backend.onCopy = () => clipboardHarness.api.writeText("copied selected text");
+    const context = new ContextService(new TextAutomationService(backend), 50, 1, fakePrimarySelection());
+    clipboardHarness.set({ text: "previous" });
+
+    const snapshot = await context.capture();
+
+    expect(snapshot.selectedText).toBe("copied selected text");
+    expect(backend.selectedTextCalls).toBe(1);
+    expect(backend.copyCalls).toBe(1);
     expect(clipboardHarness.get().text).toBe("previous");
   });
 
