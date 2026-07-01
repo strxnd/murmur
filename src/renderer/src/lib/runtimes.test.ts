@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import { defaultLlmProviders, defaultModelLibrary, defaultModes, defaultSession, defaultSettings, defaultTranscriptionProviders } from "../../../shared/defaults";
 import type {
   AppStateSnapshot,
+  ModelCatalogItem,
   SttRuntimeAccelerator,
   SttRuntimeId,
   SttRuntimeInstallState
 } from "../../../shared/types";
-import { accelerationRuntimePromptState, uniqueRuntimeInstallStates } from "./runtimes";
+import { accelerationRuntimePromptState, runtimeInstallForModel, uniqueRuntimeInstallStates } from "./runtimes";
 
 describe("renderer runtime helpers", () => {
   it("sorts variant-keyed runtime states", () => {
@@ -65,6 +66,19 @@ describe("renderer runtime helpers", () => {
     });
 
     expect(accelerationRuntimePromptState(snapshot)).toBeNull();
+  });
+
+  it("uses a ready accelerated runtime before CPU for model runtime status", () => {
+    const cpu = runtime("whisper.cpp", "cpu", "ready");
+    const cuda = runtime("whisper.cpp", "cuda", "ready");
+    const snapshot = state({
+      runtimes: {
+        [cpu.variantKey]: cpu,
+        [cuda.variantKey]: cuda
+      }
+    });
+
+    expect(runtimeInstallForModel(snapshot, voiceModel())?.variantKey).toBe(cuda.variantKey);
   });
 });
 
@@ -161,5 +175,21 @@ function runtime(
     message: "Runtime state",
     canDownload,
     canRepair: canDownload && status === "repairable"
+  };
+}
+
+function voiceModel(): ModelCatalogItem {
+  return {
+    id: "voice-model",
+    name: "Voice Model",
+    kind: "voice",
+    provider: "whisper_cpp",
+    isCloud: false,
+    isOffline: true,
+    tags: [],
+    downloadStrategy: "direct_file",
+    defaultProviderConfig: {
+      sttProviderType: "whisper_cpp"
+    }
   };
 }

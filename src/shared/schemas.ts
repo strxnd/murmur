@@ -38,7 +38,6 @@ export const modelDownloadStrategySchema = z.enum(["direct_file", "archive", "ol
 export const modelDownloadStatusSchema = z.enum(["not_downloaded", "downloading", "downloaded", "error"]);
 export const sttRuntimeIdSchema = z.enum(["whisper.cpp", "sherpa-onnx"]);
 export const sttRuntimeAcceleratorSchema = z.enum(["cpu", "cuda", "apple"]);
-export const sttAccelerationPreferenceSchema = z.enum(["auto", "cpu", "cuda", "apple"]);
 
 const semverPatternSource =
   "(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";
@@ -231,7 +230,6 @@ export const appSettingsSchema = z
     recordingPillPosition: recordingPillPositionSchema,
     preferredAudioInputId: optionalStringSchema,
     typingBaselineWpm: z.number().min(1),
-    sttAccelerationPreference: sttAccelerationPreferenceSchema.catch("auto"),
     trayCloseNoticeShownAt: optionalStringSchema,
     accelerationRuntimeInstallPromptDismissedAt: optionalStringSchema,
     sttSetupSkippedAt: optionalStringSchema,

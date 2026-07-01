@@ -12,7 +12,7 @@ export class SttAccelerationProbeService {
       const nvidia = probeNvidia();
       return {
         nvidia,
-        apple: emptyAdapter("Apple acceleration is macOS Apple Silicon-only."),
+        apple: emptyAdapter("Apple Silicon acceleration requires macOS on Apple Silicon."),
         diagnostics: [
           "Acceleration probe is advisory only; runtime launch and transcription success decide readiness.",
           ...nvidia.diagnostics
@@ -34,7 +34,7 @@ export class SttAccelerationProbeService {
 
     return {
       nvidia: emptyAdapter("NVIDIA CUDA acceleration is Linux-only."),
-      apple: emptyAdapter("Apple acceleration is macOS Apple Silicon-only."),
+      apple: emptyAdapter("Apple Silicon acceleration requires macOS on Apple Silicon."),
       diagnostics: ["Acceleration probing is unavailable on this platform."]
     };
   }
@@ -62,7 +62,7 @@ function probeNvidia(): GpuProbeAdapterReport {
 
 function probeApple(): GpuProbeAdapterReport {
   if (process.arch !== "arm64") {
-    return emptyAdapter("Apple acceleration requires Apple Silicon.");
+    return emptyAdapter("Apple Silicon acceleration requires Apple Silicon.");
   }
   const devices = [`Apple Silicon (${cpus()[0]?.model ?? "arm64"})`];
   return { available: true, devices, diagnostics: ["Apple Silicon detected."] };

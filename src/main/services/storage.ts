@@ -92,7 +92,6 @@ const builtInModeIds = new Set(builtInModeDefaults.map((mode) => mode.id));
 const removedReleaseNoteIds = new Set(["initial-prototype"]);
 const activationModes = new Set<ActivationMode>(["toggle", "push_to_talk"]);
 const recordingPillPositions = new Set<RecordingPillPosition>(["bottom_left", "bottom_center", "bottom_right"]);
-const sttAccelerationPreferences = new Set<AppSettings["sttAccelerationPreference"]>(["auto", "cpu", "cuda", "apple"]);
 const appSettingKeys = [
   "theme",
   "textRetentionDays",
@@ -104,7 +103,6 @@ const appSettingKeys = [
   "recordingPillPosition",
   "preferredAudioInputId",
   "typingBaselineWpm",
-  "sttAccelerationPreference",
   "trayCloseNoticeShownAt",
   "accelerationRuntimeInstallPromptDismissedAt",
   "sttSetupSkippedAt",
@@ -581,9 +579,6 @@ export class StorageService {
         ? (currentSettings.recordingPillPosition as RecordingPillPosition)
         : defaultSettings.recordingPillPosition,
       selectedTextCapture: currentSettings.selectedTextCapture === "disabled" ? "disabled" : "enabled",
-      sttAccelerationPreference: sttAccelerationPreferences.has(currentSettings.sttAccelerationPreference as AppSettings["sttAccelerationPreference"])
-        ? (currentSettings.sttAccelerationPreference as AppSettings["sttAccelerationPreference"])
-        : defaultSettings.sttAccelerationPreference,
       trayCloseNoticeShownAt:
         typeof currentSettings.trayCloseNoticeShownAt === "string" ? currentSettings.trayCloseNoticeShownAt : undefined,
       accelerationRuntimeInstallPromptDismissedAt:

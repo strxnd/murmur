@@ -619,7 +619,7 @@ function fakeRuntimeService(status: SttRuntimeAvailability["status"]): SttRuntim
         message: `${id} ${status}`
       };
     },
-    getAvailabilityForPreference(id: SttRuntimeId): SttRuntimeAvailability {
+    getAutomaticAvailability(id: SttRuntimeId): SttRuntimeAvailability {
       return service.getAvailability(id);
     }
   };

@@ -1241,7 +1241,6 @@ export class AppController {
         provider: sttProvider,
         language: mode.language ?? sttProvider.defaultLanguage,
         vocabularyPrompt,
-        accelerationPreference: persisted.settings.sttAccelerationPreference,
         onDelta: (delta) => {
           this.session = { ...this.session, transcriptPreview: `${this.session.transcriptPreview ?? ""}${delta}` };
           this.mainWindow?.webContents.send("dictation:transcript-delta", delta);
@@ -1417,8 +1416,8 @@ export class AppController {
   }): TranscriptionProviderConfig | undefined {
     const activeModel = this.selectActiveModel(state, "voice");
     const activeProvider = activeModel ? transcriptionProviderFromModel(activeModel, state.transcriptionProviders) : null;
-    if (activeProvider && this.isTranscriptionProviderUsable(activeProvider, state.settings)) return activeProvider;
-    return state.transcriptionProviders.find((provider) => this.isTranscriptionProviderUsable(provider, state.settings));
+    if (activeProvider && this.isTranscriptionProviderUsable(activeProvider)) return activeProvider;
+    return state.transcriptionProviders.find((provider) => this.isTranscriptionProviderUsable(provider));
   }
 
   private selectLlmProvider(state: {
@@ -1442,10 +1441,7 @@ export class AppController {
     if (item.discovery && !item.discovery.reachable) return undefined;
     if (kind === "voice") {
       const runtimeId = sttRuntimeIdForModel(item);
-      if (
-        runtimeId &&
-        this.runtimeService.getAvailabilityForPreference(runtimeId, state.settings?.sttAccelerationPreference ?? "auto").status !== "available"
-      ) {
+      if (runtimeId && this.runtimeService.getAutomaticAvailability(runtimeId).status !== "available") {
         return undefined;
       }
     }
@@ -1453,19 +1449,19 @@ export class AppController {
     return modelLibrary.downloads.some((download) => download.modelId === item.id && download.status === "downloaded") ? item : undefined;
   }
 
-  private isTranscriptionProviderUsable(provider: TranscriptionProviderConfig, settings: AppSettings): boolean {
+  private isTranscriptionProviderUsable(provider: TranscriptionProviderConfig): boolean {
     if (!isBaseTranscriptionProviderUsable(provider)) return false;
     if (provider.type === "whisper_cpp" && provider.baseUrl === "murmur://runtime/whisper.cpp") {
-      return this.bundledProviderUsable(provider, "whisper.cpp", settings);
+      return this.bundledProviderUsable(provider, "whisper.cpp");
     }
     if (provider.type === "sherpa_onnx") {
-      return this.bundledProviderUsable(provider, "sherpa-onnx", settings);
+      return this.bundledProviderUsable(provider, "sherpa-onnx");
     }
     return true;
   }
 
-  private bundledProviderUsable(provider: TranscriptionProviderConfig, runtimeId: SttRuntimeId, settings: AppSettings): boolean {
-    if (this.runtimeService.getAvailabilityForPreference(runtimeId, settings.sttAccelerationPreference).status !== "available") return false;
+  private bundledProviderUsable(provider: TranscriptionProviderConfig, runtimeId: SttRuntimeId): boolean {
+    if (this.runtimeService.getAutomaticAvailability(runtimeId).status !== "available") return false;
     if (!provider.defaultModel) return false;
     const modelPath = isAbsolute(provider.defaultModel) ? provider.defaultModel : join(this.paths.modelDir, provider.defaultModel);
     return existsSync(modelPath);

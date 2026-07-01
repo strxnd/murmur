@@ -19,8 +19,7 @@ export const defaultSettings: AppSettings = {
   activationHotkey: "Alt+Space",
   modeSelectorHotkey: "Alt+Shift+K",
   recordingPillPosition: "bottom_center",
-  typingBaselineWpm: 40,
-  sttAccelerationPreference: "auto"
+  typingBaselineWpm: 40
 };
 
 export const maxRecordingDurationMs = 10 * 60 * 1000;

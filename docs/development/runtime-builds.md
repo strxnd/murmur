@@ -17,7 +17,7 @@ Sherpa ONNX source assets:
 - `darwin-arm64` CPU: `sherpa-onnx-v1.13.2-osx-arm64-shared-no-tts.tar.bz2`
 - `darwin-x64` CPU: `sherpa-onnx-v1.13.2-osx-x64-shared-no-tts.tar.bz2`
 
-Accelerated runtime assets published for app download must be Murmur `tar.gz` archives with pinned SHA-256 metadata in `src/shared/stt-runtime-catalog.ts`. Publish CUDA and Apple runtime archives on runtime-only GitHub releases, not app release tags. Do not catalog Sherpa upstream `tar.bz2` GPU archives directly for app downloads; repackage them deterministically as Murmur `tar.gz` assets first.
+Accelerated runtime assets published for app download must be Murmur `tar.gz` archives with pinned SHA-256 metadata in `src/shared/stt-runtime-catalog.ts`. Publish CUDA and Apple Silicon runtime archives on runtime-only GitHub releases, not app release tags. Do not catalog Sherpa upstream `tar.bz2` GPU archives directly for app downloads; repackage them deterministically as Murmur `tar.gz` assets first.
 
 ## Whisper Patch
 
@@ -39,7 +39,7 @@ Prepare optional whisper.cpp CUDA variants on compatible Linux hosts:
 npm run runtimes:prepare -- --accelerator cuda
 ```
 
-Prepare optional whisper.cpp Apple acceleration on Apple Silicon macOS hosts:
+Prepare optional whisper.cpp Apple Silicon acceleration on Apple Silicon macOS hosts:
 
 ```sh
 npm run runtimes:prepare -- --accelerator apple

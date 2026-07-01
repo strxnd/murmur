@@ -176,7 +176,7 @@ export function parseSttRuntimeVariantKey(value: string): {
 
 export function sttRuntimeVariantLabel(entry: SttRuntimeCatalogEntry, accelerator: SttRuntimeAccelerator): string {
   if (accelerator === "cpu") return entry.label;
-  if (accelerator === "apple") return `${entry.label} Apple`;
+  if (accelerator === "apple") return `${entry.label} Apple Silicon`;
   return `${entry.label} ${accelerator.toUpperCase()}`;
 }
 

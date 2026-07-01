@@ -61,12 +61,6 @@ export function runtimeInstallForModel(state: AppStateSnapshot, item: ModelCatal
   if (!runtimeId) return undefined;
   const variants = runtimeVariantsForModel(state, runtimeId);
   const cpu = variants.find((runtime) => runtime.accelerator === "cpu");
-  const preference = state.settings.sttAccelerationPreference;
-
-  if (preference !== "auto") {
-    return variants.find((runtime) => runtime.accelerator === preference) ?? unsupportedRuntimeState(runtimeId, preference, cpu);
-  }
-
   return variants.find((runtime) => runtime.accelerator !== "cpu" && runtime.status === "ready") ?? cpu ?? variants[0];
 }
 
@@ -91,7 +85,7 @@ export function userRuntimeStatusMessage(runtime: SttRuntimeInstallState): strin
 }
 
 export function acceleratorLabel(accelerator: SttRuntimeAccelerator): string {
-  if (accelerator === "apple") return "Apple";
+  if (accelerator === "apple") return "Apple Silicon";
   if (accelerator === "cuda") return "CUDA";
   return "CPU";
 }
@@ -117,29 +111,6 @@ function runtimeIdForModel(item: ModelCatalogItem): SttRuntimeId | null {
 
 function runtimeVariantsForModel(state: AppStateSnapshot, runtimeId: SttRuntimeId): SttRuntimeInstallState[] {
   return uniqueRuntimeInstallStates(state).filter((runtime) => runtime.id === runtimeId);
-}
-
-function unsupportedRuntimeState(
-  runtimeId: SttRuntimeId,
-  accelerator: SttRuntimeAccelerator,
-  fallback?: SttRuntimeInstallState
-): SttRuntimeInstallState {
-  const label = runtimeId === "whisper.cpp" ? "whisper.cpp" : "Sherpa ONNX";
-  const unsupportedVersion = "0.0.0-unsupported";
-  const message = `${label} ${acceleratorLabel(accelerator)} acceleration is not configured for this platform.`;
-  return {
-    id: runtimeId,
-    variantKey: `${runtimeId}|${fallback?.platformKey ?? "linux-x64"}|${accelerator}|${unsupportedVersion}`,
-    accelerator,
-    label: `${label} ${acceleratorLabel(accelerator)}`,
-    platformKey: fallback?.platformKey ?? "linux-x64",
-    requiredVersion: fallback?.requiredVersion ?? unsupportedVersion,
-    status: "unsupported",
-    progressBytes: 0,
-    message,
-    canDownload: false,
-    canRepair: false
-  };
 }
 
 function compareRuntimeStates(left: SttRuntimeInstallState, right: SttRuntimeInstallState): number {

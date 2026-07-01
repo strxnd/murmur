@@ -5,7 +5,6 @@ import { createServer } from "node:net";
 import { isAbsolute, join } from "node:path";
 import type {
   ProviderValidationResult,
-  SttAccelerationPreference,
   SttRuntimeAccelerator,
   SttRuntimeId,
   SttStreamingMode,
@@ -23,7 +22,6 @@ interface TranscribeOptions {
   provider: TranscriptionProviderConfig;
   language?: string | "auto";
   vocabularyPrompt?: string;
-  accelerationPreference?: SttAccelerationPreference;
   onDelta?: (delta: string) => void;
 }
 
@@ -160,7 +158,7 @@ export class TranscriptionService {
     }
 
     const modelPath = this.requiredModelPath(options.provider.defaultModel, "Bundled whisper.cpp");
-    return this.withRuntimeFallback("whisper.cpp", options.accelerationPreference ?? "auto", async (runtime) => {
+    return this.withRuntimeFallback("whisper.cpp", async (runtime) => {
       const baseUrl = await this.ensureWhisperServer(modelPath, runtime);
       const result = await this.transcribeWhisperCpp({
         ...options,
@@ -207,7 +205,7 @@ export class TranscriptionService {
     const audioPath = this.writeTempAudio(options.audio, "wav");
 
     try {
-      return await this.withRuntimeFallback("sherpa-onnx", options.accelerationPreference ?? "auto", async (runtime) => {
+      return await this.withRuntimeFallback("sherpa-onnx", async (runtime) => {
         const result = await runProcess(
           runtime.binaryPath,
           buildSherpaArgs(modelPath, audioPath, undefined, runtime.accelerator),
@@ -283,21 +281,20 @@ export class TranscriptionService {
 
   private async withRuntimeFallback(
     runtimeId: SttRuntimeId,
-    preference: SttAccelerationPreference,
     attempt: (runtime: ResolvedSttRuntime) => Promise<TranscriptionResult>
   ): Promise<TranscriptionResult> {
-    const primary = this.runtimeService.requireRuntimeForPreference(runtimeId, preference);
+    const primary = this.runtimeService.requireAutomaticRuntime(runtimeId);
     try {
       return await attempt(primary);
     } catch (error) {
       const primaryMessage = errorMessage(error);
-      if (preference !== "auto" || primary.accelerator === "cpu") {
+      if (primary.accelerator === "cpu") {
         throw error;
       }
 
       this.stopRuntime(runtimeId);
       this.lastRuntimeDiagnostics = [
-        `${primary.label} failed; retrying ${primary.id} CPU once because acceleration preference is auto.`,
+        `${primary.label} failed; retrying ${primary.id} CPU once because automatic acceleration failed.`,
         primaryMessage,
         ...this.lastRuntimeDiagnostics
       ].map((line) => tail(line, maxRuntimeDiagnosticsChars));

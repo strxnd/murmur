@@ -38,7 +38,6 @@ export type ModelDownloadStrategy = "direct_file" | "archive" | "ollama_pull" | 
 export type ModelDownloadStatus = "not_downloaded" | "downloading" | "downloaded" | "error";
 export type SttRuntimeId = "whisper.cpp" | "sherpa-onnx";
 export type SttRuntimeAccelerator = "cpu" | "cuda" | "apple";
-export type SttAccelerationPreference = "auto" | SttRuntimeAccelerator;
 export type SttRuntimeVariantKey = string;
 export type SttRuntimeActionTarget =
   | SttRuntimeVariantKey
@@ -245,7 +244,6 @@ export interface AppSettings {
   recordingPillPosition: RecordingPillPosition;
   preferredAudioInputId?: string;
   typingBaselineWpm: number;
-  sttAccelerationPreference: SttAccelerationPreference;
   trayCloseNoticeShownAt?: string;
   accelerationRuntimeInstallPromptDismissedAt?: string;
   sttSetupSkippedAt?: string;

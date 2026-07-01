@@ -1,12 +1,13 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Cpu, Gpu, RotateCcw, Save, Trash2 } from "lucide-react";
+import { RotateCcw, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import { createPortal } from "react-dom";
 import { Controller, useForm, useWatch, type Control, type Path } from "react-hook-form";
 import { z } from "zod";
 import type { AppSettings, AppStateSnapshot, SttRuntimeAccelerator, SttRuntimeInstallState } from "../../../shared/types";
 import { appSettingsSchema } from "../../../shared/schemas";
+import { AcceleratorMark, type BrandAccelerator } from "../components/AccelerationMark";
 import { ShortcutRecorder } from "../components/ShortcutRecorder";
 import { View } from "../components/View";
 import { Badge } from "../components/ui/Badge";
@@ -97,7 +98,6 @@ export function ConfigurationView({
   const [clearDataConfirmation, setClearDataConfirmation] = useState("");
   const [isClearingLocalData, setIsClearingLocalData] = useState(false);
   const [clearDataError, setClearDataError] = useState<string | null>(null);
-  const shortcutNeedsAttention = !state.capabilities.hotkeys.registered || !state.capabilities.hotkeys.modeSelector.registered;
   const audioInputItems: Array<SelectItem<string>> = [
     { value: "", label: "System default" },
     ...devices.map((device) => ({
@@ -276,11 +276,6 @@ export function ConfigurationView({
               <Field label="Mode selector shortcut" error={form.formState.errors.settings?.modeSelectorHotkey?.message}>
                 <FormShortcutRecorder control={form.control} name="settings.modeSelectorHotkey" />
               </Field>
-              {shortcutNeedsAttention && (
-                <p className="col-span-full m-0 text-xs leading-5 text-muted-foreground">
-                  One or more shortcuts need attention. Try a different shortcut or assign it in system settings.
-                </p>
-              )}
             </div>
           </Panel>
         </section>
@@ -360,7 +355,7 @@ export function ConfigurationView({
 type AccelerationRowTone = "neutral" | "success" | "warning" | "danger";
 
 interface AccelerationRow {
-  accelerator: SttRuntimeAccelerator;
+  accelerator: BrandAccelerator;
   title: string;
   status: string;
   detail: string;
@@ -368,7 +363,7 @@ interface AccelerationRow {
   progress: number | null;
 }
 
-const accelerationOrder: SttRuntimeAccelerator[] = ["cpu", "apple", "cuda"];
+const accelerationOrder: BrandAccelerator[] = ["apple", "cuda"];
 
 function AccelerationPanel({ state }: { state: AppStateSnapshot }): JSX.Element {
   const detectedAccelerators = detectAccelerators(state);
@@ -376,26 +371,28 @@ function AccelerationPanel({ state }: { state: AppStateSnapshot }): JSX.Element 
   const rows = accelerationOrder
     .map((accelerator) => accelerationRow(accelerator, runtimes, detectedAccelerators))
     .filter((row): row is AccelerationRow => Boolean(row));
-  const summary = detectedAccelerators.length > 0 ? "Accelerator detected" : "CPU baseline";
+  const summary = detectedAccelerators.length > 0 ? "Accelerator detected" : "No accelerator";
 
   return (
     <Panel title="Acceleration" actions={<Badge tone={detectedAccelerators.length > 0 ? "success" : "neutral"}>{summary}</Badge>}>
-      <div className="flex flex-col">
-        {rows.map((row) => (
-          <AccelerationStatusRow key={row.accelerator} row={row} />
-        ))}
-      </div>
+      {rows.length > 0 ? (
+        <div className="flex flex-col">
+          {rows.map((row) => (
+            <AccelerationStatusRow key={row.accelerator} row={row} />
+          ))}
+        </div>
+      ) : (
+        <p className="m-0 text-sm leading-6 text-muted-foreground">No supported acceleration hardware detected.</p>
+      )}
     </Panel>
   );
 }
 
 function AccelerationStatusRow({ row }: { row: AccelerationRow }): JSX.Element {
-  const Icon = row.accelerator === "cpu" ? Cpu : Gpu;
-
   return (
     <article className="grid grid-cols-[2.25rem_minmax(0,1fr)_auto] items-center gap-3 border-t border-border py-3 first:border-t-0 first:pt-0 last:pb-0 max-[760px]:grid-cols-[2.25rem_minmax(0,1fr)]">
       <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-border bg-muted/40 text-foreground">
-        <Icon size={18} />
+        <AcceleratorMark accelerator={row.accelerator} className="h-5 w-5" />
       </span>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
@@ -410,11 +407,11 @@ function AccelerationStatusRow({ row }: { row: AccelerationRow }): JSX.Element {
 }
 
 function accelerationRow(
-  accelerator: SttRuntimeAccelerator,
+  accelerator: BrandAccelerator,
   runtimes: SttRuntimeInstallState[],
   detectedAccelerators: SttRuntimeAccelerator[]
 ): AccelerationRow | null {
-  const detected = accelerator === "cpu" || detectedAccelerators.includes(accelerator);
+  const detected = detectedAccelerators.includes(accelerator);
   const matches = runtimes.filter((runtime) => runtime.accelerator === accelerator);
   const ready = matches.filter((runtime) => runtime.status === "ready");
   const busy = matches.find(isRuntimeBusy);
@@ -455,18 +452,15 @@ function accelerationRow(
     };
   }
 
-  if (accelerator !== "cpu" && !detected) return null;
+  if (!detected) return null;
 
   return {
     accelerator,
     title,
-    status: accelerator === "cpu" ? "Not ready" : "Not installed",
-    detail:
-      accelerator === "cpu"
-        ? "Local dictation uses CPU when acceleration is unavailable."
-        : canInstall
-          ? "A compatible accelerator was detected. Install acceleration from Home."
-          : "A compatible accelerator was detected. Acceleration is not available yet.",
+    status: "Not installed",
+    detail: canInstall
+      ? "A compatible accelerator was detected. Install acceleration from Home."
+      : "A compatible accelerator was detected. Acceleration is not available yet.",
     tone: "warning",
     progress: null
   };

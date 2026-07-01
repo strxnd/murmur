@@ -681,8 +681,7 @@ export class ModelLibraryService {
   private isRequiredRuntimeAvailable(item: ModelCatalogItem): boolean {
     const runtimeId = sttRuntimeIdForModel(item);
     return runtimeId
-      ? this.runtimeService.getAvailabilityForPreference(runtimeId, this.storage.getState().settings.sttAccelerationPreference).status ===
-          "available"
+      ? this.runtimeService.getAutomaticAvailability(runtimeId).status === "available"
       : true;
   }
 

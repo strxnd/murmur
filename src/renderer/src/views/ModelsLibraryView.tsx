@@ -20,7 +20,6 @@ import type {
   ModelCatalogItem,
   ModelDownloadState,
   ModelProvider,
-  SttAccelerationPreference,
   SttRuntimeInstallState
 } from "../../../shared/types";
 import { canActivateModel, isModelProviderUsable, providerLabel } from "../../../shared/model-activation";
@@ -68,13 +67,6 @@ const filters: Array<{ id: ModelFilter; label: string }> = [
   { id: "downloaded", label: "Downloaded" }
 ];
 
-const accelerationItems: Array<{ value: SttAccelerationPreference; label: string }> = [
-  { value: "auto", label: "Auto acceleration" },
-  { value: "cpu", label: "CPU" },
-  { value: "apple", label: "Apple" },
-  { value: "cuda", label: "CUDA" }
-];
-
 export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.Element {
   const getModelLibrary = useMurmurStore((store) => store.getModelLibrary);
   const downloadModel = useMurmurStore((store) => store.downloadModel);
@@ -82,7 +74,6 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
   const activateModel = useMurmurStore((store) => store.activateModel);
   const deleteDownloadedModel = useMurmurStore((store) => store.deleteDownloadedModel);
   const toggleFavoriteModel = useMurmurStore((store) => store.toggleFavoriteModel);
-  const updateSettings = useMurmurStore((store) => store.updateSettings);
   const downloadSttRuntime = useMurmurStore((store) => store.downloadSttRuntime);
   const repairSttRuntime = useMurmurStore((store) => store.repairSttRuntime);
   const cancelSttRuntimeDownload = useMurmurStore((store) => store.cancelSttRuntimeDownload);
@@ -124,7 +115,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
   return (
     <View title="Models">
       <Panel>
-        <div className="grid grid-cols-[minmax(0,1fr)_14rem_12rem] gap-3 max-[860px]:grid-cols-1">
+        <div className="grid grid-cols-[minmax(0,1fr)_14rem] gap-3 max-[760px]:grid-cols-1">
           <label className="relative block">
             <Search className="absolute left-2.5 top-2.5 text-muted-foreground" size={18} />
             <Input
@@ -140,12 +131,6 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
             items={providers}
             value={provider}
             onValueChange={(value) => setProvider(value as "all" | ModelProvider)}
-          />
-          <Select
-            aria-label="STT acceleration"
-            items={accelerationItems}
-            value={state.settings.sttAccelerationPreference}
-            onValueChange={(value) => void updateSettings({ sttAccelerationPreference: value })}
           />
         </div>
         <Toolbar className="mt-3">

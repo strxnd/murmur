@@ -1,8 +1,9 @@
-import { CircleAlert, Clock3, Gpu, Library, Mic, Square, Wrench, X } from "lucide-react";
+import { CircleAlert, Clock3, Library, Mic, Square, Wrench, X } from "lucide-react";
 import { useMemo, useState, type JSX } from "react";
 import type { AppStateSnapshot, DictationHistoryItem } from "../../../shared/types";
 import { StatCard } from "../components/StatCard";
 import { View } from "../components/View";
+import { AccelerationMark } from "../components/AccelerationMark";
 import { Button } from "../components/ui/Button";
 import { IconButton } from "../components/ui/IconButton";
 import { Panel } from "../components/ui/Panel";
@@ -184,7 +185,7 @@ function GpuRuntimeInstallCallout({ state }: { state: AppStateSnapshot }): JSX.E
       <div className="flex items-center justify-between gap-3 max-[640px]:items-stretch">
         <div className="flex min-h-10 min-w-0 flex-1 items-center gap-3">
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-emerald-500 text-background">
-            <Gpu size={19} />
+            <AccelerationMark accelerators={prompt.accelerators} />
           </span>
           <span className="truncate text-sm font-medium text-foreground">{label}</span>
         </div>

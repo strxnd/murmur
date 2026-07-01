@@ -192,7 +192,7 @@ function fakeRuntimeService(
         message: `${id} ${status}`
       };
     },
-    getAvailabilityForPreference(id: SttRuntimeId): SttRuntimeAvailability {
+    getAutomaticAvailability(id: SttRuntimeId): SttRuntimeAvailability {
       return service.getAvailability(id);
     },
     requireRuntime(id: SttRuntimeId): ResolvedSttRuntime {
@@ -210,7 +210,7 @@ function fakeRuntimeService(
         env: { ...process.env, MURMUR_ARGS_PATH: argsPath }
       };
     },
-    requireRuntimeForPreference(id: SttRuntimeId): ResolvedSttRuntime {
+    requireAutomaticRuntime(id: SttRuntimeId): ResolvedSttRuntime {
       return service.requireRuntime(id);
     }
   };

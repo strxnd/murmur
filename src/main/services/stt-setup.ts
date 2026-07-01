@@ -9,7 +9,6 @@ import type {
   LlmProviderConfig,
   ModelCatalogItem,
   ModelLibrarySnapshot,
-  SttAccelerationPreference,
   SttRuntimeId,
   SttSetupSnapshot,
   AppSettings,
@@ -111,25 +110,23 @@ export class SttSetupService {
 
 export function getSttUsability(
   state: {
-    settings?: Pick<AppSettings, "sttAccelerationPreference">;
     transcriptionProviders: TranscriptionProviderConfig[];
     llmProviders?: LlmProviderConfig[];
     modelLibrary: ModelLibrarySnapshot;
   },
-  runtimeService: Pick<SttRuntimeService, "getAvailability" | "getAvailabilityForPreference">,
+  runtimeService: Pick<SttRuntimeService, "getAvailability" | "getAutomaticAvailability">,
   paths: Pick<AppPaths, "modelDir">
 ): SttUsabilityResult {
-  const preference = sttPreference(state);
-  const activeModel = selectReadyActiveVoiceModel(state.modelLibrary, runtimeService, paths, preference);
+  const activeModel = selectReadyActiveVoiceModel(state.modelLibrary, runtimeService, paths);
   if (activeModel) {
     const provider = transcriptionProviderFromModel(activeModel, state.transcriptionProviders);
-    if (provider && providerUsable(provider, runtimeService, paths, preference)) {
+    if (provider && providerUsable(provider, runtimeService, paths)) {
       return { usable: true, reason: `${activeModel.name} is ready.` };
     }
   }
 
   for (const provider of state.transcriptionProviders) {
-    if (providerUsable(provider, runtimeService, paths, preference)) {
+    if (providerUsable(provider, runtimeService, paths)) {
       return { usable: true, reason: `${provider.name} is configured.` };
     }
   }
@@ -150,30 +147,28 @@ export function sttRuntimeIdForModel(item: ModelCatalogItem): SttRuntimeId | nul
 
 function selectReadyActiveVoiceModel(
   modelLibrary: ModelLibrarySnapshot,
-  runtimeService: Pick<SttRuntimeService, "getAvailability" | "getAvailabilityForPreference">,
-  paths: Pick<AppPaths, "modelDir">,
-  preference: SttAccelerationPreference
+  runtimeService: Pick<SttRuntimeService, "getAvailability" | "getAutomaticAvailability">,
+  paths: Pick<AppPaths, "modelDir">
 ): ModelCatalogItem | undefined {
   const modelId = modelLibrary.activeModelIds.voice;
   const item = modelId ? modelLibrary.catalog.find((candidate) => candidate.id === modelId && candidate.kind === "voice") : undefined;
   if (!item) return undefined;
-  if (!modelReady(item, modelLibrary, runtimeService, paths, preference)) return undefined;
+  if (!modelReady(item, modelLibrary, runtimeService, paths)) return undefined;
   return item;
 }
 
 function providerUsable(
   provider: TranscriptionProviderConfig,
-  runtimeService: Pick<SttRuntimeService, "getAvailability" | "getAvailabilityForPreference">,
-  paths: Pick<AppPaths, "modelDir">,
-  preference: SttAccelerationPreference
+  runtimeService: Pick<SttRuntimeService, "getAvailability" | "getAutomaticAvailability">,
+  paths: Pick<AppPaths, "modelDir">
 ): boolean {
   if (!isBaseTranscriptionProviderUsable(provider)) return false;
 
   if (provider.type === "whisper_cpp" && provider.baseUrl === "murmur://runtime/whisper.cpp") {
-    return bundledProviderReady(provider, "whisper.cpp", runtimeService, paths, preference);
+    return bundledProviderReady(provider, "whisper.cpp", runtimeService, paths);
   }
   if (provider.type === "sherpa_onnx") {
-    return bundledProviderReady(provider, "sherpa-onnx", runtimeService, paths, preference);
+    return bundledProviderReady(provider, "sherpa-onnx", runtimeService, paths);
   }
 
   return true;
@@ -182,11 +177,10 @@ function providerUsable(
 function bundledProviderReady(
   provider: TranscriptionProviderConfig,
   runtimeId: SttRuntimeId,
-  runtimeService: Pick<SttRuntimeService, "getAvailabilityForPreference">,
-  paths: Pick<AppPaths, "modelDir">,
-  preference: SttAccelerationPreference
+  runtimeService: Pick<SttRuntimeService, "getAutomaticAvailability">,
+  paths: Pick<AppPaths, "modelDir">
 ): boolean {
-  if (runtimeService.getAvailabilityForPreference(runtimeId, preference).status !== "available") return false;
+  if (runtimeService.getAutomaticAvailability(runtimeId).status !== "available") return false;
   if (!provider.defaultModel) return false;
   const modelPath = isAbsolute(provider.defaultModel) ? provider.defaultModel : join(paths.modelDir, provider.defaultModel);
   return existsSync(modelPath);
@@ -195,12 +189,11 @@ function bundledProviderReady(
 function modelReady(
   item: ModelCatalogItem,
   modelLibrary: ModelLibrarySnapshot,
-  runtimeService: Pick<SttRuntimeService, "getAvailability" | "getAvailabilityForPreference">,
-  paths: Pick<AppPaths, "modelDir">,
-  preference: SttAccelerationPreference
+  runtimeService: Pick<SttRuntimeService, "getAvailability" | "getAutomaticAvailability">,
+  paths: Pick<AppPaths, "modelDir">
 ): boolean {
   const runtimeId = sttRuntimeIdForModel(item);
-  if (runtimeId && runtimeService.getAvailabilityForPreference(runtimeId, preference).status !== "available") return false;
+  if (runtimeId && runtimeService.getAutomaticAvailability(runtimeId).status !== "available") return false;
   if (item.downloadStrategy === "none") return true;
   const download = modelLibrary.downloads.find((candidate) => candidate.modelId === item.id);
   if (download?.status !== "downloaded") return false;
@@ -208,8 +201,4 @@ function modelReady(
   if (!modelName) return false;
   const modelPath = isAbsolute(modelName) ? modelName : join(paths.modelDir, modelName);
   return existsSync(modelPath);
-}
-
-function sttPreference(state: { settings?: Pick<AppSettings, "sttAccelerationPreference"> }): SttAccelerationPreference {
-  return state.settings?.sttAccelerationPreference ?? "auto";
 }

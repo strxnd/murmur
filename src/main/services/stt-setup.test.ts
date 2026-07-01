@@ -122,7 +122,7 @@ function fakeRuntimeService(
         message: `${id} ${status}`
       };
     },
-    getAvailabilityForPreference(id: SttRuntimeId): SttRuntimeAvailability {
+    getAutomaticAvailability(id: SttRuntimeId): SttRuntimeAvailability {
       return runtime.getAvailability(id);
     },
     getInstallState(id: SttRuntimeId): SttRuntimeInstallState {

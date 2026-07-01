@@ -26,7 +26,6 @@ import {
   type SttRuntimeCatalogEntry
 } from "../../shared/stt-runtime-catalog";
 import type {
-  SttAccelerationPreference,
   SttRuntimeAccelerator,
   SttRuntimeAvailability,
   SttRuntimeId,
@@ -230,12 +229,12 @@ export class SttRuntimeService {
     };
   }
 
-  getAvailabilityForPreference(id: SttRuntimeId, preference: SttAccelerationPreference = "auto"): SttRuntimeAvailability {
-    for (const accelerator of this.acceleratorOrder(id, preference)) {
+  getAutomaticAvailability(id: SttRuntimeId): SttRuntimeAvailability {
+    for (const accelerator of this.automaticAcceleratorOrder(id)) {
       const availability = this.getAvailability(id, accelerator);
       if (availability.status === "available") return availability;
     }
-    return this.getAvailability(id, preference === "auto" ? "cpu" : preference);
+    return this.getAvailability(id, "cpu");
   }
 
   getAvailabilities(): Record<SttRuntimeVariantKey, SttRuntimeAvailability> {
@@ -398,14 +397,14 @@ export class SttRuntimeService {
     };
   }
 
-  requireRuntimeForPreference(id: SttRuntimeId, preference: SttAccelerationPreference = "auto"): ResolvedSttRuntime {
+  requireAutomaticRuntime(id: SttRuntimeId): ResolvedSttRuntime {
     const attempted: string[] = [];
-    for (const accelerator of this.acceleratorOrder(id, preference)) {
+    for (const accelerator of this.automaticAcceleratorOrder(id)) {
       const availability = this.getAvailability(id, accelerator);
       attempted.push(`${availability.label}: ${availability.message}`);
       if (availability.status === "available") return this.requireRuntime(id, accelerator);
     }
-    throw new Error(`No ${this.definition(id).label} runtime is available for preference "${preference}". ${attempted.join(" ")}`);
+    throw new Error(`No ${this.definition(id).label} runtime is available. ${attempted.join(" ")}`);
   }
 
   buildSpawnEnv(runtime: Omit<ResolvedSttRuntime, "env">): NodeJS.ProcessEnv {
@@ -803,8 +802,7 @@ export class SttRuntimeService {
     };
   }
 
-  private acceleratorOrder(id: SttRuntimeId, preference: SttAccelerationPreference): SttRuntimeAccelerator[] {
-    if (preference !== "auto") return [preference];
+  private automaticAcceleratorOrder(id: SttRuntimeId): SttRuntimeAccelerator[] {
     const definition = this.definition(id);
     const platformKey = this.getPlatformKey();
     const supported = new Set(getSttRuntimeSupportedAccelerators(definition, platformKey));

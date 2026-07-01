@@ -148,6 +148,29 @@ describe("SttRuntimeService", () => {
     expect(states["whisper.cpp|linux-x64|cuda|0.1.0"].status).toBe("ready");
   });
 
+  it("selects an accelerated runtime before CPU automatically", () => {
+    const root = tempRoot();
+    const cpuBinary = touch(join(root, "vendor", "runtimes", "linux-x64", "whisper.cpp", "whisper-server"));
+    const cudaBinary = touch(join(root, "vendor", "runtimes", "linux-x64", "whisper.cpp-cuda", "whisper-server"));
+
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      env: {}
+    });
+
+    const availability = service.getAutomaticAvailability("whisper.cpp");
+    expect(availability.status).toBe("available");
+    expect(availability.accelerator).toBe("cuda");
+    expect(availability.binaryPath).toBe(cudaBinary);
+
+    const runtime = service.requireAutomaticRuntime("whisper.cpp");
+    expect(runtime.accelerator).toBe("cuda");
+    expect(runtime.binaryPath).toBe(cudaBinary);
+    expect(runtime.binaryPath).not.toBe(cpuBinary);
+  });
+
   it("allows packaged GPU downloads only when release metadata is fully pinned", () => {
     const catalog = structuredClone(sttRuntimeCatalog);
     catalog["whisper.cpp"].platforms["linux-x64"].url = "https://example.test/cpu.tar.gz";

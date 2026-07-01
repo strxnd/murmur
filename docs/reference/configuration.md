@@ -33,7 +33,7 @@ Important settings:
 - `activationHotkey`: Electron accelerator string.
 - `modeSelectorHotkey`: Electron accelerator string for the centered mode selector overlay.
 - `recordingPillPosition`: `bottom_left`, `bottom_center`, or `bottom_right`.
-- `sttAccelerationPreference`: `auto`, `cpu`, `cuda`, or `apple` for Murmur-managed local STT runtimes only.
+- Murmur-managed local STT runtimes choose acceleration automatically. When an accelerated runtime is available, it is used before CPU.
 - `accelerationRuntimeInstallPromptDismissedAt`: timestamp recorded when the first-entry accelerated runtime install prompt is dismissed.
 
 ## Modes
