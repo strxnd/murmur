@@ -26,6 +26,8 @@ const sections: Array<{ id: SectionId; label: string; icon: LucideIcon }> = [
   { id: "history", label: "History", icon: Clock3 }
 ];
 
+const panelClassName = "h-full min-h-0 overflow-auto outline-none";
+
 export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
   const [activeSection, setActiveSection] = useState<SectionId>("home");
   const [configurationHasUnsavedChanges, setConfigurationHasUnsavedChanges] = useState(false);
@@ -94,30 +96,30 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
 
         </aside>
 
-        <section className="min-w-0 overflow-auto">
-          <Tabs.Panel value="home" id="home" className="outline-none">
+        <section className="min-h-0 min-w-0">
+          <Tabs.Panel value="home" id="home" className={panelClassName}>
             <HomeView
               state={state}
               onOpenModels={() => changeSection("models")}
               onOpenOnboarding={() => setOnboardingOpen(true)}
             />
           </Tabs.Panel>
-          <Tabs.Panel value="modes" id="modes" className="outline-none">
+          <Tabs.Panel value="modes" id="modes" className={panelClassName}>
             <ModesView state={state} />
           </Tabs.Panel>
-          <Tabs.Panel value="vocabulary" id="vocabulary" className="outline-none">
+          <Tabs.Panel value="vocabulary" id="vocabulary" className={panelClassName}>
             <VocabularyView state={state} />
           </Tabs.Panel>
-          <Tabs.Panel value="configuration" id="configuration" className="outline-none">
+          <Tabs.Panel value="configuration" id="configuration" className={panelClassName}>
             <ConfigurationView state={state} onUnsavedChangesChange={setConfigurationHasUnsavedChanges} />
           </Tabs.Panel>
-          <Tabs.Panel value="providers" id="providers" className="outline-none">
+          <Tabs.Panel value="providers" id="providers" className={panelClassName}>
             <ProvidersView state={state} />
           </Tabs.Panel>
-          <Tabs.Panel value="models" id="models" className="outline-none">
+          <Tabs.Panel value="models" id="models" className={panelClassName}>
             <ModelsLibraryView state={state} />
           </Tabs.Panel>
-          <Tabs.Panel value="history" id="history" className="outline-none">
+          <Tabs.Panel value="history" id="history" className={panelClassName}>
             <HistoryView state={state} />
           </Tabs.Panel>
         </section>

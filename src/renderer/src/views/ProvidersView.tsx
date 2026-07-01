@@ -640,9 +640,26 @@ function CustomProviderEditor({
           <Button size="sm" onClick={onValidate} disabled={validation?.status === "validating"}>
             <CheckCircle2 size={15} /> {validation?.status === "validating" ? "Validating..." : "Validate"}
           </Button>
-          <IconButton title="Delete provider" tone="danger" onClick={onDelete}>
-            <Trash2 size={18} />
-          </IconButton>
+          <Dialog.Root>
+            <Dialog.Trigger render={<IconButton title="Delete provider" tone="danger" />}>
+              <Trash2 size={18} />
+            </Dialog.Trigger>
+            <Dialog.Portal>
+              <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/50" />
+              <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-[var(--console-dialog-shadow)] outline-none">
+                <Dialog.Title className="m-0 text-base font-semibold text-foreground">Delete provider?</Dialog.Title>
+                <Dialog.Description className="m-0 mt-2 text-sm leading-6 text-muted-foreground">
+                  This will remove {providerDisplayName(entry)} from custom providers. Save changes to persist the deletion.
+                </Dialog.Description>
+                <div className="mt-5 flex justify-end gap-2">
+                  <Dialog.Close render={<Button variant="secondary" />}>Cancel</Dialog.Close>
+                  <Dialog.Close onClick={onDelete} render={<Button variant="danger" />}>
+                    Delete provider
+                  </Dialog.Close>
+                </div>
+              </Dialog.Popup>
+            </Dialog.Portal>
+          </Dialog.Root>
           <IconButton title="Close" onClick={onClose}>
             <X size={18} />
           </IconButton>

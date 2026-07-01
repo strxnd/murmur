@@ -32,6 +32,8 @@ export function Select<TValue extends string = string>({
   className,
   popupClassName
 }: SelectProps<TValue>): ReactNode {
+  const selectedItem = items.find((item) => item.value === value);
+
   return (
     <BaseSelect.Root<TValue>
       items={items}
@@ -43,11 +45,14 @@ export function Select<TValue extends string = string>({
       <BaseSelect.Trigger
         aria-label={ariaLabel}
         className={cn(
-          "flex min-h-9 w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-2.5 py-2 text-left text-sm text-foreground outline-none transition-colors focus-visible:border-foreground/70 focus-visible:ring-2 focus-visible:ring-foreground/20 data-[placeholder]:text-subtle data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50",
+          "flex min-h-9 w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-2.5 py-2 text-left text-sm text-foreground outline-none transition-colors focus-visible:border-foreground/70 focus-visible:ring-2 focus-visible:ring-foreground/20 data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50",
+          !selectedItem && "data-[placeholder]:text-subtle",
           className
         )}
       >
-        <BaseSelect.Value className="min-w-0 flex-1 truncate" placeholder={placeholder} />
+        <BaseSelect.Value className="min-w-0 flex-1 truncate" placeholder={placeholder}>
+          {selectedItem ? () => selectedItem.label : undefined}
+        </BaseSelect.Value>
         <BaseSelect.Icon className="shrink-0 text-muted-foreground">
           <ChevronDown size={16} />
         </BaseSelect.Icon>

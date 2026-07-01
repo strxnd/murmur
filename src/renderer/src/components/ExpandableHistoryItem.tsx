@@ -1,3 +1,4 @@
+import { Dialog } from "@base-ui/react/dialog";
 import { ChevronDown, ChevronRight, Clipboard, Copy, Trash2, Wand2 } from "lucide-react";
 import { useId, type JSX } from "react";
 import type { DictationHistoryItem } from "../../../shared/types";
@@ -66,9 +67,26 @@ export function ExpandableHistoryItem({ item, expanded, onToggle }: ExpandableHi
                 <IconButton title="Reprocess" onClick={() => void reprocessHistoryItem(item.id)}>
                   <Wand2 size={18} />
                 </IconButton>
-                <Button variant="danger" size="sm" onClick={() => void deleteHistoryItem(item.id)}>
-                  <Trash2 size={16} /> Delete
-                </Button>
+                <Dialog.Root>
+                  <Dialog.Trigger render={<Button variant="danger" size="sm" />}>
+                    <Trash2 size={16} /> Delete
+                  </Dialog.Trigger>
+                  <Dialog.Portal>
+                    <Dialog.Backdrop className="fixed inset-0 z-40 bg-black/50" />
+                    <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-[var(--console-dialog-shadow)] outline-none">
+                      <Dialog.Title className="m-0 text-base font-semibold text-foreground">Delete history item?</Dialog.Title>
+                      <Dialog.Description className="m-0 mt-2 text-sm leading-6 text-muted-foreground">
+                        This dictation history item will be permanently deleted. This cannot be undone.
+                      </Dialog.Description>
+                      <div className="mt-5 flex justify-end gap-2">
+                        <Dialog.Close render={<Button variant="secondary" />}>Cancel</Dialog.Close>
+                        <Dialog.Close onClick={() => void deleteHistoryItem(item.id)} render={<Button variant="danger" />}>
+                          Delete item
+                        </Dialog.Close>
+                      </div>
+                    </Dialog.Popup>
+                  </Dialog.Portal>
+                </Dialog.Root>
               </Toolbar>
             </div>
           </div>

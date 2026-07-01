@@ -1,5 +1,4 @@
 import { Dialog } from "@base-ui/react/dialog";
-import { Popover } from "@base-ui/react/popover";
 import {
   BrainCircuit,
   Check,
@@ -29,6 +28,7 @@ import {
   resolveProviderSetupTarget,
   type ProviderSetupTarget
 } from "../../../shared/model-provider-setup";
+import { DownloadProgressStatus } from "../components/DownloadProgressStatus";
 import { View } from "../components/View";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -37,12 +37,12 @@ import { Field } from "../components/ui/Field";
 import { IconButton } from "../components/ui/IconButton";
 import { Input } from "../components/ui/Input";
 import { Panel } from "../components/ui/Panel";
-import { ProgressBar } from "../components/ui/ProgressBar";
 import { Select } from "../components/ui/Select";
 import { Toolbar } from "../components/ui/Toolbar";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { cn } from "../lib/cn";
-import { runtimeInstallForModel, runtimeProgressValue, runtimeStatusLabel, userRuntimeStatusMessage } from "../lib/runtimes";
+import { downloadProgressSummary, formatBytes } from "../lib/download-progress";
+import { runtimeInstallForModel, runtimeStatusLabel, userRuntimeStatusMessage } from "../lib/runtimes";
 import { useMurmurStore } from "../state/murmur-store";
 
 type ModelFilter = "all" | "voice" | "language" | "offline" | "favorites" | "downloaded";
@@ -156,20 +156,21 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
               const download = downloadsById.get(item.id);
               const active = isActiveModel(state, item, download);
               const runtime = runtimeInstallForModel(state, item);
+              const isOpen = openModelId === item.id;
+              const detailId = modelDetailId(item.id);
               return (
-                <Popover.Root
-                  key={item.id}
-                  open={openModelId === item.id}
-                  onOpenChange={(open) => setOpenModelId(open ? item.id : null)}
-                >
-                  <Popover.Trigger
+                <article key={item.id} className="flex flex-col">
+                  <button
                     type="button"
                     className={cn(
                       "model-row grid min-h-14 w-full grid-cols-[2.25rem_minmax(0,1fr)_auto_1rem] items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-left outline-none hover:bg-muted/70 focus-visible:bg-muted",
-                      openModelId === item.id && "bg-muted"
+                      isOpen && "rounded-b-none bg-muted"
                     )}
+                    aria-expanded={isOpen}
+                    aria-controls={detailId}
+                    onClick={() => setOpenModelId((current) => (current === item.id ? null : item.id))}
                   >
-                    <ModelGlyph item={item} active={openModelId === item.id || active} />
+                    <ModelGlyph item={item} active={isOpen || active} />
                     <span className="flex min-w-0 items-center gap-2">
                       <span className="truncate text-sm font-medium text-foreground">{item.name}</span>
                       {active && (
@@ -188,35 +189,33 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
                     </span>
                     <ChevronRight
                       size={16}
-                      className={cn("model-row-chevron text-muted-foreground", openModelId === item.id && "rotate-90 text-foreground")}
+                      className={cn("model-row-chevron text-muted-foreground", isOpen && "rotate-90 text-foreground")}
                     />
-                  </Popover.Trigger>
-                  <Popover.Portal>
-                    <Popover.Positioner side="bottom" align="start" sideOffset={8} className="z-50 outline-none">
-                      <Popover.Popup
-                        className="model-popover-popup overflow-y-auto rounded-md border border-border bg-surface-raised p-4 text-sm text-foreground shadow-[var(--console-popover-shadow)] outline-none"
-                        style={{ width: "min(36rem, calc(100vw - 2rem))", maxHeight: "calc(100vh - 7rem)" }}
-                      >
-                        <ModelPopover
-                          state={state}
-                          item={item}
-                          download={download}
-                          active={active}
-                          onToggleFavorite={() => void toggleFavoriteModel(item.id)}
-                          onDownload={() => void downloadModel(item.id)}
-                          onCancelDownload={() => void cancelModelDownload(item.id)}
-                          onDelete={() => void deleteDownloadedModel(item.id)}
-                          onActivate={() => void activateModel(item.id)}
-                          onInstallRuntime={() => runtime && void downloadSttRuntime(runtime.variantKey)}
-                          onRepairRuntime={() => runtime && void repairSttRuntime(runtime.variantKey)}
-                          onCancelRuntimeDownload={() => runtime && void cancelSttRuntimeDownload(runtime.variantKey)}
-                          onClose={() => setOpenModelId(null)}
-                          runtime={runtime}
-                        />
-                      </Popover.Popup>
-                    </Popover.Positioner>
-                  </Popover.Portal>
-                </Popover.Root>
+                  </button>
+                  {isOpen && (
+                    <div
+                      id={detailId}
+                      className="model-detail-panel rounded-b-md border border-t-0 border-border bg-surface-raised p-4 text-sm text-foreground shadow-[var(--console-popover-shadow)]"
+                    >
+                      <ModelDetails
+                        state={state}
+                        item={item}
+                        download={download}
+                        active={active}
+                        onToggleFavorite={() => void toggleFavoriteModel(item.id)}
+                        onDownload={() => void downloadModel(item.id)}
+                        onCancelDownload={() => void cancelModelDownload(item.id)}
+                        onDelete={() => void deleteDownloadedModel(item.id)}
+                        onActivate={() => void activateModel(item.id)}
+                        onInstallRuntime={() => runtime && void downloadSttRuntime(runtime.variantKey)}
+                        onRepairRuntime={() => runtime && void repairSttRuntime(runtime.variantKey)}
+                        onCancelRuntimeDownload={() => runtime && void cancelSttRuntimeDownload(runtime.variantKey)}
+                        onClose={() => setOpenModelId(null)}
+                        runtime={runtime}
+                      />
+                    </div>
+                  )}
+                </article>
               );
             })}
           </div>
@@ -227,7 +226,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
   );
 }
 
-function ModelPopover({
+function ModelDetails({
   state,
   item,
   download,
@@ -263,7 +262,7 @@ function ModelPopover({
     item.downloadStrategy === "none"
       ? providerModelLabel(item)
       : status === "downloading"
-        ? progressLabel(download)
+        ? downloadProgressSummary(download)
         : statusLabel(status);
   const canDownload = item.downloadStrategy !== "none" && status !== "downloading" && status !== "downloaded";
   const canCancelDownload = item.downloadStrategy !== "none" && status === "downloading";
@@ -278,10 +277,10 @@ function ModelPopover({
     (item.downloadStrategy === "none" || status === "downloaded");
   const setupTarget = resolveProviderSetupTarget(item);
   const [providerSetupOpen, setProviderSetupOpen] = useState(false);
-  const popoverParent = useAutoAnimateRef<HTMLDivElement>();
+  const detailParent = useAutoAnimateRef<HTMLDivElement>();
 
   return (
-    <div ref={popoverParent} className="flex flex-col gap-4">
+    <div ref={detailParent} className="flex flex-col gap-4">
       <header className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <ModelGlyph item={item} active />
@@ -328,8 +327,22 @@ function ModelPopover({
         <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">Local provider is not reachable.</p>
       )}
 
-      {status === "downloading" && <ProgressBar value={progressValue(download)} label={`Downloading ${item.name}`} />}
-      {runtimeBusy && <ProgressBar value={runtimeProgressValue(runtime)} label={`${runtime.label} install progress`} />}
+      {status === "downloading" && download && (
+        <DownloadProgressStatus
+          progressKey={`model:${item.id}`}
+          progressBytes={download.progressBytes}
+          totalBytes={download.totalBytes}
+          label={`Downloading ${item.name}`}
+        />
+      )}
+      {runtimeBusy && runtime && (
+        <DownloadProgressStatus
+          progressKey={`runtime:${runtime.variantKey}`}
+          progressBytes={runtime.progressBytes}
+          totalBytes={runtime.totalBytes}
+          label={`${runtime.label} install progress`}
+        />
+      )}
 
       <Toolbar>
         {runtime && runtime.status !== "ready" && runtime.canDownload && (
@@ -705,6 +718,10 @@ function isModelDownloadedOrAvailable(item: ModelCatalogItem, download?: ModelDo
   return download?.status === "downloaded" || Boolean(item.discovery?.reachable);
 }
 
+function modelDetailId(modelId: string): string {
+  return `model-detail-${modelId.replace(/[^A-Za-z0-9_-]/g, "-")}`;
+}
+
 type ProviderIcon = ({ className }: { className?: string }) => JSX.Element;
 
 const openAiLogoPath = [
@@ -786,23 +803,6 @@ function statusLabel(status: ModelDownloadState["status"] | "not_downloaded"): s
   if (status === "downloading") return "Downloading";
   if (status === "error") return "Error";
   return "Not downloaded";
-}
-
-function progressLabel(download: ModelDownloadState | undefined): string {
-  if (!download) return "Downloading";
-  if (!download.totalBytes) return `${formatBytes(download.progressBytes)} downloaded`;
-  return `${formatBytes(download.progressBytes)} / ${formatBytes(download.totalBytes)}`;
-}
-
-function progressValue(download: ModelDownloadState | undefined): number | null {
-  if (!download?.totalBytes) return null;
-  return Math.max(4, Math.min(100, (download.progressBytes / download.totalBytes) * 100));
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 function errorMessage(error: unknown): string {

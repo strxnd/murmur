@@ -3,10 +3,11 @@ import type { JSX } from "react";
 import type { ModelCatalogItem, ModelDownloadState } from "../../../shared/types";
 import { canActivateModel } from "../../../shared/model-activation";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
+import { downloadProgressSummary, formatBytes } from "../lib/download-progress";
+import { DownloadProgressStatus } from "./DownloadProgressStatus";
 import { Badge } from "./ui/Badge";
 import { Button } from "./ui/Button";
 import { IconButton } from "./ui/IconButton";
-import { ProgressBar } from "./ui/ProgressBar";
 import { Toolbar } from "./ui/Toolbar";
 
 interface ModelCardProps {
@@ -27,7 +28,7 @@ export function ModelCard({
   onActivate
 }: ModelCardProps): JSX.Element {
   const status = download?.status ?? "not_downloaded";
-  const progress = status === "downloading" ? progressLabel(download) : statusLabel(status);
+  const progress = status === "downloading" ? downloadProgressSummary(download) : statusLabel(status);
   const canDownload = item.downloadStrategy !== "none" && status !== "downloading" && status !== "downloaded";
   const canDelete = item.downloadStrategy !== "none" && status === "downloaded";
   const canActivate = canActivateModel(item) && (!item.discovery || item.discovery.reachable) && (item.downloadStrategy === "none" || status === "downloaded");
@@ -56,8 +57,13 @@ export function ModelCard({
 
       {download?.error && <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">Download failed. Try again.</p>}
 
-      {status === "downloading" && (
-        <ProgressBar value={progressValue(download)} label={`Downloading ${item.name}`} />
+      {status === "downloading" && download && (
+        <DownloadProgressStatus
+          progressKey={`model:${item.id}`}
+          progressBytes={download.progressBytes}
+          totalBytes={download.totalBytes}
+          label={`Downloading ${item.name}`}
+        />
       )}
 
       <Toolbar className="mt-auto">
@@ -108,21 +114,4 @@ function statusLabel(status: ModelDownloadState["status"] | "not_downloaded"): s
   if (status === "downloading") return "Downloading";
   if (status === "error") return "Error";
   return "Not downloaded";
-}
-
-function progressLabel(download: ModelDownloadState | undefined): string {
-  if (!download) return "Downloading";
-  if (!download.totalBytes) return `${formatBytes(download.progressBytes)} downloaded`;
-  return `${formatBytes(download.progressBytes)} / ${formatBytes(download.totalBytes)}`;
-}
-
-function progressValue(download: ModelDownloadState | undefined): number | null {
-  if (!download?.totalBytes) return null;
-  return Math.max(4, Math.min(100, (download.progressBytes / download.totalBytes) * 100));
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }

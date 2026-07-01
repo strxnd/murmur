@@ -159,15 +159,24 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
   const setModes = useMurmurStore((store) => store.setModes);
   const activateMode = useMurmurStore((store) => store.activateMode);
   const [openModeId, setOpenModeId] = useState<string | null>(null);
+  const [isCreatingMode, setIsCreatingMode] = useState(false);
   const [isModeDialogOpen, setIsModeDialogOpen] = useState(false);
   const form = useForm<ModesFormValues>({
     resolver: zodResolver(modesFormSchema),
     defaultValues: { modes: state.modes }
   });
+  const draftForm = useForm<ModesFormValues>({
+    resolver: zodResolver(modesFormSchema),
+    defaultValues: { modes: [] }
+  });
   const modes = form.watch("modes");
+  const draftMode = draftForm.watch("modes")[0];
   const openModeIndex = openModeId ? modes.findIndex((mode) => mode.id === openModeId) : -1;
   const openMode = openModeIndex >= 0 ? modes[openModeIndex] : undefined;
-  const modeDialogOpen = isModeDialogOpen && Boolean(openMode);
+  const dialogMode = isCreatingMode ? draftMode : openMode;
+  const dialogForm = isCreatingMode ? draftForm : form;
+  const dialogModeIndex = isCreatingMode ? 0 : openModeIndex;
+  const modeDialogOpen = isModeDialogOpen && Boolean(dialogMode);
   const modeListParent = useAutoAnimateRef<HTMLDivElement>();
 
   useEffect(() => {
@@ -183,10 +192,21 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
 
   const createMode = (): void => {
     const next = createBlankMode();
-    form.setValue("modes", [...form.getValues("modes"), next], { shouldDirty: true, shouldValidate: true });
-    setOpenModeId(next.id);
+    draftForm.reset({ modes: [next] });
+    setIsCreatingMode(true);
+    setOpenModeId(null);
     setIsModeDialogOpen(true);
   };
+
+  const commitDraftMode = draftForm.handleSubmit((values) => {
+    const next = values.modes[0];
+    if (!next) return;
+
+    form.setValue("modes", [...form.getValues("modes"), next], { shouldDirty: true, shouldValidate: true });
+    draftForm.reset({ modes: [] });
+    setIsCreatingMode(false);
+    closeModePopup();
+  });
 
   const closeModePopup = (): void => {
     setIsModeDialogOpen(false);
@@ -236,9 +256,11 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
                 type="button"
                 className={cn(
                   "mode-row grid min-h-14 w-full grid-cols-[2.25rem_minmax(0,1fr)_auto_1rem] items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-left outline-none hover:bg-muted/70 focus-visible:bg-muted",
-                  openModeId === mode.id && "bg-muted"
+                  !isCreatingMode && openModeId === mode.id && "bg-muted"
                 )}
                 onClick={() => {
+                  setIsCreatingMode(false);
+                  draftForm.reset({ modes: [] });
                   setOpenModeId(mode.id);
                   setIsModeDialogOpen(true);
                 }}
@@ -255,7 +277,10 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
                 </span>
                 <ChevronRight
                   size={16}
-                  className={cn("mode-row-chevron text-muted-foreground", openModeId === mode.id && "rotate-90 text-foreground")}
+                  className={cn(
+                    "mode-row-chevron text-muted-foreground",
+                    !isCreatingMode && openModeId === mode.id && "rotate-90 text-foreground"
+                  )}
                 />
               </button>
             ))}
@@ -273,7 +298,13 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
           }
         }}
         onOpenChangeComplete={(open) => {
-          if (!open) setOpenModeId(null);
+          if (!open) {
+            setOpenModeId(null);
+            if (isCreatingMode) {
+              draftForm.reset({ modes: [] });
+              setIsCreatingMode(false);
+            }
+          }
         }}
       >
         <Dialog.Portal>
@@ -282,15 +313,16 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
             className="mode-dialog-popup fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-3rem)] overflow-y-auto rounded-md border border-border bg-surface-raised p-4 text-sm text-foreground shadow-[var(--console-dialog-shadow)] outline-none"
             style={{ width: "min(36rem, calc(100vw - 2rem))" }}
           >
-            {openMode && (
+            {dialogMode && (
               <ModeEditor
-                form={form}
-                index={openModeIndex}
-                mode={openMode}
+                form={dialogForm}
+                index={dialogModeIndex}
+                mode={dialogMode}
                 activeModeId={state.settings.activeModeId}
+                onCreate={isCreatingMode ? () => void commitDraftMode() : undefined}
                 onClose={closeModePopup}
-                onDelete={() => deleteMode(openMode.id)}
-                onMakeActive={() => makeActive(openMode.id)}
+                onDelete={isCreatingMode ? undefined : () => deleteMode(dialogMode.id)}
+                onMakeActive={isCreatingMode ? undefined : () => makeActive(dialogMode.id)}
               />
             )}
           </Dialog.Popup>
@@ -305,6 +337,7 @@ function ModeEditor({
   index,
   mode,
   activeModeId,
+  onCreate,
   onClose,
   onDelete,
   onMakeActive
@@ -313,9 +346,10 @@ function ModeEditor({
   index: number;
   mode: ModeConfig;
   activeModeId: string;
+  onCreate?: () => void;
   onClose: () => void;
-  onDelete: () => void;
-  onMakeActive: () => void;
+  onDelete?: () => void;
+  onMakeActive?: () => void;
 }): JSX.Element {
   const editorParent = useAutoAnimateRef<HTMLDivElement>();
   const isBuiltInMode = mode.kind === "built_in";
@@ -331,12 +365,20 @@ function ModeEditor({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <Button size="sm" onClick={onMakeActive} disabled={activeModeId === mode.id}>
-            <Check size={16} /> Make active
-          </Button>
-          <IconButton title="Delete mode" tone="danger" onClick={onDelete} disabled={mode.kind !== "custom"}>
-            <Trash2 size={18} />
-          </IconButton>
+          {onCreate ? (
+            <Button size="sm" variant="primary" onClick={onCreate}>
+              <Plus size={16} /> Create
+            </Button>
+          ) : (
+            <>
+              <Button size="sm" onClick={onMakeActive} disabled={!onMakeActive || activeModeId === mode.id}>
+                <Check size={16} /> Make active
+              </Button>
+              <IconButton title="Delete mode" tone="danger" onClick={onDelete} disabled={mode.kind !== "custom" || !onDelete}>
+                <Trash2 size={18} />
+              </IconButton>
+            </>
+          )}
           <IconButton title="Close" onClick={onClose}>
             <X size={18} />
           </IconButton>

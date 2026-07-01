@@ -13,16 +13,17 @@ import {
   type LucideIcon
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type RefObject } from "react";
-import type { AppStateSnapshot, ModelCatalogItem, SttRuntimeInstallState } from "../../../shared/types";
+import type { AppStateSnapshot, ModelCatalogItem, ModelDownloadState, SttRuntimeInstallState } from "../../../shared/types";
+import { DownloadProgressStatus } from "../components/DownloadProgressStatus";
 import { ShortcutRecorder } from "../components/ShortcutRecorder";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Field } from "../components/ui/Field";
 import { IconButton } from "../components/ui/IconButton";
-import { ProgressBar } from "../components/ui/ProgressBar";
 import { Select, type SelectItem } from "../components/ui/Select";
 import { Textarea } from "../components/ui/Textarea";
 import { cn } from "../lib/cn";
+import { downloadProgressSummary } from "../lib/download-progress";
 import { murmurClient } from "../lib/murmur-client";
 import { runtimeInstallForModel, runtimeStatusLabel, userRuntimeStatusMessage } from "../lib/runtimes";
 import {
@@ -32,7 +33,6 @@ import {
   onboardingLocalVoiceModels,
   onboardingStepIds,
   onboardingVoiceModel,
-  progressValue,
   runtimeIdForVoiceModel,
   type OnboardingStepId
 } from "../lib/onboarding";
@@ -424,8 +424,7 @@ export function OnboardingWizard({
                     runtimes={state.sttSetup.runtimes}
                     ready={selectedSttReady}
                     selectedModel={voiceModel}
-                    downloadStatus={download?.status ?? "not_downloaded"}
-                    downloadProgress={download ? progressValue(download.progressBytes, download.totalBytes) : null}
+                    download={download}
                     runtime={runtime}
                     setupError={sttError}
                     isSettingUp={isSettingUpStt}
@@ -537,8 +536,7 @@ function SttStep({
   runtimes,
   ready,
   selectedModel,
-  downloadStatus,
-  downloadProgress,
+  download,
   runtime,
   setupError,
   isSettingUp,
@@ -552,8 +550,7 @@ function SttStep({
   runtimes: AppStateSnapshot["sttSetup"]["runtimes"];
   ready: boolean;
   selectedModel: ModelCatalogItem | null;
-  downloadStatus: string;
-  downloadProgress: number | null;
+  download?: ModelDownloadState;
   runtime?: SttRuntimeInstallState;
   setupError: string | null;
   isSettingUp: boolean;
@@ -561,6 +558,7 @@ function SttStep({
   onSetup: () => void;
 }): JSX.Element {
   const runtimeBusy = runtime?.status === "downloading" || runtime?.status === "installing";
+  const downloadStatus = download?.status ?? "not_downloaded";
   const selectedModelName = selectedModel?.name ?? "No local STT model selected";
   const setupLabel = downloadStatus === "downloaded" ? "Activate" : "Download and activate";
 
@@ -575,7 +573,6 @@ function SttStep({
             : undefined;
           const selected = item.id === selectedModelId;
           const active = activeModelId === item.id;
-          const itemProgress = itemDownload ? progressValue(itemDownload.progressBytes, itemDownload.totalBytes) : null;
 
           return (
             <button
@@ -603,7 +600,15 @@ function SttStep({
                   {itemRuntime && <Badge tone={itemRuntime.status === "ready" ? "success" : "warning"}>{runtimeStatusLabel(itemRuntime)}</Badge>}
                 </div>
               </div>
-              {itemDownload?.status === "downloading" && <ProgressBar value={itemProgress} label={`${item.name} download progress`} className="mt-3" />}
+              {itemDownload?.status === "downloading" && (
+                <DownloadProgressStatus
+                  progressKey={`model:${item.id}`}
+                  progressBytes={itemDownload.progressBytes}
+                  totalBytes={itemDownload.totalBytes}
+                  label={`${item.name} download progress`}
+                  className="mt-3"
+                />
+              )}
             </button>
           );
         })}
@@ -611,7 +616,7 @@ function SttStep({
       {models.length === 0 && <StatusMessage status="error">No downloadable local STT models were found in the voice catalog.</StatusMessage>}
       <div className="grid grid-cols-3 gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm max-[760px]:grid-cols-1">
         <Metric label="Model" value={selectedModelName} />
-        <Metric label="Download" value={downloadStatusLabel(downloadStatus)} />
+        <Metric label="Download" value={downloadStatus === "downloading" ? downloadProgressSummary(download) : downloadStatusLabel(downloadStatus)} />
         <Metric label="Size" value={selectedModel?.sizeBytes ? formatBytes(selectedModel.sizeBytes) : "Managed"} />
       </div>
       {runtime && (
@@ -621,10 +626,24 @@ function SttStep({
             <Badge tone={runtime.status === "ready" ? "success" : "warning"}>{runtimeStatusLabel(runtime)}</Badge>
           </div>
           <p className="m-0 text-sm leading-6 text-muted-foreground">{userRuntimeStatusMessage(runtime)}</p>
-          {runtimeBusy && <ProgressBar value={progressValue(runtime.progressBytes, runtime.totalBytes)} label={`${runtime.label} install progress`} />}
+          {runtimeBusy && (
+            <DownloadProgressStatus
+              progressKey={`runtime:${runtime.variantKey}`}
+              progressBytes={runtime.progressBytes}
+              totalBytes={runtime.totalBytes}
+              label={`${runtime.label} install progress`}
+            />
+          )}
         </div>
       )}
-      {downloadStatus === "downloading" && <ProgressBar value={downloadProgress} label={`${selectedModelName} download progress`} />}
+      {downloadStatus === "downloading" && download && (
+        <DownloadProgressStatus
+          progressKey={`model:${download.modelId}`}
+          progressBytes={download.progressBytes}
+          totalBytes={download.totalBytes}
+          label={`${selectedModelName} download progress`}
+        />
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="primary" onClick={onSetup} disabled={!selectedModel || ready || isSettingUp}>
           {isSettingUp ? <Loader2 className="animate-spin" size={18} /> : <Download size={18} />}
@@ -683,6 +702,7 @@ function HotkeyTestStep({
         <ShortcutRecorder
           value={value}
           onChange={onChange}
+          label="Activation shortcut"
           onCaptureStart={murmurClient.beginHotkeyCapture}
           onCaptureEnd={murmurClient.endHotkeyCapture}
           disabled={saving}

@@ -6,6 +6,7 @@ import { cn } from "../lib/cn";
 interface ShortcutRecorderProps {
   value: string;
   onChange: (value: string) => void;
+  label?: string;
   onCaptureStart?: () => Promise<void> | void;
   onCaptureEnd?: () => Promise<void> | void;
   disabled?: boolean;
@@ -14,6 +15,7 @@ interface ShortcutRecorderProps {
 export function ShortcutRecorder({
   value,
   onChange,
+  label = "Shortcut",
   onCaptureStart,
   onCaptureEnd,
   disabled
@@ -91,14 +93,16 @@ export function ShortcutRecorder({
 
   const visibleShortcut = isRecording ? preview : value;
   const shortcutParts = shortcutDisplayParts(visibleShortcut);
+  const recordLabel = `Record ${label.toLowerCase()}`;
+  const currentShortcutLabel = value || "None";
 
   return (
     <button
       type="button"
       disabled={disabled}
       aria-pressed={isRecording}
-      aria-label={`Record shortcut. Current shortcut: ${value}`}
-      title={isRecording ? "Press a shortcut" : "Record shortcut"}
+      aria-label={`${label} recorder. Current shortcut: ${currentShortcutLabel}`}
+      title={isRecording ? "Press a shortcut" : recordLabel}
       onBlur={stopCapture}
       onClick={handleClick}
       onKeyDown={handleKeyDown}

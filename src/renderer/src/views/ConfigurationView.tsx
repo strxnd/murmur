@@ -8,6 +8,7 @@ import { z } from "zod";
 import type { AppSettings, AppStateSnapshot, SttRuntimeAccelerator, SttRuntimeInstallState } from "../../../shared/types";
 import { appSettingsSchema } from "../../../shared/schemas";
 import { AcceleratorMark, type BrandAccelerator } from "../components/AccelerationMark";
+import { DownloadProgressStatus } from "../components/DownloadProgressStatus";
 import { ShortcutRecorder } from "../components/ShortcutRecorder";
 import { View } from "../components/View";
 import { Badge } from "../components/ui/Badge";
@@ -15,7 +16,6 @@ import { Button } from "../components/ui/Button";
 import { Field } from "../components/ui/Field";
 import { Input } from "../components/ui/Input";
 import { Panel } from "../components/ui/Panel";
-import { ProgressBar } from "../components/ui/ProgressBar";
 import { Select, type SelectItem } from "../components/ui/Select";
 import { useAudioDevices } from "../hooks/useAudioDevices";
 import { murmurClient } from "../lib/murmur-client";
@@ -23,7 +23,6 @@ import {
   acceleratorLabel,
   detectedAccelerators as detectAccelerators,
   isRuntimeBusy,
-  runtimeProgressValue,
   uniqueRuntimeInstallStates
 } from "../lib/runtimes";
 import { useMurmurStore } from "../state/murmur-store";
@@ -271,10 +270,10 @@ export function ConfigurationView({
                 <FormSelect control={form.control} name="settings.activationMode" items={activationModeItems} />
               </Field>
               <Field label="Activation shortcut" error={form.formState.errors.settings?.activationHotkey?.message}>
-                <FormShortcutRecorder control={form.control} name="settings.activationHotkey" />
+                <FormShortcutRecorder control={form.control} name="settings.activationHotkey" label="Activation shortcut" />
               </Field>
               <Field label="Mode selector shortcut" error={form.formState.errors.settings?.modeSelectorHotkey?.message}>
-                <FormShortcutRecorder control={form.control} name="settings.modeSelectorHotkey" />
+                <FormShortcutRecorder control={form.control} name="settings.modeSelectorHotkey" label="Mode selector shortcut" />
               </Field>
             </div>
           </Panel>
@@ -360,7 +359,7 @@ interface AccelerationRow {
   status: string;
   detail: string;
   tone: AccelerationRowTone;
-  progress: number | null;
+  runtime?: SttRuntimeInstallState;
 }
 
 const accelerationOrder: BrandAccelerator[] = ["apple", "cuda"];
@@ -400,7 +399,15 @@ function AccelerationStatusRow({ row }: { row: AccelerationRow }): JSX.Element {
           <Badge tone={row.tone}>{row.status}</Badge>
         </div>
         <p className="m-0 mt-1 text-sm leading-6 text-muted-foreground">{row.detail}</p>
-        {row.progress !== null && <ProgressBar className="mt-3" value={row.progress} label={`${row.title} install progress`} />}
+        {row.runtime && isRuntimeBusy(row.runtime) && (
+          <DownloadProgressStatus
+            progressKey={`runtime:${row.runtime.variantKey}`}
+            progressBytes={row.runtime.progressBytes}
+            totalBytes={row.runtime.totalBytes}
+            label={`${row.title} install progress`}
+            className="mt-3"
+          />
+        )}
       </div>
     </article>
   );
@@ -426,7 +433,7 @@ function accelerationRow(
       status: `${title} ready`,
       detail: ready.map(runtimeProofLabel).join(", "),
       tone: "success",
-      progress: null
+      runtime: undefined
     };
   }
 
@@ -437,7 +444,7 @@ function accelerationRow(
       status: "Installing",
       detail: runtimeProofLabel(busy),
       tone: "neutral",
-      progress: runtimeProgressValue(busy)
+      runtime: busy
     };
   }
 
@@ -448,7 +455,7 @@ function accelerationRow(
       status: "Needs attention",
       detail: `${runtimeProofLabel(failed)} can be retried when acceleration is offered on Home.`,
       tone: "danger",
-      progress: null
+      runtime: undefined
     };
   }
 
@@ -462,7 +469,7 @@ function accelerationRow(
       ? "A compatible accelerator was detected. Install acceleration from Home."
       : "A compatible accelerator was detected. Acceleration is not available yet.",
     tone: "warning",
-    progress: null
+    runtime: undefined
   };
 }
 
@@ -523,10 +530,12 @@ function FormSelect({
 
 function FormShortcutRecorder({
   control,
-  name
+  name,
+  label
 }: {
   control: Control<ConfigurationFormValues>;
   name: ShortcutSettingPath;
+  label: string;
 }): JSX.Element {
   return (
     <Controller
@@ -536,6 +545,7 @@ function FormShortcutRecorder({
         <ShortcutRecorder
           value={String(field.value ?? "")}
           onChange={field.onChange}
+          label={label}
           onCaptureStart={murmurClient.beginHotkeyCapture}
           onCaptureEnd={murmurClient.endHotkeyCapture}
         />

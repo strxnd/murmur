@@ -4,6 +4,7 @@ import type { AppStateSnapshot, DictationHistoryItem } from "../../../shared/typ
 import { StatCard } from "../components/StatCard";
 import { View } from "../components/View";
 import { AccelerationMark } from "../components/AccelerationMark";
+import { DownloadProgressStatus } from "../components/DownloadProgressStatus";
 import { Button } from "../components/ui/Button";
 import { IconButton } from "../components/ui/IconButton";
 import { Panel } from "../components/ui/Panel";
@@ -151,7 +152,8 @@ function GpuRuntimeInstallCallout({ state }: { state: AppStateSnapshot }): JSX.E
 
   if (!prompt) return null;
 
-  const busy = isInstalling || prompt.candidates.some(isRuntimeBusy);
+  const activeRuntime = prompt.candidates.find(isRuntimeBusy);
+  const busy = isInstalling || Boolean(activeRuntime);
   const hasError = prompt.candidates.some((runtime) => runtime.status === "error");
   const canInstall = prompt.installable.length > 0;
   const label = busy
@@ -182,28 +184,38 @@ function GpuRuntimeInstallCallout({ state }: { state: AppStateSnapshot }): JSX.E
 
   return (
     <Panel className="border-emerald-500/45 bg-emerald-500/10 p-3">
-      <div className="flex items-center justify-between gap-3 max-[640px]:items-stretch">
-        <div className="flex min-h-10 min-w-0 flex-1 items-center gap-3">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-emerald-500 text-background">
-            <AccelerationMark accelerators={prompt.accelerators} />
-          </span>
-          <span className="truncate text-sm font-medium text-foreground">{label}</span>
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3 max-[640px]:items-stretch">
+          <div className="flex min-h-10 min-w-0 flex-1 items-center gap-3">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-emerald-500 text-background">
+              <AccelerationMark accelerators={prompt.accelerators} />
+            </span>
+            <span className="truncate text-sm font-medium text-foreground">{label}</span>
+          </div>
+          <Button
+            onClick={() => void installAccelerationRuntimes()}
+            disabled={busy || !canInstall}
+            title={canInstall ? undefined : "Acceleration downloads are not available yet."}
+            className="border-emerald-500 bg-emerald-500 text-background hover:border-emerald-600 hover:bg-emerald-600 focus-visible:ring-emerald-500/35"
+          >
+            {buttonLabel}
+          </Button>
+          <IconButton
+            title="Dismiss acceleration prompt"
+            onClick={dismiss}
+            className="border-emerald-500/35 bg-emerald-500/10 hover:bg-emerald-500/15"
+          >
+            <X size={18} />
+          </IconButton>
         </div>
-        <Button
-          onClick={() => void installAccelerationRuntimes()}
-          disabled={busy || !canInstall}
-          title={canInstall ? undefined : "Acceleration downloads are not available yet."}
-          className="border-emerald-500 bg-emerald-500 text-background hover:border-emerald-600 hover:bg-emerald-600 focus-visible:ring-emerald-500/35"
-        >
-          {buttonLabel}
-        </Button>
-        <IconButton
-          title="Dismiss acceleration prompt"
-          onClick={dismiss}
-          className="border-emerald-500/35 bg-emerald-500/10 hover:bg-emerald-500/15"
-        >
-          <X size={18} />
-        </IconButton>
+        {activeRuntime && (
+          <DownloadProgressStatus
+            progressKey={`runtime:${activeRuntime.variantKey}`}
+            progressBytes={activeRuntime.progressBytes}
+            totalBytes={activeRuntime.totalBytes}
+            label={`${activeRuntime.label} install progress`}
+          />
+        )}
       </div>
     </Panel>
   );
