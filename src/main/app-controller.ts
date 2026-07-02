@@ -1075,7 +1075,8 @@ export class AppController {
     if (["transcribing", "processing", "pasting"].includes(this.session.status)) return this.getSnapshot();
 
     const persisted = this.storage.getState();
-    const automation = this.ensureAutomationReadyForUserAction("dictation");
+    const source: RecordingSource = this.onboardingDictationScopeActive ? "onboarding" : "dictation";
+    const automation = source === "dictation" ? this.ensureAutomationReadyForUserAction("dictation") : { ready: true as const };
     if (!automation.ready) {
       this.session = {
         ...defaultSession,
@@ -1106,7 +1107,7 @@ export class AppController {
     const llmProvider = initialMode.aiEnabled ? this.selectLlmProvider(persisted) : undefined;
     const sessionId = createId("session");
 
-    this.sessionSource = this.onboardingDictationScopeActive ? "onboarding" : "dictation";
+    this.sessionSource = source;
     this.sessionContext = null;
     this.recordingStoppedAt = null;
     this.clearRecordingTimers();
@@ -1126,7 +1127,11 @@ export class AppController {
       preferredAudioInputId: persisted.settings.preferredAudioInputId
     });
     this.broadcastState();
-    this.beginRecordingContextCapture(sessionId, persisted);
+    if (source === "onboarding") {
+      this.sessionContext = unavailableContext("Onboarding dictation does not capture desktop context.");
+    } else {
+      this.beginRecordingContextCapture(sessionId, persisted);
+    }
     this.scheduleRecordingMaxDurationStop(sessionId);
     return this.getSnapshot();
   }
@@ -1289,13 +1294,8 @@ export class AppController {
       const recordingDurationMs = computeDurationMs(recordingStartedAt, recordingStoppedAt);
       const rawWordCount = countWords(transcription.text);
       const processedWordCount = countWords(processedText);
-      this.session = { ...this.session, status: "pasting" };
-      this.broadcastState();
-      this.hidePill();
-      const pasteResult = await this.paste.insertText(processedText);
-      if (!pasteResult.pasted) {
-        this.notifyPasteFallback(pasteResult.message);
-      }
+      const shouldPasteOutput = this.sessionSource !== "onboarding";
+      const pasteResult = shouldPasteOutput ? await this.pasteProcessedText(processedText) : { pasted: true, message: "" };
 
       const item: DictationHistoryItem = {
         id: createId("dictation"),
@@ -1349,6 +1349,17 @@ export class AppController {
     } catch (error) {
       return this.failSession(String(error instanceof Error ? error.message : error));
     }
+  }
+
+  private async pasteProcessedText(text: string): Promise<{ pasted: boolean; message: string }> {
+    this.session = { ...this.session, status: "pasting" };
+    this.broadcastState();
+    this.hidePill();
+    const pasteResult = await this.paste.insertText(text);
+    if (!pasteResult.pasted) {
+      this.notifyPasteFallback(pasteResult.message);
+    }
+    return pasteResult;
   }
 
   private forwardRecordingLevel(payload: unknown): void {
