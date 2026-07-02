@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeDurationMs, countWords, rendererQueryFromSuffix, wrapIndex } from "./app-controller";
+import { computeDurationMs, countWords, rendererQueryFromSuffix, shouldPersistDictationHistory, wrapIndex } from "./app-controller";
 
 describe("app-controller utility contracts", () => {
   it("keeps renderer window routing suffixes as loadFile query objects", () => {
@@ -18,5 +18,10 @@ describe("app-controller utility contracts", () => {
     expect(computeDurationMs("2026-01-01T00:00:00.000Z", "2026-01-01T00:00:02.500Z")).toBe(2500);
     expect(computeDurationMs("bad", "2026-01-01T00:00:02.500Z")).toBeUndefined();
     expect(countWords("  one   two\nthree  ")).toBe(3);
+  });
+
+  it("keeps onboarding dictations out of persisted history", () => {
+    expect(shouldPersistDictationHistory("dictation")).toBe(true);
+    expect(shouldPersistDictationHistory("onboarding")).toBe(false);
   });
 });

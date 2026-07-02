@@ -277,6 +277,14 @@ export function OnboardingWizard({
   }, [currentStep, hotkeyCanProceed, open, prepareTranscriptionMode, selectedSttReady]);
 
   useEffect(() => {
+    const active = open && currentStep === "transcription";
+    void murmurClient.setOnboardingDictationScope(active).catch(() => undefined);
+    return () => {
+      if (active) void murmurClient.setOnboardingDictationScope(false).catch(() => undefined);
+    };
+  }, [currentStep, open]);
+
+  useEffect(() => {
     if (open && currentStep === "transcription") return;
     if (dictationPendingRef.current) return;
     void restorePreviousMode();
@@ -292,6 +300,7 @@ export function OnboardingWizard({
     dictationTextareaRef.current?.focus();
 
     try {
+      await murmurClient.setOnboardingDictationScope(true);
       await prepareTranscriptionMode();
       await startDictation();
       setDictationStatus("recording");

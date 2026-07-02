@@ -65,6 +65,7 @@ const api = {
     ipcRenderer.send("recording:level", payload);
   },
   testPaste: (text: string): Promise<{ pasted: boolean; message: string }> => ipcRenderer.invoke("onboarding:test-paste", text),
+  setOnboardingDictationScope: (active: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke("onboarding:dictation-scope", { active }),
   copyHistoryOutput: (text: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("history:copy", text),
   repasteHistoryOutput: (text: string): Promise<{ pasted: boolean; message: string }> =>
     ipcRenderer.invoke("history:repaste", text),
