@@ -28,7 +28,7 @@ export function HomeView({
   const releaseNotesParent = useAutoAnimateRef<HTMLDivElement>();
 
   return (
-    <View title="Home" actions={<SessionActions state={state} />}>
+    <View title="Dictate" description="Start recording, check recent output, and see how Murmur is working for you." actions={<SessionActions state={state} />}>
       {shouldShowSttSetupCallout(state) && <SttSetupCallout onOpenModels={onOpenModels} onOpenOnboarding={onOpenOnboarding} />}
       <GpuRuntimeInstallCallout state={state} />
       {state.session.error && <SessionNotice status={state.session.status} message={state.session.error} />}
