@@ -39,7 +39,9 @@ export const defaultModes: ModeConfig[] = [
     kind: "built_in",
     iconKey: "sliders-horizontal",
     name: "Default",
+    description: "Adapts dictation to the active app, selected text, and clipboard so the result is ready for the current task.",
     aiEnabled: true,
+    writingStyle: "",
     instructionPrompt:
       "Use application, selected text, and clipboard context to produce text that fits the user's current task. If the transcript is a command about selected text, transform only that selected text. Otherwise, produce polished dictation for the active app.",
     examples: [],
@@ -51,7 +53,9 @@ export const defaultModes: ModeConfig[] = [
     kind: "built_in",
     iconKey: "mic",
     name: "Voice to text",
+    description: "Keeps speech close to the transcript with light cleanup for punctuation, casing, and obvious recognition mistakes.",
     aiEnabled: false,
+    writingStyle: "",
     instructionPrompt:
       "Return the transcript as directly as possible. Preserve the user's words and only correct clear transcription mistakes, punctuation, and casing.",
     examples: [],
@@ -63,7 +67,9 @@ export const defaultModes: ModeConfig[] = [
     kind: "built_in",
     iconKey: "message-square",
     name: "Message",
+    description: "Turns speech into a concise chat or direct message that sounds natural and is ready to send.",
     aiEnabled: true,
+    writingStyle: "",
     instructionPrompt:
       "Write a concise chat or direct message that fits the current conversation. Keep it natural, clear, and ready to send.",
     examples: [],
@@ -75,7 +81,9 @@ export const defaultModes: ModeConfig[] = [
     kind: "built_in",
     iconKey: "mail",
     name: "Mail",
+    description: "Drafts or revises email text with a professional tone and useful email structure.",
     aiEnabled: true,
+    writingStyle: "",
     instructionPrompt:
       "Draft or revise email text with a clear subject-aware structure, professional tone, and appropriate greeting and sign-off when useful.",
     examples: [],
@@ -87,7 +95,9 @@ export const defaultModes: ModeConfig[] = [
     kind: "built_in",
     iconKey: "notebook-pen",
     name: "Note",
+    description: "Organizes speech into structured notes with concise headings, bullets, and action items when useful.",
     aiEnabled: true,
+    writingStyle: "",
     instructionPrompt:
       "Turn the transcript into structured notes. Use concise headings, bullets, and action items when they make the content easier to scan.",
     examples: [],

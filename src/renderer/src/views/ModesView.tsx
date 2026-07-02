@@ -420,7 +420,7 @@ function ModeEditor({
         name={`modes.${index}.aiEnabled`}
         render={({ field }) => (
           <Switch
-            label="AI enabled"
+            label="Rewrite with AI"
             checked={Boolean(field.value)}
             onCheckedChange={field.onChange}
             disabled={isBuiltInMode}
@@ -429,38 +429,63 @@ function ModeEditor({
         )}
       />
 
-      <div className="grid grid-cols-3 gap-3 rounded-md border border-border bg-muted/20 p-3 max-[760px]:grid-cols-1">
-        <Controller
-          control={form.control}
-          name={`modes.${index}.context.app`}
-          render={({ field }) => (
-            <Checkbox label="Application" checked={Boolean(field.value)} onCheckedChange={field.onChange} disabled={isBuiltInMode} />
-          )}
-        />
-        <Controller
-          control={form.control}
-          name={`modes.${index}.context.selectedText`}
-          render={({ field }) => (
-            <Checkbox label="Selected text" checked={Boolean(field.value)} onCheckedChange={field.onChange} disabled={isBuiltInMode} />
-          )}
-        />
-        <Controller
-          control={form.control}
-          name={`modes.${index}.context.clipboardText`}
-          render={({ field }) => (
-            <Checkbox label="Copied text" checked={Boolean(field.value)} onCheckedChange={field.onChange} disabled={isBuiltInMode} />
-          )}
-        />
-      </div>
+      <section className="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-3">
+        <h3 className="m-0 text-sm font-semibold text-foreground">Writing style</h3>
+        {isBuiltInMode ? (
+          <p className="m-0 text-sm leading-6 text-muted-foreground">{mode.description}</p>
+        ) : (
+          <Textarea
+            aria-label="Writing style"
+            className="min-h-24"
+            placeholder="Concise, natural, and ready to paste."
+            {...form.register(`modes.${index}.writingStyle`)}
+          />
+        )}
+      </section>
 
-      <Field label="Instructions">
-        <Textarea
-          aria-label="Mode instructions"
-          className={cn("min-h-36", isBuiltInMode && "opacity-60")}
-          {...form.register(`modes.${index}.instructionPrompt`)}
-          readOnly={isBuiltInMode}
-        />
-      </Field>
+      <section className="flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-3">
+        <h3 className="m-0 text-sm font-semibold text-foreground">Context</h3>
+        <div className="grid grid-cols-3 gap-3 max-[760px]:grid-cols-1">
+          <Controller
+            control={form.control}
+            name={`modes.${index}.context.app`}
+            render={({ field }) => (
+              <Checkbox label="Use active app" checked={Boolean(field.value)} onCheckedChange={field.onChange} disabled={isBuiltInMode} />
+            )}
+          />
+          <Controller
+            control={form.control}
+            name={`modes.${index}.context.selectedText`}
+            render={({ field }) => (
+              <Checkbox label="Use selected text" checked={Boolean(field.value)} onCheckedChange={field.onChange} disabled={isBuiltInMode} />
+            )}
+          />
+          <Controller
+            control={form.control}
+            name={`modes.${index}.context.clipboardText`}
+            render={({ field }) => (
+              <Checkbox label="Use clipboard" checked={Boolean(field.value)} onCheckedChange={field.onChange} disabled={isBuiltInMode} />
+            )}
+          />
+        </div>
+      </section>
+
+      {!isBuiltInMode && (
+        <details className="group rounded-md border border-border bg-muted/20 p-3">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-foreground outline-none focus-visible:ring-2 focus-visible:ring-foreground/30">
+            Advanced instructions
+            <ChevronRight size={16} className="shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
+          </summary>
+          <Field label="Raw prompt" className="mt-3">
+            <Textarea
+              aria-label="Advanced instructions"
+              className="min-h-36"
+              placeholder="Add exact prompt instructions for how this mode should process dictation."
+              {...form.register(`modes.${index}.instructionPrompt`)}
+            />
+          </Field>
+        </details>
+      )}
 
       <ExamplesEditor form={form} selectedIndex={index} readOnly={isBuiltInMode} />
     </div>
@@ -480,7 +505,7 @@ function ExamplesEditor({
   const examplesParent = useAutoAnimateRef<HTMLElement>();
 
   return (
-    <section ref={examplesParent} className="flex flex-col gap-2">
+    <section ref={examplesParent} className="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-3">
       <div className="flex items-center justify-between gap-3">
         <h3 className="m-0 text-sm font-semibold text-foreground">Examples</h3>
         <Button
@@ -553,7 +578,9 @@ function createBlankMode(): ModeConfig {
     kind: "custom",
     iconKey: "sliders-horizontal",
     name: "New mode",
+    description: "",
     aiEnabled: true,
+    writingStyle: "",
     instructionPrompt: "",
     examples: [],
     language: "auto",
