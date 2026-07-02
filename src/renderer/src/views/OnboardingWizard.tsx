@@ -321,12 +321,14 @@ export function OnboardingWizard({
 
   useEffect(() => {
     if (!open || currentStep !== "transcription") return;
-    if (dictationPendingRef.current || state.session.status !== "recording") return;
-    dictationPendingRef.current = true;
-    historyLengthBeforeDictationRef.current = state.history.length;
+    if (state.session.status !== "recording") return;
+    if (!dictationPendingRef.current) {
+      dictationPendingRef.current = true;
+      historyLengthBeforeDictationRef.current = state.history.length;
+      setDictationValue("");
+    }
     setDictationStatus("recording");
     setDictationMessage("Recording.");
-    setDictationValue("");
     dictationTextareaRef.current?.focus();
   }, [currentStep, open, state.history.length, state.session.id, state.session.status]);
 
