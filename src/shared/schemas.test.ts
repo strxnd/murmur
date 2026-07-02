@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { ipcTextPayloadSchema, maxIpcTextCharacters, settingsUpdatePayloadSchema } from "./schemas";
+import {
+  ipcTextPayloadSchema,
+  maxIpcTextCharacters,
+  onboardingDictationScopePayloadSchema,
+  settingsUpdatePayloadSchema
+} from "./schemas";
 
 describe("IPC payload schemas", () => {
   it("rejects unknown settings patch keys", () => {
@@ -22,5 +27,10 @@ describe("IPC payload schemas", () => {
   it("rejects oversized text payloads", () => {
     expect(ipcTextPayloadSchema.safeParse("a".repeat(maxIpcTextCharacters)).success).toBe(true);
     expect(ipcTextPayloadSchema.safeParse("a".repeat(maxIpcTextCharacters + 1)).success).toBe(false);
+  });
+
+  it("accepts explicit onboarding dictation scope payloads", () => {
+    expect(onboardingDictationScopePayloadSchema.safeParse({ active: true }).success).toBe(true);
+    expect(onboardingDictationScopePayloadSchema.safeParse({ active: "true" }).success).toBe(false);
   });
 });

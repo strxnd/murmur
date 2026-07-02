@@ -11,9 +11,11 @@ describe("preload API", () => {
     const harness = await loadPreloadHarness();
 
     await harness.api.updateSettings({ theme: "light" });
+    await harness.api.setOnboardingDictationScope(true);
     harness.api.publishRecordingLevel({ sessionId: "session-1", level: 0.5 });
 
     expect(harness.invoke).toHaveBeenCalledWith("settings:update", { theme: "light" });
+    expect(harness.invoke).toHaveBeenCalledWith("onboarding:dictation-scope", { active: true });
     expect(harness.send).toHaveBeenCalledWith("recording:level", { sessionId: "session-1", level: 0.5 });
   });
 

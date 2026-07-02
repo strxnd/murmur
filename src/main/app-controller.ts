@@ -37,6 +37,7 @@ import {
   llmProvidersSetPayloadSchema,
   modesSetPayloadSchema,
   modeSelectorMovePayloadSchema,
+  onboardingDictationScopePayloadSchema,
   recordingErrorPayloadSchema,
   recordingLevelPayloadSchema,
   settingsUpdatePayloadSchema,
@@ -100,6 +101,7 @@ const recordingStopAckTimeoutMs = 15000;
 const maxRecordingDurationNotice = "Maximum recording length reached; finishing this dictation.";
 const trayIconDataUrl =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAbklEQVR4nO3WQQ7AIAgEQJ7B/1/JrV4bg4kKXbTZTbzqoEYUYZgbo6qPN2CLm5k7PkeMKoftxLv6PpBdIIAAOKCfbAcQAhFwJGD1KU4FyEYzSgfIYjsOAyITpHTH2XMvac3w3xABpYDyy0fAb9MAo3Ifzf1J6oQAAAAASUVORK5CYII=";
+export type RecordingSource = "dictation" | "onboarding";
 
 export class AppController {
   private mainWindow: ElectronBrowserWindow | null = null;
@@ -146,6 +148,8 @@ export class AppController {
   private hotkeyRegistrationGeneration = 0;
   private hotkeyRegistrationQueue: Promise<void> = Promise.resolve();
   private lastActivationHotkeyAt = 0;
+  private onboardingDictationScopeActive = false;
+  private sessionSource: RecordingSource = "dictation";
 
   constructor() {
     this.paths = resolveAppPaths(app);
@@ -652,6 +656,11 @@ export class AppController {
       this.broadcastState();
       return result;
     });
+    handle("onboarding:dictation-scope", (_event, payload) => {
+      const { active } = parseIpcPayload(onboardingDictationScopePayloadSchema, payload, "onboarding:dictation-scope");
+      this.onboardingDictationScopeActive = active;
+      return { ok: true };
+    });
     handle("history:copy", (_event, payload) => {
       const text = parseIpcPayload(ipcTextPayloadSchema, payload, "history:copy");
       clipboard.writeText(text);
@@ -1097,6 +1106,7 @@ export class AppController {
     const llmProvider = initialMode.aiEnabled ? this.selectLlmProvider(persisted) : undefined;
     const sessionId = createId("session");
 
+    this.sessionSource = this.onboardingDictationScopeActive ? "onboarding" : "dictation";
     this.sessionContext = null;
     this.recordingStoppedAt = null;
     this.clearRecordingTimers();
@@ -1314,7 +1324,9 @@ export class AppController {
         rawWordCount,
         processedWordCount
       };
-      this.storage.addHistory(item);
+      if (shouldPersistDictationHistory(this.sessionSource)) {
+        this.storage.addHistory(item);
+      }
 
       this.session = {
         ...this.session,
@@ -1783,6 +1795,10 @@ export function computeDurationMs(startedAt: string | undefined, stoppedAt: stri
   const stop = new Date(stoppedAt).getTime();
   if (!Number.isFinite(start) || !Number.isFinite(stop)) return undefined;
   return Math.max(0, stop - start);
+}
+
+export function shouldPersistDictationHistory(source: RecordingSource): boolean {
+  return source !== "onboarding";
 }
 
 function parseIpcPayload<T>(schema: z.ZodType<T>, payload: unknown, channel: string): T {

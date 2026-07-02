@@ -83,6 +83,8 @@ export const murmurClient = {
   },
   testPaste: (text: string): Promise<{ pasted: boolean; message: string }> =>
     window.murmur.testPaste(text).then((value) => pasteResultSchema.parse(value)),
+  setOnboardingDictationScope: (active: boolean): Promise<void> =>
+    window.murmur.setOnboardingDictationScope(active).then(() => undefined),
   copyHistoryOutput: (text: string): Promise<{ ok: boolean }> => window.murmur.copyHistoryOutput(text).then((value) => copyResultSchema.parse(value)),
   repasteHistoryOutput: (text: string): Promise<{ pasted: boolean; message: string }> =>
     window.murmur.repasteHistoryOutput(text).then((value) => pasteResultSchema.parse(value)),
