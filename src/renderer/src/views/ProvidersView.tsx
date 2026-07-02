@@ -116,6 +116,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
   const [isPromptMounted, setIsPromptMounted] = useState(false);
   const [openProvider, setOpenProvider] = useState<ProviderDialogTarget | null>(null);
   const [isProviderDialogOpen, setIsProviderDialogOpen] = useState(false);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const customProviderListParent = useAutoAnimateRef<HTMLDivElement>();
   const currentValues: ProvidersFormValues = {
     transcriptionProviders,
@@ -188,6 +189,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
 
   const addSttProvider = (): void => {
     const next = createCustomTranscriptionProvider(makeClientId("stt_provider"));
+    setIsAdvancedOpen(true);
     form.setValue(
       "transcriptionProviders",
       [...form.getValues("transcriptionProviders"), next],
@@ -199,6 +201,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
 
   const addLlmProvider = (): void => {
     const next = createCustomLlmProvider(makeClientId("llm_provider"));
+    setIsAdvancedOpen(true);
     form.setValue("llmProviders", [...form.getValues("llmProviders"), next], {
       shouldDirty: true,
       shouldValidate: true
@@ -242,7 +245,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
     if (!isValid) {
       setValidationByProvider((current) => ({
         ...current,
-        [key]: { status: "error", message: "Fix the highlighted fields before validating." }
+        [key]: { status: "error", message: "Fix the highlighted fields before testing." }
       }));
       return;
     }
@@ -253,7 +256,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
 
     setValidationByProvider((current) => ({
       ...current,
-      [key]: { status: "validating", message: "Validating provider..." }
+      [key]: { status: "validating", message: "Testing provider..." }
     }));
 
     try {
@@ -265,7 +268,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
         ...current,
         [key]: {
           status: validation.ok ? "success" : "error",
-          message: validation.message || (validation.ok ? "Provider validated." : "Provider validation failed."),
+          message: validation.message || (validation.ok ? "Provider tested." : "Provider test failed."),
           capabilities: validation.capabilities
         }
       }));
@@ -296,7 +299,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
     if (!apiKey.trim()) {
       setCloudValidationByProvider((current) => ({
         ...current,
-        [providerId]: { status: "error", message: `Enter a ${providerName} API key before validating.` }
+        [providerId]: { status: "error", message: `Enter a ${providerName} API key before testing.` }
       }));
       return;
     }
@@ -304,7 +307,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
     const targets = cloudCredentialValidationProviders(providerId, normalizedValues);
     setCloudValidationByProvider((current) => ({
       ...current,
-      [providerId]: { status: "validating", message: `Validating ${providerName} credentials...` }
+      [providerId]: { status: "validating", message: `Testing ${providerName} key...` }
     }));
 
     try {
@@ -322,7 +325,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
         ...current,
         [providerId]: {
           status: failed ? "error" : "success",
-          message: failed?.message || `${providerName} credentials validated.`,
+          message: failed?.message || `${providerName} key tested.`,
           capabilities
         }
       }));
@@ -387,8 +390,11 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
         <CloudCredentialsSection
           values={currentValues}
           validationByProvider={cloudValidationByProvider}
+          canSaveKey={(providerId) => hasPendingCloudCredentialKey(providerId, currentValues, persistedValuesRef.current)}
+          isSaving={isSaving}
           onApiKeyChange={updateCloudCredential}
           onValidate={(providerId) => void validateCloudCredential(providerId)}
+          onSaveKey={() => void saveChanges()}
           onDismissValidation={(providerId) => {
             setCloudValidationByProvider((current) => {
               const next = { ...current };
@@ -399,40 +405,57 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
         />
 
         <section className="flex flex-col gap-4 border-t border-border pt-4">
-          <header className="flex items-center justify-between gap-3 max-[760px]:flex-col max-[760px]:items-start">
-            <div className="min-w-0">
-              <h2 className="m-0 text-sm font-semibold text-foreground">Custom providers</h2>
-              <p className="m-0 mt-1 text-xs text-muted-foreground">Open a provider to edit its connection.</p>
-            </div>
-            <Toolbar className="justify-end">
-              <Button onClick={addSttProvider}>
-                <Plus size={16} /> Add custom STT
-              </Button>
-              <Button onClick={addLlmProvider}>
-                <Plus size={16} /> Add custom LLM
-              </Button>
-            </Toolbar>
+          <header className="flex items-center justify-between gap-3 max-[760px]:flex-col max-[760px]:items-stretch">
+            <button
+              type="button"
+              className="provider-advanced-toggle -mx-2 flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-foreground/30"
+              aria-expanded={isAdvancedOpen}
+              onClick={() => setIsAdvancedOpen((open) => !open)}
+            >
+              <ChevronRight
+                size={16}
+                className={cn("provider-row-chevron shrink-0 text-muted-foreground", isAdvancedOpen && "rotate-90 text-foreground")}
+              />
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold text-foreground">Advanced</span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  Custom providers{customProviders.length > 0 ? ` (${customProviders.length})` : ""}
+                </span>
+              </span>
+            </button>
+            {isAdvancedOpen && (
+              <Toolbar className="justify-end">
+                <Button onClick={addSttProvider}>
+                  <Plus size={16} /> Add custom STT
+                </Button>
+                <Button onClick={addLlmProvider}>
+                  <Plus size={16} /> Add custom LLM
+                </Button>
+              </Toolbar>
+            )}
           </header>
 
-          <div ref={customProviderListParent} className="flex flex-col gap-2">
-            {customProviders.length === 0 ? (
-              <div className="flex min-h-24 items-center justify-center rounded-md border border-dashed border-border bg-muted/30 p-4 text-sm text-muted-foreground">
-                No custom providers.
-              </div>
-            ) : (
-              customProviders.map((entry) => (
-                <CustomProviderRow
-                  key={`${entry.kind}:${entry.provider.id}`}
-                  entry={entry}
-                  active={openProvider?.kind === entry.kind && openProvider.id === entry.provider.id}
-                  onOpen={() => {
-                    setOpenProvider({ kind: entry.kind, id: entry.provider.id });
-                    setIsProviderDialogOpen(true);
-                  }}
-                />
-              ))
-            )}
-          </div>
+          {isAdvancedOpen && (
+            <div ref={customProviderListParent} className="flex flex-col gap-2">
+              {customProviders.length === 0 ? (
+                <div className="flex min-h-24 items-center justify-center rounded-md border border-dashed border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                  No custom providers.
+                </div>
+              ) : (
+                customProviders.map((entry) => (
+                  <CustomProviderRow
+                    key={`${entry.kind}:${entry.provider.id}`}
+                    entry={entry}
+                    active={openProvider?.kind === entry.kind && openProvider.id === entry.provider.id}
+                    onOpen={() => {
+                      setOpenProvider({ kind: entry.kind, id: entry.provider.id });
+                      setIsProviderDialogOpen(true);
+                    }}
+                  />
+                ))
+              )}
+            </div>
+          )}
         </section>
       </View>
       <Dialog.Root
@@ -480,14 +503,20 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
 function CloudCredentialsSection({
   values,
   validationByProvider,
+  canSaveKey,
+  isSaving,
   onApiKeyChange,
   onValidate,
+  onSaveKey,
   onDismissValidation
 }: {
   values: ProvidersFormValues;
   validationByProvider: Partial<Record<CloudCredentialProviderId, ValidationState>>;
+  canSaveKey: (providerId: CloudCredentialProviderId) => boolean;
+  isSaving: boolean;
   onApiKeyChange: (providerId: CloudCredentialProviderId, apiKey: string) => void;
   onValidate: (providerId: CloudCredentialProviderId) => void;
+  onSaveKey: () => void;
   onDismissValidation: (providerId: CloudCredentialProviderId) => void;
 }): JSX.Element {
   return (
@@ -507,8 +536,11 @@ function CloudCredentialsSection({
             provider={provider}
             values={values}
             validation={validationByProvider[provider.id]}
+            canSaveKey={canSaveKey(provider.id)}
+            isSaving={isSaving}
             onApiKeyChange={onApiKeyChange}
             onValidate={onValidate}
+            onSaveKey={onSaveKey}
             onDismissValidation={onDismissValidation}
           />
         ))}
@@ -521,19 +553,26 @@ function CloudCredentialRow({
   provider,
   values,
   validation,
+  canSaveKey,
+  isSaving,
   onApiKeyChange,
   onValidate,
+  onSaveKey,
   onDismissValidation
 }: {
   provider: (typeof cloudCredentialProviders)[number];
   values: ProvidersFormValues;
   validation?: ValidationState;
+  canSaveKey: boolean;
+  isSaving: boolean;
   onApiKeyChange: (providerId: CloudCredentialProviderId, apiKey: string) => void;
   onValidate: (providerId: CloudCredentialProviderId) => void;
+  onSaveKey: () => void;
   onDismissValidation: (providerId: CloudCredentialProviderId) => void;
 }): JSX.Element {
   const apiKey = cloudCredentialApiKey(provider.id, values);
   const configured = cloudCredentialConfigured(provider.id, values);
+  const showSaveKeyAction = canSaveKey && validation?.status === "success";
 
   return (
     <div className="grid grid-cols-[minmax(10rem,13rem)_minmax(12rem,1fr)_auto] items-end gap-3 px-3 py-3 max-[760px]:grid-cols-1 max-[760px]:items-stretch">
@@ -547,7 +586,7 @@ function CloudCredentialRow({
         </div>
       </div>
 
-      <Field label="API key">
+      <Field label="API key" description="Keys are stored locally on this Mac.">
         <Input
           type="password"
           value={apiKey}
@@ -562,13 +601,25 @@ function CloudCredentialRow({
       <div className="flex items-center justify-end gap-2 max-[760px]:justify-between">
         <Badge tone={configured ? "success" : "neutral"}>{configured ? "Configured" : "Missing key"}</Badge>
         <Button size="sm" onClick={() => onValidate(provider.id)} disabled={validation?.status === "validating"}>
-          <CheckCircle2 size={15} /> {validation?.status === "validating" ? "Validating..." : "Validate"}
+          <CheckCircle2 size={15} /> {validation?.status === "validating" ? "Testing..." : "Test key"}
         </Button>
       </div>
 
       {validation && (
         <div className="col-span-full">
-          <ValidationMessage state={validation} onDismiss={() => onDismissValidation(provider.id)} />
+          <ValidationMessage
+            state={validation}
+            action={
+              showSaveKeyAction
+                ? {
+                    label: isSaving ? "Saving..." : "Save key",
+                    onClick: onSaveKey,
+                    disabled: isSaving
+                  }
+                : undefined
+            }
+            onDismiss={() => onDismissValidation(provider.id)}
+          />
         </div>
       )}
     </div>
@@ -638,7 +689,7 @@ function CustomProviderEditor({
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 max-[640px]:w-full max-[640px]:justify-start">
           <Button size="sm" onClick={onValidate} disabled={validation?.status === "validating"}>
-            <CheckCircle2 size={15} /> {validation?.status === "validating" ? "Validating..." : "Validate"}
+            <CheckCircle2 size={15} /> {validation?.status === "validating" ? "Testing..." : "Test key"}
           </Button>
           <Dialog.Root>
             <Dialog.Trigger render={<IconButton title="Delete provider" tone="danger" />}>
@@ -767,7 +818,7 @@ function TranscriptionProviderEditor({
           <Input {...form.register(`transcriptionProviders.${index}.endpointPath`)} disabled={provider.type === "sherpa_onnx"} spellCheck={false} />
         </Field>
 
-        <Field label="API key" error={errors?.apiKey?.message}>
+        <Field label="API key" description="Keys are stored locally on this Mac." error={errors?.apiKey?.message}>
           <Input type="password" autoComplete="off" spellCheck={false} {...form.register(`transcriptionProviders.${index}.apiKey`)} />
         </Field>
 
@@ -883,7 +934,7 @@ function LlmProviderEditor({
           <Input {...form.register(`llmProviders.${index}.baseUrl`)} spellCheck={false} />
         </Field>
 
-        <Field label="API key" error={errors?.apiKey?.message}>
+        <Field label="API key" description="Keys are stored locally on this Mac." error={errors?.apiKey?.message}>
           <Input type="password" autoComplete="off" spellCheck={false} {...form.register(`llmProviders.${index}.apiKey`)} />
         </Field>
 
@@ -958,7 +1009,25 @@ function providerTypeLabel(entry: CustomProviderEntry): string {
   return entry.kind === "stt" ? transcriptionProviderTypeLabel(entry.provider.type) : llmProviderTypeLabel(entry.provider.type);
 }
 
-function ValidationMessage({ state, onDismiss }: { state?: ValidationState; onDismiss?: () => void }): JSX.Element | null {
+function hasPendingCloudCredentialKey(
+  providerId: CloudCredentialProviderId,
+  values: ProvidersFormValues,
+  persistedValues: ProvidersFormValues
+): boolean {
+  const apiKey = cloudCredentialApiKey(providerId, values).trim();
+  if (!apiKey) return false;
+  return apiKey !== cloudCredentialApiKey(providerId, persistedValues).trim();
+}
+
+function ValidationMessage({
+  state,
+  action,
+  onDismiss
+}: {
+  state?: ValidationState;
+  action?: { label: string; onClick: () => void; disabled?: boolean };
+  onDismiss?: () => void;
+}): JSX.Element | null {
   if (!state) return null;
 
   const isSuccess = state.status === "success";
@@ -985,17 +1054,24 @@ function ValidationMessage({ state, onDismiss }: { state?: ValidationState; onDi
             </div>
           )}
         </div>
-        {onDismiss && (
-          <button
-            type="button"
-            className="grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/30"
-            aria-label="Dismiss message"
-            title="Dismiss message"
-            onClick={onDismiss}
-          >
-            <X size={14} />
-          </button>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {action && (
+            <Button size="sm" variant="primary" onClick={action.onClick} disabled={action.disabled}>
+              <Save size={14} /> {action.label}
+            </Button>
+          )}
+          {onDismiss && (
+            <button
+              type="button"
+              className="grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/30"
+              aria-label="Dismiss message"
+              title="Dismiss message"
+              onClick={onDismiss}
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
