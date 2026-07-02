@@ -78,4 +78,25 @@ describe("buildProcessingPrompt", () => {
     expect(prompt).not.toContain("do not include clipboard");
     expect(prompt).toContain("Raw transcript:\nship the patch");
   });
+
+  it("includes a custom writing style when configured", () => {
+    const mode = {
+      ...defaultModes[0],
+      writingStyle: "Keep it warm and concise."
+    };
+    const context: ContextSnapshot = {
+      capturedAt: "2026-01-01T00:00:00.000Z",
+      sourceQuality: "full",
+      diagnostics: []
+    };
+
+    const prompt = buildProcessingPrompt({
+      mode,
+      context,
+      rawTranscript: "thanks for the update",
+      vocabularyPrompt: ""
+    });
+
+    expect(prompt).toContain("Writing style:\nKeep it warm and concise.");
+  });
 });

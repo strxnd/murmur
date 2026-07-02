@@ -115,7 +115,9 @@ export interface ModeConfig {
   kind: DictationModeKind;
   iconKey: ModeIconKey;
   name: string;
+  description: string;
   aiEnabled: boolean;
+  writingStyle: string;
   instructionPrompt: string;
   examples: Array<{ input: string; output: string }>;
   language?: string | "auto";

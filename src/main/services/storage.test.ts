@@ -455,6 +455,7 @@ describe("StorageService", () => {
       kind: "custom",
       iconKey: "message-square",
       name: "Team chat",
+      writingStyle: "",
       instructionPrompt: "Keep this casual.",
       context: { app: true, selectedText: true, clipboardText: false }
     });

@@ -34,6 +34,7 @@ export function buildProcessingPrompt(options: {
     .slice(0, 8)
     .map((example, index) => `Example ${index + 1}\nInput: ${example.input}\nOutput: ${example.output}`)
     .join("\n\n");
+  const writingStyle = mode.writingStyle.trim() ? `Writing style:\n${mode.writingStyle.trim()}` : "";
 
   return [
     "You are Murmur, a system-wide dictation cleanup engine.",
@@ -45,6 +46,7 @@ export function buildProcessingPrompt(options: {
     "- Return only the final text to paste. Do not explain your changes.",
     "",
     `Mode: ${mode.name}`,
+    writingStyle,
     mode.instructionPrompt,
     vocabularyPrompt,
     contextLines.length > 0 ? `Context:\n${contextLines.join("\n\n")}` : "Context: unavailable",
