@@ -100,7 +100,7 @@ describe("STT runtime args", () => {
     const service = new TranscriptionService(paths, fakeRuntimeService("available", runtimePath, argsPath));
 
     const result = await service.transcribe({
-      audio: new Uint8Array([1, 2, 3]),
+      audio: wavWithSamples(160),
       mimeType: "audio/wav",
       provider: sherpaProvider("sherpa-test-model")
     });
@@ -126,11 +126,30 @@ describe("STT runtime args", () => {
 
     await expect(
       service.transcribe({
-        audio: new Uint8Array([1, 2, 3]),
+        audio: wavWithSamples(160),
         mimeType: "audio/wav",
         provider: openAiCompatibleProvider(url)
       })
     ).rejects.toThrow(/STT transcription response body/);
+  });
+
+  it("rejects empty WAV recordings before sending them to whisper.cpp", async () => {
+    let requestCount = 0;
+    const { url } = await startServer((response) => {
+      requestCount += 1;
+      response.writeHead(400, { "Content-Type": "text/plain" });
+      response.end("Invalid request");
+    });
+    const service = new TranscriptionService(testPaths(), fakeRuntimeService("available"));
+
+    await expect(
+      service.transcribe({
+        audio: wavWithSamples(0),
+        mimeType: "audio/wav",
+        provider: whisperCppProvider(url)
+      })
+    ).rejects.toThrow("Recording did not capture any audio");
+    expect(requestCount).toBe(0);
   });
 
   it("bounds retained runtime diagnostics text", () => {
@@ -167,6 +186,21 @@ function openAiCompatibleProvider(baseUrl: string): TranscriptionProviderConfig 
     isCloud: false,
     isLocal: true,
     defaultModel: "test-model",
+    defaultLanguage: "auto",
+    streamingMode: "none",
+    enabled: true
+  };
+}
+
+function whisperCppProvider(baseUrl: string): TranscriptionProviderConfig {
+  return {
+    id: "external-whisper-cpp",
+    type: "whisper_cpp",
+    name: "External whisper.cpp server",
+    baseUrl,
+    endpointPath: "/inference",
+    isCloud: false,
+    isLocal: true,
     defaultLanguage: "auto",
     streamingMode: "none",
     enabled: true
@@ -258,6 +292,35 @@ function tempRoot(): string {
 function touch(path: string): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, "");
+}
+
+function wavWithSamples(sampleCount: number): Uint8Array {
+  const bytesPerSample = 2;
+  const dataLength = sampleCount * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataLength);
+  const view = new DataView(buffer);
+
+  writeAscii(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataLength, true);
+  writeAscii(view, 8, "WAVE");
+  writeAscii(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 16000, true);
+  view.setUint32(28, 16000 * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 8 * bytesPerSample, true);
+  writeAscii(view, 36, "data");
+  view.setUint32(40, dataLength, true);
+
+  return new Uint8Array(buffer);
+}
+
+function writeAscii(view: DataView, offset: number, value: string): void {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(offset + index, value.charCodeAt(index));
+  }
 }
 
 function restoreTimeoutEnv(): void {

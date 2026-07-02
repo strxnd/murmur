@@ -73,6 +73,7 @@ export class TranscriptionService {
     if (!provider.enabled) {
       throw new Error(`Transcription provider "${provider.name}" is disabled.`);
     }
+    assertWavAudioHasSamples(options.audio, options.mimeType);
 
     if (provider.type === "sherpa_onnx") {
       return this.transcribeSherpaOnnx(options);
@@ -673,6 +674,47 @@ function transcriptionHttpTimeouts(): { totalTimeoutMs: number; idleTimeoutMs: n
 function envPositiveInteger(name: string, fallback: number): number {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function assertWavAudioHasSamples(audio: Uint8Array, mimeType: string): void {
+  if (!mimeType.toLowerCase().includes("wav")) return;
+
+  const dataLength = wavDataLength(audio);
+  if (dataLength === null) {
+    throw new Error("Recorded WAV audio is invalid. Restart recording so Murmur can capture WAV audio.");
+  }
+  if (dataLength === 0) {
+    throw new Error("Recording did not capture any audio. Try again and keep recording for a moment before stopping.");
+  }
+}
+
+function wavDataLength(audio: Uint8Array): number | null {
+  if (audio.byteLength < 20) return null;
+
+  const view = new DataView(audio.buffer, audio.byteOffset, audio.byteLength);
+  if (readAscii(view, 0, 4) !== "RIFF" || readAscii(view, 8, 4) !== "WAVE") return null;
+
+  let offset = 12;
+  while (offset + 8 <= view.byteLength) {
+    const chunkId = readAscii(view, offset, 4);
+    const chunkLength = view.getUint32(offset + 4, true);
+    const chunkDataStart = offset + 8;
+    const chunkDataEnd = chunkDataStart + chunkLength;
+    if (chunkDataEnd > view.byteLength) return null;
+    if (chunkId === "data") return chunkLength;
+    offset = chunkDataEnd + (chunkLength % 2);
+  }
+
+  return null;
+}
+
+function readAscii(view: DataView, offset: number, length: number): string {
+  if (offset + length > view.byteLength) return "";
+  let value = "";
+  for (let index = 0; index < length; index += 1) {
+    value += String.fromCharCode(view.getUint8(offset + index));
+  }
+  return value;
 }
 
 function errorMessage(error: unknown): string {
