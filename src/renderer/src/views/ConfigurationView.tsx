@@ -251,7 +251,7 @@ export function ConfigurationView({
 
   return (
     <>
-      <View title="Configuration">
+      <View title="Tune Murmur" description="Adjust appearance, shortcuts, audio input, and local runtime settings.">
         <section className="grid grid-cols-2 gap-4 max-[980px]:grid-cols-1">
           <Panel title="Appearance">
             <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">

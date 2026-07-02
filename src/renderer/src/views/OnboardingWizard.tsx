@@ -42,10 +42,10 @@ type ProbeStatus = "idle" | "checking" | "passed" | "warning" | "error";
 type DictationTestStatus = "idle" | "starting" | "recording" | "waiting" | "passed" | "error";
 
 const stepMeta: Record<OnboardingStepId, { title: string; label: string; icon: LucideIcon }> = {
-  microphone: { title: "Microphone Permission", label: "Microphone", icon: Mic },
-  stt: { title: "STT Model", label: "STT Model", icon: Download },
-  transcription: { title: "Hotkey & Test", label: "Hotkey & Test", icon: Keyboard },
-  ready: { title: "READY TO GO", label: "Ready", icon: CheckCircle2 }
+  microphone: { title: "Check your microphone", label: "Microphone", icon: Mic },
+  stt: { title: "Choose a speech model", label: "Speech model", icon: Download },
+  transcription: { title: "Try a quick dictation", label: "Quick dictation", icon: Keyboard },
+  ready: { title: "You're ready to dictate", label: "Ready", icon: CheckCircle2 }
 };
 
 export function OnboardingWizard({
@@ -359,9 +359,9 @@ export function OnboardingWizard({
         <Dialog.Popup className="fixed inset-0 z-[80] flex h-dvh w-dvw flex-col overflow-hidden border border-border bg-surface outline-none">
           <header className="flex items-start justify-between gap-4 border-b border-border p-4">
             <div className="min-w-0">
-              <Dialog.Title className="m-0 text-base font-semibold text-foreground">First-Time Setup</Dialog.Title>
+              <Dialog.Title className="m-0 text-base font-semibold text-foreground">Set up Murmur</Dialog.Title>
               <Dialog.Description className="m-0 mt-1 text-sm leading-6 text-muted-foreground">
-                Complete the required checks for local dictation.
+                Check the basics once so dictation works when you need it.
               </Dialog.Description>
             </div>
             <IconButton title="Skip setup" onClick={() => void skipOnboarding()} disabled={dictationCloseBlocked}>
@@ -456,7 +456,7 @@ export function OnboardingWizard({
                 {currentStep === "ready" && (
                   <ReadyStep
                     microphoneReady={micStatus === "passed"}
-                    modelName={voiceModel?.name ?? "No local STT model selected"}
+                    modelName={voiceModel?.name ?? "No local speech model selected"}
                     modelReady={selectedSttReady}
                     hotkey={state.settings.activationHotkey}
                     hotkeyReady={hotkeyCanProceed}
@@ -559,7 +559,7 @@ function SttStep({
 }): JSX.Element {
   const runtimeBusy = runtime?.status === "downloading" || runtime?.status === "installing";
   const downloadStatus = download?.status ?? "not_downloaded";
-  const selectedModelName = selectedModel?.name ?? "No local STT model selected";
+  const selectedModelName = selectedModel?.name ?? "No local speech model selected";
   const setupLabel = downloadStatus === "downloaded" ? "Activate" : "Download and activate";
 
   return (
@@ -613,7 +613,7 @@ function SttStep({
           );
         })}
       </div>
-      {models.length === 0 && <StatusMessage status="error">No downloadable local STT models were found in the voice catalog.</StatusMessage>}
+      {models.length === 0 && <StatusMessage status="error">No downloadable local speech models were found in the voice catalog.</StatusMessage>}
       <div className="grid grid-cols-3 gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm max-[760px]:grid-cols-1">
         <Metric label="Model" value={selectedModelName} />
         <Metric label="Download" value={downloadStatus === "downloading" ? downloadProgressSummary(download) : downloadStatusLabel(downloadStatus)} />
@@ -780,7 +780,7 @@ function ReadyStep({
     <div className="flex flex-col gap-4">
       <div className="grid gap-2">
         <ReadyItem ready={microphoneReady} label="Microphone ready" />
-        <ReadyItem ready={modelReady} label={`STT model active: ${modelName}`} />
+        <ReadyItem ready={modelReady} label={`Speech model active: ${modelName}`} />
         <ReadyItem ready={hotkeyReady} warning={!hotkeyRegistered} label={`Hotkey saved: ${hotkey}`} />
         <ReadyItem ready={transcriptionReady} label="Transcription test produced text" />
       </div>

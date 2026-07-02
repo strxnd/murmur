@@ -70,7 +70,7 @@ export function VocabularyView({ state }: { state: AppStateSnapshot }): JSX.Elem
   };
 
   return (
-    <View title="Vocabulary">
+    <View title="Teach names and terms" description="Add words Murmur should recognize reliably during dictation.">
       <Panel>
         <form onSubmit={submit} className="flex max-w-xl items-center gap-2">
           <Input

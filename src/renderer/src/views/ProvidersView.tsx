@@ -383,7 +383,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
 
   return (
     <>
-      <View title="Providers">
+      <View title="Connect providers" description="Add API keys or custom endpoints for transcription and language models.">
         <CloudCredentialsSection
           values={currentValues}
           validationByProvider={cloudValidationByProvider}
@@ -495,7 +495,7 @@ function CloudCredentialsSection({
       <header className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <h2 className="m-0 text-sm font-semibold text-foreground">Cloud credentials</h2>
-          <p className="m-0 mt-1 text-xs text-muted-foreground">Curated API providers.</p>
+          <p className="m-0 mt-1 text-xs text-muted-foreground">Save one API key for each cloud service you want Murmur to use.</p>
         </div>
         <Badge tone="cloud">API key only</Badge>
       </header>

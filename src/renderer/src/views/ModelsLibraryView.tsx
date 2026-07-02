@@ -113,7 +113,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
   }, [models]);
 
   return (
-    <View title="Models">
+    <View title="Choose models" description="Pick speech and language models, download local options, and activate the ones Murmur should use.">
       <Panel>
         <div className="grid grid-cols-[minmax(0,1fr)_14rem] gap-3 max-[760px]:grid-cols-1">
           <label className="relative block">

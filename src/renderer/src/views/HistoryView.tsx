@@ -51,7 +51,8 @@ export function HistoryView({ state }: { state: AppStateSnapshot }): JSX.Element
 
   return (
     <View
-      title="History"
+      title="Review dictations"
+      description="Search previous recordings and open entries to compare raw transcripts with final text."
       actions={
         <Toolbar>
           <Dialog.Root>
