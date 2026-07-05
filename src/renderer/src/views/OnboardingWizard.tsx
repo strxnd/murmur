@@ -152,6 +152,13 @@ export function OnboardingWizard({
     }))
   ];
 
+  const selectAudioInput = (value: string): void => {
+    setSelectedInputId(value);
+    if (value === selectedInputId || micStatus === "checking") return;
+    setMicStatus("idle");
+    setMicMessage("");
+  };
+
   const finishOnboarding = async (): Promise<void> => {
     await updateSettings({
       onboardingCompletedAt: new Date().toISOString(),
@@ -422,7 +429,7 @@ export function OnboardingWizard({
                     selectedInputId={selectedInputId}
                     status={micStatus}
                     message={micMessage}
-                    onSelectedInputChange={setSelectedInputId}
+                    onSelectedInputChange={selectAudioInput}
                     onProbe={() => void probeMicrophone()}
                   />
                 )}
@@ -522,15 +529,24 @@ function MicrophoneStep({
   onSelectedInputChange: (value: string) => void;
   onProbe: () => void;
 }): JSX.Element {
+  const microphoneAllowed = status === "passed";
+  const checking = status === "checking";
+
   return (
     <div className="flex flex-col gap-4">
       <Field label="Audio input">
         <Select items={devices} value={selectedInputId} onValueChange={onSelectedInputChange} />
       </Field>
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" onClick={onProbe} disabled={status === "checking"}>
-          {status === "checking" ? <Loader2 className="animate-spin" size={18} /> : <Mic size={18} />}
-          {status === "checking" ? "Checking..." : "Allow microphone"}
+        <Button variant={microphoneAllowed ? "secondary" : "primary"} onClick={onProbe} disabled={checking || microphoneAllowed}>
+          {checking ? (
+            <Loader2 className="animate-spin" size={18} />
+          ) : microphoneAllowed ? (
+            <CheckCircle2 size={18} />
+          ) : (
+            <Mic size={18} />
+          )}
+          {checking ? "Checking..." : microphoneAllowed ? "Microphone allowed" : "Allow microphone"}
         </Button>
         <StatusBadge status={status} />
       </div>
