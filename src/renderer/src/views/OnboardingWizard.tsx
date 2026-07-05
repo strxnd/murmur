@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
+  ChevronDown,
   Download,
   Keyboard,
   Loader2,
@@ -20,8 +21,14 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Field } from "../components/ui/Field";
 import { IconButton } from "../components/ui/IconButton";
-import { Select, type SelectItem } from "../components/ui/Select";
+import { Panel } from "../components/ui/Panel";
+import type { SelectItem } from "../components/ui/Select";
 import { Textarea } from "../components/ui/Textarea";
+import {
+  audioInputSelectItems,
+  audioInputSelectValueToPreferredId,
+  preferredAudioInputIdToSelectValue
+} from "../lib/audio-inputs";
 import { cn } from "../lib/cn";
 import { downloadProgressSummary } from "../lib/download-progress";
 import { murmurClient } from "../lib/murmur-client";
@@ -144,17 +151,13 @@ export function OnboardingWizard({
   const dictationCloseBlocked =
     dictationPendingRef.current || dictationStatus === "starting" || dictationStatus === "recording" || dictationStatus === "waiting" || isActiveSessionStatus(state.session.status);
 
-  const audioInputItems: Array<SelectItem<string>> = [
-    { value: "", label: "System default" },
-    ...audioDevices.map((device, index) => ({
-      value: device.deviceId,
-      label: device.label || `Microphone ${index + 1}`
-    }))
-  ];
+  const audioInputItems: Array<SelectItem<string>> = audioInputSelectItems(audioDevices);
+  const selectedAudioInputValue = preferredAudioInputIdToSelectValue(selectedInputId);
 
   const selectAudioInput = (value: string): void => {
-    setSelectedInputId(value);
-    if (value === selectedInputId || micStatus === "checking") return;
+    const preferredInputId = audioInputSelectValueToPreferredId(value);
+    setSelectedInputId(preferredInputId);
+    if (preferredInputId === selectedInputId || micStatus === "checking") return;
     setMicStatus("idle");
     setMicMessage("");
   };
@@ -370,63 +373,91 @@ export function OnboardingWizard({
     }
   }, [restorePreviousMode, state.history, state.session.error, state.session.status, state.session.transcriptPreview]);
 
+  const currentStepState = stepState(currentStep, {
+    micStatus,
+    sttReady: selectedSttReady,
+    hotkeyReady: hotkeyCanProceed,
+    hotkeyRegistered: state.capabilities.hotkeys.registered,
+    dictationStatus,
+    ready: readyStepComplete
+  });
+
   return (
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/50" />
-        <Dialog.Popup className="fixed inset-0 z-[80] flex h-dvh w-dvw flex-col overflow-hidden border border-border bg-surface outline-none">
-          <header className="flex items-start justify-between gap-4 border-b border-border p-4">
-            <div className="min-w-0">
-              <Dialog.Title className="m-0 text-base font-semibold text-foreground">Set up Murmur</Dialog.Title>
-              <Dialog.Description className="m-0 mt-1 text-sm leading-6 text-muted-foreground">
-                Check the basics once so dictation works when you need it.
-              </Dialog.Description>
-            </div>
-            <IconButton title="Skip setup" onClick={() => void skipOnboarding()} disabled={dictationCloseBlocked}>
-              <X size={18} />
-            </IconButton>
-          </header>
-
-          <div className="grid min-h-0 flex-1 grid-cols-[15rem_minmax(0,1fr)] max-[760px]:grid-cols-1">
-            <nav className="border-r border-border p-3 max-[760px]:border-b max-[760px]:border-r-0">
-              <div className="flex flex-col gap-1 max-[760px]:flex-row max-[760px]:overflow-x-auto">
-                {onboardingStepIds.map((stepId, index) => {
-                  const Icon = stepMeta[stepId].icon;
-                  return (
-                    <button
-                      key={stepId}
-                      type="button"
-                      onClick={() => setStepIndex(index)}
-                      className={cn(
-                        "flex min-h-10 min-w-0 items-center gap-2 rounded-md px-2.5 text-left text-sm outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-foreground/25 max-[760px]:shrink-0",
-                        index === stepIndex ? "bg-foreground font-medium text-background" : "text-muted-foreground"
-                      )}
-                    >
-                      <Icon size={16} />
-                      <span className="truncate">{stepMeta[stepId].label}</span>
-                      <StepStateIcon
-                        state={stepState(stepId, {
-                          micStatus,
-                          sttReady: selectedSttReady,
-                          hotkeyReady: hotkeyCanProceed,
-                          hotkeyRegistered: state.capabilities.hotkeys.registered,
-                          dictationStatus,
-                          ready: readyStepComplete
-                        })}
-                      />
-                    </button>
-                  );
-                })}
+        <Dialog.Backdrop className="onboarding-dialog-backdrop fixed inset-0 z-[70] bg-black/50" />
+        <Dialog.Popup className="onboarding-dialog-popup fixed inset-0 z-[80] grid h-dvh w-dvw grid-cols-[16rem_minmax(0,1fr)] overflow-hidden bg-background text-foreground outline-none max-[980px]:grid-cols-1 max-[980px]:grid-rows-[auto_minmax(0,1fr)]">
+          <aside className="flex min-w-0 flex-col border-r border-border bg-surface max-[980px]:border-b max-[980px]:border-r-0">
+            <div className="flex min-h-20 items-center gap-3 border-b border-border px-4 max-[980px]:min-h-16">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border bg-foreground font-display text-2xl text-background">
+                M
               </div>
-            </nav>
+              <div className="min-w-0">
+                <div className="truncate font-display text-2xl leading-none text-foreground">Murmur</div>
+                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground" />
+                  Setup
+                </div>
+              </div>
+            </div>
 
-            <main className="min-h-0 overflow-y-auto p-4">
-              <h2 className="m-0 text-lg font-semibold text-foreground">{stepMeta[currentStep].title}</h2>
-              <div className="mt-4">
+            <nav className="flex flex-1 flex-col gap-1 p-3 max-[980px]:flex-row max-[980px]:overflow-x-auto">
+              {onboardingStepIds.map((stepId, index) => {
+                const Icon = stepMeta[stepId].icon;
+                return (
+                  <button
+                    key={stepId}
+                    type="button"
+                    aria-current={index === stepIndex ? "step" : undefined}
+                    onClick={() => setStepIndex(index)}
+                    className={cn(
+                      "flex min-h-10 min-w-0 items-center gap-2 rounded-md px-3 text-left text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-foreground/30 max-[980px]:shrink-0",
+                      index === stepIndex && "bg-foreground font-medium text-background hover:bg-foreground hover:text-background"
+                    )}
+                  >
+                    <Icon size={16} />
+                    <span className="truncate">{stepMeta[stepId].label}</span>
+                    <StepStateIcon
+                      state={stepState(stepId, {
+                        micStatus,
+                        sttReady: selectedSttReady,
+                        hotkeyReady: hotkeyCanProceed,
+                        hotkeyRegistered: state.capabilities.hotkeys.registered,
+                        dictationStatus,
+                        ready: readyStepComplete
+                      })}
+                    />
+                  </button>
+                );
+              })}
+            </nav>
+          </aside>
+
+          <section className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] bg-background">
+            <header className="sticky top-0 z-20 flex min-h-20 items-center justify-between gap-4 border-b border-border bg-background px-7 py-5 max-[640px]:px-4">
+              <div className="min-w-0">
+                <Dialog.Title className="m-0 font-display text-4xl font-normal leading-none text-foreground max-[640px]:text-3xl">
+                  Set up Murmur
+                </Dialog.Title>
+                <Dialog.Description className="m-0 mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+                  Check the basics once so dictation works when you need it.
+                </Dialog.Description>
+              </div>
+              <IconButton title="Skip setup" onClick={() => void skipOnboarding()} disabled={dictationCloseBlocked}>
+                <X size={18} />
+              </IconButton>
+            </header>
+
+            <main className="min-h-0 overflow-y-auto px-7 py-5 max-[640px]:px-4">
+              <Panel
+                title={stepMeta[currentStep].title}
+                actions={<StatusBadge status={currentStepState} />}
+                className="max-w-4xl"
+              >
                 {currentStep === "microphone" && (
                   <MicrophoneStep
                     devices={audioInputItems}
-                    selectedInputId={selectedInputId}
+                    selectedInputValue={selectedAudioInputValue}
                     status={micStatus}
                     message={micMessage}
                     onSelectedInputChange={selectAudioInput}
@@ -483,31 +514,36 @@ export function OnboardingWizard({
                     transcript={dictationValue}
                   />
                 )}
-              </div>
+              </Panel>
             </main>
-          </div>
 
-          <footer className="flex items-center justify-between gap-3 border-t border-border p-4 max-[560px]:flex-col max-[560px]:items-stretch">
-            <Button variant="ghost" onClick={() => void skipOnboarding()} disabled={dictationCloseBlocked}>
-              <X size={16} /> Skip
-            </Button>
-            <div className="flex items-center justify-end gap-2">
-              <Button variant="secondary" onClick={() => setStepIndex((index) => Math.max(0, index - 1))} disabled={stepIndex === 0}>
-                <ArrowLeft size={16} /> Back
+            <footer className="flex items-center justify-between gap-3 border-t border-border bg-background px-7 py-4 max-[640px]:px-4 max-[560px]:flex-col max-[560px]:items-stretch">
+              <Button variant="ghost" onClick={() => void skipOnboarding()} disabled={dictationCloseBlocked}>
+                <X size={16} /> Skip
               </Button>
-              <Button variant="primary" onClick={() => void goNext()} disabled={!currentStepCanProceed}>
-                {currentStep === "ready" ? (
-                  <>
-                    <Check size={16} /> Finish
-                  </>
-                ) : (
-                  <>
-                    Next <ArrowRight size={16} />
-                  </>
-                )}
-              </Button>
-            </div>
-          </footer>
+              <div className="flex items-center justify-end gap-2 max-[560px]:justify-stretch">
+                <Button
+                  variant="secondary"
+                  onClick={() => setStepIndex((index) => Math.max(0, index - 1))}
+                  disabled={stepIndex === 0}
+                  className="max-[560px]:flex-1"
+                >
+                  <ArrowLeft size={16} /> Back
+                </Button>
+                <Button variant="primary" onClick={() => void goNext()} disabled={!currentStepCanProceed} className="max-[560px]:flex-1">
+                  {currentStep === "ready" ? (
+                    <>
+                      <Check size={16} /> Finish
+                    </>
+                  ) : (
+                    <>
+                      Next <ArrowRight size={16} />
+                    </>
+                  )}
+                </Button>
+              </div>
+            </footer>
+          </section>
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
@@ -516,14 +552,14 @@ export function OnboardingWizard({
 
 function MicrophoneStep({
   devices,
-  selectedInputId,
+  selectedInputValue,
   status,
   message,
   onSelectedInputChange,
   onProbe
 }: {
   devices: Array<SelectItem<string>>;
-  selectedInputId: string;
+  selectedInputValue: string;
   status: ProbeStatus;
   message: string;
   onSelectedInputChange: (value: string) => void;
@@ -535,7 +571,7 @@ function MicrophoneStep({
   return (
     <div className="flex flex-col gap-4">
       <Field label="Audio input">
-        <Select items={devices} value={selectedInputId} onValueChange={onSelectedInputChange} />
+        <AudioInputDropdown items={devices} value={selectedInputValue} onValueChange={onSelectedInputChange} />
       </Field>
       <div className="flex flex-wrap items-center gap-2">
         <Button variant={microphoneAllowed ? "secondary" : "primary"} onClick={onProbe} disabled={checking || microphoneAllowed}>
@@ -551,6 +587,69 @@ function MicrophoneStep({
         <StatusBadge status={status} />
       </div>
       {message && <StatusMessage status={status}>{message}</StatusMessage>}
+    </div>
+  );
+}
+
+function AudioInputDropdown({
+  items,
+  value,
+  onValueChange
+}: {
+  items: Array<SelectItem<string>>;
+  value: string;
+  onValueChange: (value: string) => void;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const selectedItem = items.find((item) => item.value === value) ?? items[0];
+
+  return (
+    <div
+      className="relative"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") setOpen(false);
+      }}
+    >
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="flex min-h-9 w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-2.5 py-2 text-left text-sm text-foreground outline-none transition-colors focus-visible:border-foreground/70 focus-visible:ring-2 focus-visible:ring-foreground/20"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="min-w-0 flex-1 truncate">{selectedItem?.label ?? "Select"}</span>
+        <ChevronDown className={cn("shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} size={16} />
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          className="absolute left-0 right-0 z-[90] mt-1 max-h-56 overflow-y-auto rounded-md border border-border bg-surface-raised p-1 text-sm text-foreground shadow-[var(--console-listbox-shadow)] outline-none"
+        >
+          {items.map((item) => {
+            const selected = item.value === value;
+            return (
+              <button
+                key={item.value}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                disabled={item.disabled}
+                className="grid min-h-8 w-full cursor-default grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded px-2 text-left text-sm outline-none transition-colors hover:bg-muted focus-visible:bg-muted disabled:opacity-40"
+                onClick={() => {
+                  onValueChange(item.value);
+                  setOpen(false);
+                }}
+              >
+                <span className="col-start-1 text-foreground">{selected && <Check size={14} strokeWidth={2.5} />}</span>
+                <span className="col-start-2 min-w-0 truncate">{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

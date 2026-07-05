@@ -472,12 +472,24 @@ pre {
   transform: translateY(0.25rem) scale(0.98);
 }
 
-.mode-dialog-backdrop {
+.mode-dialog-backdrop,
+.onboarding-dialog-backdrop {
   transition: opacity 150ms ease;
 }
 
 .mode-dialog-backdrop[data-starting-style],
-.mode-dialog-backdrop[data-ending-style] {
+.mode-dialog-backdrop[data-ending-style],
+.onboarding-dialog-backdrop[data-starting-style],
+.onboarding-dialog-backdrop[data-ending-style] {
+  opacity: 0;
+}
+
+.onboarding-dialog-popup {
+  transition: opacity 150ms ease;
+}
+
+.onboarding-dialog-popup[data-starting-style],
+.onboarding-dialog-popup[data-ending-style] {
   opacity: 0;
 }
 
@@ -579,6 +591,8 @@ pre {
   .mode-popover-popup,
   .mode-dialog-backdrop,
   .mode-dialog-popup,
+  .onboarding-dialog-backdrop,
+  .onboarding-dialog-popup,
   .mode-row,
   .mode-row-chevron,
   .mode-glyph,
@@ -846,6 +860,12 @@ span.inline-flex.items-center.rounded.border.text-foreground {
   border-color: color-mix(in srgb, var(--border) 74%, var(--console-edge) 26%);
   border-radius: 8px;
   box-shadow: var(--console-dialog-shadow);
+}
+
+.onboarding-dialog-popup[role="dialog"] {
+  background: var(--background);
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .model-popover-popup {
