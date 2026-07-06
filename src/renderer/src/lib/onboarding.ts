@@ -7,6 +7,11 @@ export type OnboardingStepId = "microphone" | "stt" | "transcription" | "ready";
 
 export const onboardingStepIds: OnboardingStepId[] = ["microphone", "stt", "transcription", "ready"];
 
+export function onboardingStepIdsForState(state: AppStateSnapshot): OnboardingStepId[] {
+  if (onboardingSttReady(state)) return onboardingStepIds.filter((stepId) => stepId !== "stt");
+  return onboardingStepIds;
+}
+
 export function shouldAutoOpenOnboarding(state: AppStateSnapshot): boolean {
   if (state.settings.onboardingCompletedAt || state.settings.onboardingSkippedAt) return false;
   return state.sttSetup.needsSetup || !hasUsableSttPath(state) || state.history.length === 0;

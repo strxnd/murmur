@@ -81,6 +81,14 @@ export function hasProvidersFormChanges(values: ProvidersFormValues, persistedVa
   return !sameValue(normalizeProvidersFormValues(values), normalizeProvidersFormValues(persistedValues));
 }
 
+export function hasCloudCredentialChanges(
+  providerId: CloudCredentialProviderId,
+  values: ProvidersFormValues,
+  persistedValues: ProvidersFormValues
+): boolean {
+  return !sameValue(cloudCredentialState(providerId, values), cloudCredentialState(providerId, persistedValues));
+}
+
 export function isDefaultTranscriptionProvider(provider: Pick<TranscriptionProviderConfig, "id">): boolean {
   return defaultSttIds.has(provider.id);
 }
@@ -227,12 +235,14 @@ export function applyTranscriptionProviderType(
 
 export function applyLlmProviderType(provider: LlmProviderConfig, type: (typeof customLlmProviderTypes)[number]): LlmProviderConfig {
   const preset = llmProviderTypePreset(type);
+  const supportsApiKey = llmProviderTypeSupportsApiKey(type);
   return {
     ...provider,
     ...preset,
     type,
     enabled: provider.enabled,
-    apiKey: provider.apiKey ?? ""
+    apiKey: supportsApiKey ? (provider.apiKey ?? "") : "",
+    apiKeySecretId: supportsApiKey ? provider.apiKeySecretId : undefined
   };
 }
 
@@ -334,15 +344,20 @@ function normalizeTranscriptionProviderDraft(provider: TranscriptionProviderConf
 
 function normalizeLlmProviderDraft(provider: LlmProviderConfig): LlmProviderConfig {
   const isOpenAiCompatible = provider.type === "custom_openai_compatible";
+  const supportsApiKey = llmProviderTypeSupportsApiKey(provider.type);
   return {
     ...provider,
     name: provider.name.trim(),
     baseUrl: trimmedOptional(provider.baseUrl),
-    apiKey: provider.apiKey?.trim() ?? "",
-    apiKeySecretId: trimmedOptional(provider.apiKeySecretId),
+    apiKey: supportsApiKey ? (provider.apiKey?.trim() ?? "") : "",
+    apiKeySecretId: supportsApiKey ? trimmedOptional(provider.apiKeySecretId) : undefined,
     defaultModel: isOpenAiCompatible ? undefined : trimmedOptional(provider.defaultModel),
     models: isOpenAiCompatible ? normalizeModelIds([...(provider.models ?? []), provider.defaultModel]) : undefined
   };
+}
+
+function llmProviderTypeSupportsApiKey(type: LlmProviderType): boolean {
+  return type !== "ollama";
 }
 
 function normalizeModelIds(models: Array<string | undefined>): string[] {
@@ -368,6 +383,38 @@ function cloudCredentialProvider(providerId: CloudCredentialProviderId): CloudCr
   const definition = cloudCredentialProviders.find((provider) => provider.id === providerId);
   if (!definition) throw new Error(`Unknown cloud credential provider ${providerId}.`);
   return definition;
+}
+
+function cloudCredentialState(providerId: CloudCredentialProviderId, values: ProvidersFormValues): {
+  transcriptionProviders: Array<ProviderCredentialState | undefined>;
+  llmProviders: Array<ProviderCredentialState | undefined>;
+} {
+  const definition = cloudCredentialProvider(providerId);
+  const normalizedValues = normalizeProvidersFormValues(values);
+
+  return {
+    transcriptionProviders: definition.sttProviderIds.map((id) =>
+      providerCredentialState(normalizedValues.transcriptionProviders.find((provider) => provider.id === id))
+    ),
+    llmProviders: definition.llmProviderIds.map((id) =>
+      providerCredentialState(normalizedValues.llmProviders.find((provider) => provider.id === id))
+    )
+  };
+}
+
+interface ProviderCredentialState {
+  apiKey: string;
+  apiKeySecretId?: string;
+  enabled: boolean;
+}
+
+function providerCredentialState(provider: TranscriptionProviderConfig | LlmProviderConfig | undefined): ProviderCredentialState | undefined {
+  if (!provider) return undefined;
+  return {
+    apiKey: provider.apiKey?.trim() ?? "",
+    apiKeySecretId: trimmedOptional(provider.apiKeySecretId),
+    enabled: provider.enabled
+  };
 }
 
 function upsertTranscriptionCredential(

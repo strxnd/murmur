@@ -18,6 +18,11 @@ import { Input } from "../components/ui/Input";
 import { Panel } from "../components/ui/Panel";
 import { Select, type SelectItem } from "../components/ui/Select";
 import { useAudioDevices } from "../hooks/useAudioDevices";
+import {
+  audioInputSelectItems,
+  audioInputSelectValueToPreferredId,
+  preferredAudioInputIdToSelectValue
+} from "../lib/audio-inputs";
 import { murmurClient } from "../lib/murmur-client";
 import {
   acceleratorLabel,
@@ -97,16 +102,11 @@ export function ConfigurationView({
   const [clearDataConfirmation, setClearDataConfirmation] = useState("");
   const [isClearingLocalData, setIsClearingLocalData] = useState(false);
   const [clearDataError, setClearDataError] = useState<string | null>(null);
-  const audioInputItems: Array<SelectItem<string>> = [
-    { value: "", label: "System default" },
-    ...devices.map((device) => ({
-      value: device.deviceId,
-      label: device.label || `Microphone ${device.deviceId.slice(0, 6)}`
-    }))
-  ];
   const currentValues = {
     settings: settings ?? state.settings
   };
+  const selectedAudioInputId = currentValues.settings.preferredAudioInputId ?? "";
+  const audioInputItems: Array<SelectItem<string>> = audioInputSelectItems(devices, selectedAudioInputId);
   const hasUnsavedChanges = hasConfigurationChanges(currentValues, persistedValuesRef.current);
   const canClearLocalData = clearDataConfirmation.trim() === clearLocalDataConfirmationPhrase;
 
@@ -282,7 +282,7 @@ export function ConfigurationView({
         <Panel title="Application">
           <div className="grid grid-cols-4 gap-3 max-[1180px]:grid-cols-2 max-[760px]:grid-cols-1">
             <Field label="Preferred audio input">
-              <FormSelect control={form.control} name="settings.preferredAudioInputId" items={audioInputItems} />
+              <FormAudioInputSelect control={form.control} items={audioInputItems} />
             </Field>
             <Field label="Text retention days" error={form.formState.errors.settings?.textRetentionDays?.message}>
               <Input type="number" min={0} {...form.register("settings.textRetentionDays", { valueAsNumber: true })} />
@@ -504,6 +504,32 @@ function cloneConfigurationValues(values: ConfigurationFormValues): Configuratio
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function FormAudioInputSelect({
+  control,
+  items
+}: {
+  control: Control<ConfigurationFormValues>;
+  items: Array<SelectItem<string>>;
+}): JSX.Element {
+  return (
+    <Controller
+      control={control}
+      name="settings.preferredAudioInputId"
+      render={({ field }) => (
+        <Select
+          items={items}
+          value={preferredAudioInputIdToSelectValue(field.value)}
+          onValueChange={(value) => {
+            const preferredInputId = audioInputSelectValueToPreferredId(value);
+            field.onChange(preferredInputId || undefined);
+          }}
+          aria-label="Preferred audio input"
+        />
+      )}
+    />
+  );
 }
 
 function FormSelect({

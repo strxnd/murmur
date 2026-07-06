@@ -375,9 +375,29 @@ function ModeEditor({
               <Button size="sm" onClick={onMakeActive} disabled={!onMakeActive || activeModeId === mode.id}>
                 <Check size={16} /> Make active
               </Button>
-              <IconButton title="Delete mode" tone="danger" onClick={onDelete} disabled={mode.kind !== "custom" || !onDelete}>
-                <Trash2 size={18} />
-              </IconButton>
+              <Dialog.Root>
+                <Dialog.Trigger
+                  disabled={mode.kind !== "custom" || !onDelete}
+                  render={<IconButton title="Delete mode" tone="danger" disabled={mode.kind !== "custom" || !onDelete} />}
+                >
+                  <Trash2 size={18} />
+                </Dialog.Trigger>
+                <Dialog.Portal>
+                  <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/50" />
+                  <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-[var(--console-dialog-shadow)] outline-none">
+                    <Dialog.Title className="m-0 text-base font-semibold text-foreground">Delete mode?</Dialog.Title>
+                    <Dialog.Description className="m-0 mt-2 text-sm leading-6 text-muted-foreground">
+                      This will remove {mode.name || "this mode"} from custom modes. Save changes to persist the deletion.
+                    </Dialog.Description>
+                    <div className="mt-5 flex justify-end gap-2">
+                      <Dialog.Close render={<Button variant="secondary" />}>Cancel</Dialog.Close>
+                      <Dialog.Close onClick={onDelete} render={<Button variant="danger" />}>
+                        Delete mode
+                      </Dialog.Close>
+                    </div>
+                  </Dialog.Popup>
+                </Dialog.Portal>
+              </Dialog.Root>
             </>
           )}
           <IconButton title="Close" onClick={onClose}>

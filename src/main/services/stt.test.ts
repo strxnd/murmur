@@ -90,6 +90,16 @@ describe("STT runtime args", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("returns a failed validation result when the provider connection fails", async () => {
+    const { url } = await startServer((response) => response.socket?.destroy());
+    const service = new TranscriptionService(testPaths(), fakeRuntimeService("available"));
+
+    const result = await service.validate(openAiCompatibleProvider(url));
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/^Provider connection failed:/);
+  });
+
   it("writes Sherpa scratch audio under the temp dir", async () => {
     const paths = testPaths();
     const modelDir = join(paths.modelDir, "sherpa-test-model");
@@ -336,7 +346,11 @@ function restoreEnvValue(name: string, value: string | undefined): void {
 function startServer(handler: (response: ServerResponse) => void): Promise<{ url: string }> {
   return new Promise((resolve, reject) => {
     const sockets = new Set<Socket>();
-    const server = createServer((_request, response) => handler(response));
+    const server = createServer((request, response) => {
+      request.on("error", () => response.destroy());
+      request.resume();
+      handler(response);
+    });
     server.on("connection", (socket) => {
       sockets.add(socket);
       socket.on("close", () => sockets.delete(socket));

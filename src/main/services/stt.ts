@@ -109,28 +109,32 @@ export class TranscriptionService {
       return this.validateBundledRuntime(provider, "sherpa-onnx");
     }
 
-    if (provider.type === "cloud_openai" || provider.type.includes("openai")) {
-      const headers = this.authHeaders(provider);
-      const response = await fetchWithTimeout(joinUrl(provider.baseUrl, "/models"), { headers }, 8000);
-      if (response.status === 401) return { ok: false, message: "Authentication failed." };
+    try {
+      if (provider.type === "cloud_openai" || provider.type.includes("openai")) {
+        const headers = this.authHeaders(provider);
+        const response = await fetchWithTimeout(joinUrl(provider.baseUrl, "/models"), { headers }, 8000);
+        if (response.status === 401) return { ok: false, message: "Authentication failed." };
+        return {
+          ok: response.ok || response.status < 500,
+          message: response.ok ? "Provider reachable." : `Provider responded with HTTP ${response.status}.`,
+          capabilities: {
+            fileTranscription: true,
+            completedAudioStreaming: provider.streamingMode === "completed_audio_sse",
+            liveRealtimeStreaming: provider.streamingMode === "live_realtime",
+            modelDiscovery: response.ok
+          }
+        };
+      }
+
+      const response = await fetchWithTimeout(provider.baseUrl, {}, 8000);
       return {
         ok: response.ok || response.status < 500,
         message: response.ok ? "Provider reachable." : `Provider responded with HTTP ${response.status}.`,
-        capabilities: {
-          fileTranscription: true,
-          completedAudioStreaming: provider.streamingMode === "completed_audio_sse",
-          liveRealtimeStreaming: provider.streamingMode === "live_realtime",
-          modelDiscovery: response.ok
-        }
+        capabilities: { fileTranscription: true, completedAudioStreaming: false, liveRealtimeStreaming: false }
       };
+    } catch (error) {
+      return { ok: false, message: `Provider connection failed: ${errorMessage(error)}` };
     }
-
-    const response = await fetchWithTimeout(provider.baseUrl, {}, 8000);
-    return {
-      ok: response.ok || response.status < 500,
-      message: response.ok ? "Provider reachable." : `Provider responded with HTTP ${response.status}.`,
-      capabilities: { fileTranscription: true, completedAudioStreaming: false, liveRealtimeStreaming: false }
-    };
   }
 
   private validateBundledRuntime(provider: TranscriptionProviderConfig, runtimeId: "whisper.cpp" | "sherpa-onnx"): ProviderValidationResult {

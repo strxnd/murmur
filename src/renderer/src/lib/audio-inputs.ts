@@ -9,11 +9,13 @@ export interface AudioInputDeviceLike {
 export interface AudioInputSelectItem {
   value: string;
   label: string;
+  disabled?: boolean;
 }
 
-export function audioInputSelectItems(devices: AudioInputDeviceLike[]): AudioInputSelectItem[] {
+export function audioInputSelectItems(devices: AudioInputDeviceLike[], selectedInputId?: string): AudioInputSelectItem[] {
   const items: AudioInputSelectItem[] = [{ value: systemAudioInputSelectValue, label: "System default" }];
   const seen = new Set([systemAudioInputSelectValue]);
+  const selectedDeviceId = selectedInputId?.trim() ?? "";
   let fallbackIndex = 1;
 
   for (const device of devices) {
@@ -30,13 +32,23 @@ export function audioInputSelectItems(devices: AudioInputDeviceLike[]): AudioInp
     fallbackIndex += 1;
   }
 
+  if (selectedDeviceId && !seen.has(selectedDeviceId)) {
+    items.push({
+      value: selectedDeviceId,
+      label: "Unavailable microphone",
+      disabled: true
+    });
+  }
+
   return items;
 }
 
 export function preferredAudioInputIdToSelectValue(preferredAudioInputId: string | undefined): string {
-  return preferredAudioInputId?.trim() ? preferredAudioInputId : systemAudioInputSelectValue;
+  const deviceId = preferredAudioInputId?.trim() ?? "";
+  return deviceId ? deviceId : systemAudioInputSelectValue;
 }
 
 export function audioInputSelectValueToPreferredId(value: string): string {
-  return value === systemAudioInputSelectValue ? "" : value;
+  const deviceId = value.trim();
+  return deviceId === systemAudioInputSelectValue ? "" : deviceId;
 }

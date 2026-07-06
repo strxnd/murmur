@@ -7,6 +7,7 @@ import {
   localVoiceModelActiveAndReady,
   onboardingLocalVoiceModels,
   onboardingStepIds,
+  onboardingStepIdsForState,
   onboardingSttReady,
   onboardingVoiceModel,
   runtimeIdForVoiceModel,
@@ -16,6 +17,7 @@ import {
 describe("renderer onboarding helpers", () => {
   it("uses the redesigned four-step wizard order", () => {
     expect(onboardingStepIds).toEqual(["microphone", "stt", "transcription", "ready"]);
+    expect(onboardingStepIdsForState(state())).toEqual(["microphone", "stt", "transcription", "ready"]);
   });
 
   it("auto-opens for a first run without usable STT", () => {
@@ -85,6 +87,17 @@ describe("renderer onboarding helpers", () => {
     );
 
     expect(onboardingSttReady(snapshot)).toBe(true);
+    expect(onboardingStepIdsForState(snapshot)).toEqual(["microphone", "transcription", "ready"]);
+  });
+
+  it("treats configured external STT as ready without forcing a local download", () => {
+    const snapshot = state();
+    snapshot.transcriptionProviders = snapshot.transcriptionProviders.map((provider) =>
+      provider.id === "local-openai-stt" ? { ...provider, enabled: true } : provider
+    );
+
+    expect(onboardingSttReady(snapshot)).toBe(true);
+    expect(onboardingStepIdsForState(snapshot)).toEqual(["microphone", "transcription", "ready"]);
   });
 });
 

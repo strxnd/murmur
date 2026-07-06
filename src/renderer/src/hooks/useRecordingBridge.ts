@@ -12,6 +12,8 @@ interface PendingCompletion {
   cancelled: boolean;
 }
 
+type GetUserMedia = (constraints: MediaStreamConstraints) => Promise<MediaStream>;
+
 const levelNoiseFloor = 0.012;
 const levelSpeechCeiling = 0.12;
 const levelPublishIntervalMs = 32;
@@ -78,11 +80,7 @@ export function useRecordingBridge(enabled: boolean): void {
       sessionRef.current = sessionId;
 
       try {
-        const audioConstraint: MediaTrackConstraints | boolean = preferredAudioInputId
-          ? { deviceId: { exact: preferredAudioInputId } }
-          : true;
-
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
+        const stream = await getRecordingAudioStream(preferredAudioInputId);
         if (startGenerationRef.current !== generation || sessionRef.current !== sessionId) {
           stopTracks(stream);
           return;
@@ -142,6 +140,21 @@ export function useRecordingBridge(enabled: boolean): void {
   }, [enabled]);
 }
 
+export async function getRecordingAudioStream(
+  preferredAudioInputId: string | undefined,
+  getUserMedia: GetUserMedia = (constraints) => navigator.mediaDevices.getUserMedia(constraints)
+): Promise<MediaStream> {
+  const deviceId = preferredAudioInputId?.trim() ?? "";
+  if (!deviceId) return getUserMedia({ audio: true });
+
+  try {
+    return await getUserMedia({ audio: { deviceId: { exact: deviceId } } });
+  } catch (error) {
+    if (!isMissingPreferredAudioInputError(error)) throw error;
+    return getUserMedia({ audio: true });
+  }
+}
+
 async function startWavRecorder(stream: MediaStream, sessionId: string, onMaxDuration: () => void): Promise<WavRecorder> {
   const context = new AudioContext();
   const source = context.createMediaStreamSource(stream);
@@ -156,7 +169,10 @@ async function startWavRecorder(stream: MediaStream, sessionId: string, onMaxDur
   let smoothedLevel = 0;
   let lastLevelPublishedAt = 0;
   let lastPublishedLevel = 0;
+  let closed = false;
   processor.onaudioprocess = (event) => {
+    if (closed) return;
+
     const input = event.inputBuffer;
     let output = new Float32Array(input.length);
     for (let channel = 0; channel < input.numberOfChannels; channel += 1) {
@@ -196,7 +212,6 @@ async function startWavRecorder(stream: MediaStream, sessionId: string, onMaxDur
   processor.connect(monitor);
   monitor.connect(context.destination);
 
-  let closed = false;
   const cleanup = async (): Promise<void> => {
     if (closed) return;
     closed = true;
@@ -216,7 +231,7 @@ async function startWavRecorder(stream: MediaStream, sessionId: string, onMaxDur
     stop: async () => {
       const sampleRate = context.sampleRate;
       await cleanup();
-      return encodeWav(chunks, totalSamples, sampleRate);
+      return encodeWav(chunks.slice(), sampleRate);
     },
     cancel: cleanup
   };
@@ -235,8 +250,9 @@ function normalizeRecordingLevel(rms: number): number {
   return Math.max(0, Math.min(1, (rms - levelNoiseFloor) / (levelSpeechCeiling - levelNoiseFloor)));
 }
 
-async function encodeWav(chunks: Float32Array[], totalSamples: number, sampleRate: number): Promise<ArrayBuffer> {
+export async function encodeWav(chunks: readonly Float32Array[], sampleRate: number): Promise<ArrayBuffer> {
   const bytesPerSample = 2;
+  const totalSamples = chunks.reduce((total, chunk) => total + chunk.length, 0);
   const dataLength = totalSamples * bytesPerSample;
   const buffer = new ArrayBuffer(44 + dataLength);
   const view = new DataView(buffer);
@@ -276,7 +292,7 @@ async function encodeWav(chunks: Float32Array[], totalSamples: number, sampleRat
 
 function yieldToBrowser(): Promise<void> {
   return new Promise((resolve) => {
-    window.setTimeout(resolve, 0);
+    globalThis.setTimeout(resolve, 0);
   });
 }
 
@@ -288,4 +304,13 @@ function writeAscii(view: DataView, offset: number, value: string): void {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isMissingPreferredAudioInputError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+
+  const name = (error as { name?: unknown }).name;
+  if (name === "OverconstrainedError" || name === "NotFoundError" || name === "DevicesNotFoundError") return true;
+
+  return name === "ConstraintNotSatisfiedError" && (error as { constraint?: unknown }).constraint === "deviceId";
 }

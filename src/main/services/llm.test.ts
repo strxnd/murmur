@@ -14,6 +14,16 @@ afterEach(async () => {
 });
 
 describe("LlmService", () => {
+  it("returns a failed validation result when the provider connection fails", async () => {
+    const { url } = await startServer((response) => response.socket?.destroy());
+    const service = new LlmService();
+
+    const result = await service.validate(ollamaProvider(url));
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/^Provider connection failed:/);
+  });
+
   it("rejects stalled response bodies", async () => {
     process.env.MURMUR_PROVIDER_RESPONSE_TIMEOUT_MS = "60";
     process.env.MURMUR_PROVIDER_RESPONSE_IDLE_TIMEOUT_MS = "20";

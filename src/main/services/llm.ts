@@ -36,10 +36,14 @@ export class LlmService {
       return { ok: false, message: "Base URL is not valid." };
     }
 
-    const path = provider.type === "ollama" ? "/api/tags" : provider.type === "google" ? "" : "/models";
-    const response = await fetchWithTimeout(joinUrl(provider.baseUrl, path), { headers: llmProviderAuthHeaders(provider) }, 8000);
-    if (response.status === 401 || response.status === 403) return { ok: false, message: "Authentication failed." };
-    return { ok: response.ok || response.status < 500, message: `Provider responded with HTTP ${response.status}.` };
+    try {
+      const path = provider.type === "ollama" ? "/api/tags" : provider.type === "google" ? "" : "/models";
+      const response = await fetchWithTimeout(joinUrl(provider.baseUrl, path), { headers: llmProviderAuthHeaders(provider) }, 8000);
+      if (response.status === 401 || response.status === 403) return { ok: false, message: "Authentication failed." };
+      return { ok: response.ok || response.status < 500, message: `Provider responded with HTTP ${response.status}.` };
+    } catch (error) {
+      return { ok: false, message: `Provider connection failed: ${errorMessage(error)}` };
+    }
   }
 
   private async processOllama(options: LlmOptions): Promise<ProcessedResult> {
@@ -163,4 +167,8 @@ function llmHttpTimeouts(): { totalTimeoutMs: number; idleTimeoutMs: number } {
 function envPositiveInteger(name: string, fallback: number): number {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

@@ -11,6 +11,7 @@ import {
   createCustomTranscriptionProvider,
   customLlmProviderTypes,
   customTranscriptionProviderTypes,
+  hasCloudCredentialChanges,
   isCloudCredentialLlmProvider,
   isCloudCredentialTranscriptionProvider,
   isDefaultLlmProvider,
@@ -86,6 +87,35 @@ describe("provider form helpers", () => {
     });
   });
 
+  it("drops unsupported Ollama API credentials when applying and normalizing", () => {
+    const provider = createCustomLlmProvider("custom-llm");
+    const nextProvider = applyLlmProviderType(
+      { ...provider, apiKey: "sk-test", apiKeySecretId: "provider-secret:llm:custom-llm" },
+      "ollama"
+    );
+
+    expect(nextProvider).toMatchObject({
+      type: "ollama",
+      apiKey: "",
+      isCloud: false
+    });
+    expect(nextProvider.apiKeySecretId).toBeUndefined();
+
+    const normalized = normalizeProvidersFormValues({
+      transcriptionProviders: [],
+      llmProviders: [
+        {
+          ...nextProvider,
+          apiKey: " lingering-key ",
+          apiKeySecretId: "provider-secret:llm:custom-llm"
+        }
+      ]
+    });
+
+    expect(normalized.llmProviders[0].apiKey).toBe("");
+    expect(normalized.llmProviders[0].apiKeySecretId).toBeUndefined();
+  });
+
   it("detects built-in providers by persisted IDs", () => {
     expect(isDefaultTranscriptionProvider({ id: "openai-stt" })).toBe(true);
     expect(isDefaultTranscriptionProvider({ id: "custom-stt" })).toBe(false);
@@ -155,6 +185,18 @@ describe("provider form helpers", () => {
     expect(cloudCredentialApiKey("openai", values)).toBe(" sk-openai ");
   });
 
+  it("detects unsaved first-time cloud credential entry", () => {
+    const persistedValues = {
+      transcriptionProviders: defaultTranscriptionProviders,
+      llmProviders: defaultLlmProviders
+    };
+    const values = applyCloudCredentialApiKey(persistedValues, "openai", "sk-openai");
+
+    expect(cloudCredentialConfigured("openai", persistedValues)).toBe(false);
+    expect(cloudCredentialConfigured("openai", values)).toBe(true);
+    expect(hasCloudCredentialChanges("openai", values, persistedValues)).toBe(true);
+  });
+
   it("applies Anthropic and Google credentials only to their provider records", () => {
     const customStt = createCustomTranscriptionProvider("custom-stt");
     const customLlm = createCustomLlmProvider("custom-llm");
@@ -200,6 +242,22 @@ describe("provider form helpers", () => {
     expect(cloudCredentialApiKey("openai", cleared)).toBe("");
     expect(cleared.transcriptionProviders.find((provider) => provider.id === "openai-stt")?.apiKeySecretId).toBeUndefined();
     expect(cleared.llmProviders.find((provider) => provider.id === "openai-llm")?.apiKeySecretId).toBeUndefined();
+  });
+
+  it("detects unsaved cloud credential removal from stored secret references", () => {
+    const persistedValues = {
+      transcriptionProviders: defaultTranscriptionProviders.map((provider) =>
+        provider.id === "openai-stt" ? { ...provider, enabled: true, apiKeySecretId: "provider-secret:stt:test" } : provider
+      ),
+      llmProviders: defaultLlmProviders.map((provider) =>
+        provider.id === "openai-llm" ? { ...provider, enabled: true, apiKeySecretId: "provider-secret:llm:test" } : provider
+      )
+    };
+    const values = applyCloudCredentialApiKey(persistedValues, "openai", "");
+
+    expect(cloudCredentialConfigured("openai", persistedValues)).toBe(true);
+    expect(cloudCredentialConfigured("openai", values)).toBe(false);
+    expect(hasCloudCredentialChanges("openai", values, persistedValues)).toBe(true);
   });
 
   it("treats stored secret references as configured credentials without exposing a key", () => {

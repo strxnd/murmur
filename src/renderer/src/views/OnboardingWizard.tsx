@@ -5,7 +5,6 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
-  ChevronDown,
   Download,
   Keyboard,
   Loader2,
@@ -22,7 +21,7 @@ import { Button } from "../components/ui/Button";
 import { Field } from "../components/ui/Field";
 import { IconButton } from "../components/ui/IconButton";
 import { Panel } from "../components/ui/Panel";
-import type { SelectItem } from "../components/ui/Select";
+import { Select, type SelectItem } from "../components/ui/Select";
 import { Textarea } from "../components/ui/Textarea";
 import {
   audioInputSelectItems,
@@ -38,7 +37,8 @@ import {
   formatBytes,
   localVoiceModelActiveAndReady,
   onboardingLocalVoiceModels,
-  onboardingStepIds,
+  onboardingStepIdsForState,
+  onboardingSttReady,
   onboardingVoiceModel,
   runtimeIdForVoiceModel,
   type OnboardingStepId
@@ -71,7 +71,9 @@ export function OnboardingWizard({
   const stopDictation = useMurmurStore((store) => store.stopDictation);
   const cancelDictation = useMurmurStore((store) => store.cancelDictation);
   const [stepIndex, setStepIndex] = useState(0);
-  const currentStep = onboardingStepIds[stepIndex];
+  const stepIds = useMemo(() => onboardingStepIdsForState(state), [state]);
+  const currentStepIndex = Math.max(0, Math.min(stepIndex, stepIds.length - 1));
+  const currentStep = stepIds[currentStepIndex] ?? "ready";
   const initialVoiceModelId = onboardingVoiceModel(state)?.id ?? "";
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedInputId, setSelectedInputId] = useState(state.settings.preferredAudioInputId ?? "");
@@ -123,6 +125,10 @@ export function OnboardingWizard({
     void refreshAudioDevices();
   }, [open, refreshAudioDevices, state, state.history.length, state.settings.activationHotkey, state.settings.preferredAudioInputId]);
 
+  useEffect(() => {
+    setStepIndex((index) => Math.max(0, Math.min(index, stepIds.length - 1)));
+  }, [stepIds.length]);
+
   const voiceModels = useMemo(() => onboardingLocalVoiceModels(state), [state]);
   const voiceModel = useMemo(
     () => voiceModels.find((item) => item.id === selectedVoiceModelId) ?? onboardingVoiceModel(state),
@@ -137,22 +143,36 @@ export function OnboardingWizard({
   const download = voiceModel ? downloadForModel(state, voiceModel.id) : undefined;
   const runtime = voiceModel ? runtimeInstallForModel(state, voiceModel) : undefined;
   const selectedSttReady = voiceModel ? localVoiceModelActiveAndReady(state, voiceModel) : false;
+  const sttReady = onboardingSttReady(state);
   const hotkeyChanged = hotkey !== state.settings.activationHotkey;
   const hotkeyCanProceed = !hotkeyChanged && !isSavingHotkey;
-  const readyStepComplete = micStatus === "passed" && selectedSttReady && hotkeyCanProceed && dictationStatus === "passed";
+  const readyStepComplete = micStatus === "passed" && sttReady && hotkeyCanProceed && dictationStatus === "passed";
   const currentStepCanProceed =
     currentStep === "microphone"
       ? micStatus === "passed"
       : currentStep === "stt"
-        ? selectedSttReady
+        ? sttReady
         : currentStep === "transcription"
           ? hotkeyCanProceed && dictationStatus === "passed"
           : readyStepComplete;
   const dictationCloseBlocked =
     dictationPendingRef.current || dictationStatus === "starting" || dictationStatus === "recording" || dictationStatus === "waiting" || isActiveSessionStatus(state.session.status);
 
-  const audioInputItems: Array<SelectItem<string>> = audioInputSelectItems(audioDevices);
+  const audioInputItems: Array<SelectItem<string>> = audioInputSelectItems(audioDevices, selectedInputId);
   const selectedAudioInputValue = preferredAudioInputIdToSelectValue(selectedInputId);
+  const canNavigateToStep = (index: number): boolean => {
+    if (!dictationCloseBlocked || index === currentStepIndex) return true;
+    return stepIds[index] === "transcription";
+  };
+
+  const goToStep = (index: number): void => {
+    const nextIndex = Math.max(0, Math.min(stepIds.length - 1, index));
+    if (!canNavigateToStep(nextIndex)) {
+      setDictationMessage("Stop or cancel the dictation test before switching setup steps.");
+      return;
+    }
+    setStepIndex(nextIndex);
+  };
 
   const selectAudioInput = (value: string): void => {
     const preferredInputId = audioInputSelectValueToPreferredId(value);
@@ -198,7 +218,7 @@ export function OnboardingWizard({
       await finishOnboarding();
       return;
     }
-    setStepIndex((index) => Math.min(onboardingStepIds.length - 1, index + 1));
+    goToStep(currentStepIndex + 1);
   };
 
   const probeMicrophone = async (): Promise<void> => {
@@ -279,12 +299,12 @@ export function OnboardingWizard({
   }, [activateMode, state.settings.activeModeId]);
 
   useEffect(() => {
-    if (!open || currentStep !== "transcription" || !hotkeyCanProceed || !selectedSttReady) return;
+    if (!open || currentStep !== "transcription" || !hotkeyCanProceed || !sttReady) return;
     void prepareTranscriptionMode().catch((error) => {
       setDictationStatus("error");
       setDictationMessage(errorMessage(error));
     });
-  }, [currentStep, hotkeyCanProceed, open, prepareTranscriptionMode, selectedSttReady]);
+  }, [currentStep, hotkeyCanProceed, open, prepareTranscriptionMode, sttReady]);
 
   useEffect(() => {
     const active = open && currentStep === "transcription";
@@ -375,12 +395,18 @@ export function OnboardingWizard({
 
   const currentStepState = stepState(currentStep, {
     micStatus,
-    sttReady: selectedSttReady,
+    sttReady,
     hotkeyReady: hotkeyCanProceed,
     hotkeyRegistered: state.capabilities.hotkeys.registered,
     dictationStatus,
     ready: readyStepComplete
   });
+  const speechReadyLabel =
+    selectedSttReady && voiceModel
+      ? `Speech model active: ${voiceModel.name}`
+      : sttReady
+        ? "Speech recognition provider ready"
+        : "Speech recognition not ready";
 
   return (
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
@@ -402,17 +428,20 @@ export function OnboardingWizard({
             </div>
 
             <nav className="flex flex-1 flex-col gap-1 p-3 max-[980px]:flex-row max-[980px]:overflow-x-auto">
-              {onboardingStepIds.map((stepId, index) => {
+              {stepIds.map((stepId, index) => {
                 const Icon = stepMeta[stepId].icon;
+                const disabled = !canNavigateToStep(index);
                 return (
                   <button
                     key={stepId}
                     type="button"
-                    aria-current={index === stepIndex ? "step" : undefined}
-                    onClick={() => setStepIndex(index)}
+                    aria-current={index === currentStepIndex ? "step" : undefined}
+                    disabled={disabled}
+                    title={disabled ? "Stop or cancel the dictation test before switching setup steps." : undefined}
+                    onClick={() => goToStep(index)}
                     className={cn(
-                      "flex min-h-10 min-w-0 items-center gap-2 rounded-md px-3 text-left text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-foreground/30 max-[980px]:shrink-0",
-                      index === stepIndex && "bg-foreground font-medium text-background hover:bg-foreground hover:text-background"
+                      "flex min-h-10 min-w-0 items-center gap-2 rounded-md px-3 text-left text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-foreground/30 disabled:cursor-not-allowed disabled:opacity-50 max-[980px]:shrink-0",
+                      index === currentStepIndex && "bg-foreground font-medium text-background hover:bg-foreground hover:text-background"
                     )}
                   >
                     <Icon size={16} />
@@ -420,7 +449,7 @@ export function OnboardingWizard({
                     <StepStateIcon
                       state={stepState(stepId, {
                         micStatus,
-                        sttReady: selectedSttReady,
+                        sttReady,
                         hotkeyReady: hotkeyCanProceed,
                         hotkeyRegistered: state.capabilities.hotkeys.registered,
                         dictationStatus,
@@ -505,8 +534,8 @@ export function OnboardingWizard({
                 {currentStep === "ready" && (
                   <ReadyStep
                     microphoneReady={micStatus === "passed"}
-                    modelName={voiceModel?.name ?? "No local speech model selected"}
-                    modelReady={selectedSttReady}
+                    speechReady={sttReady}
+                    speechReadyLabel={speechReadyLabel}
                     hotkey={state.settings.activationHotkey}
                     hotkeyReady={hotkeyCanProceed}
                     hotkeyRegistered={state.capabilities.hotkeys.registered}
@@ -524,13 +553,18 @@ export function OnboardingWizard({
               <div className="flex items-center justify-end gap-2 max-[560px]:justify-stretch">
                 <Button
                   variant="secondary"
-                  onClick={() => setStepIndex((index) => Math.max(0, index - 1))}
-                  disabled={stepIndex === 0}
+                  onClick={() => goToStep(currentStepIndex - 1)}
+                  disabled={currentStepIndex === 0 || !canNavigateToStep(currentStepIndex - 1)}
                   className="max-[560px]:flex-1"
                 >
                   <ArrowLeft size={16} /> Back
                 </Button>
-                <Button variant="primary" onClick={() => void goNext()} disabled={!currentStepCanProceed} className="max-[560px]:flex-1">
+                <Button
+                  variant="primary"
+                  onClick={() => void goNext()}
+                  disabled={!currentStepCanProceed || !canNavigateToStep(currentStepIndex + 1)}
+                  className="max-[560px]:flex-1"
+                >
                   {currentStep === "ready" ? (
                     <>
                       <Check size={16} /> Finish
@@ -571,7 +605,13 @@ function MicrophoneStep({
   return (
     <div className="flex flex-col gap-4">
       <Field label="Audio input">
-        <AudioInputDropdown items={devices} value={selectedInputValue} onValueChange={onSelectedInputChange} />
+        <Select
+          items={devices}
+          value={selectedInputValue}
+          onValueChange={onSelectedInputChange}
+          aria-label="Audio input"
+          positionerClassName="z-[90]"
+        />
       </Field>
       <div className="flex flex-wrap items-center gap-2">
         <Button variant={microphoneAllowed ? "secondary" : "primary"} onClick={onProbe} disabled={checking || microphoneAllowed}>
@@ -587,69 +627,6 @@ function MicrophoneStep({
         <StatusBadge status={status} />
       </div>
       {message && <StatusMessage status={status}>{message}</StatusMessage>}
-    </div>
-  );
-}
-
-function AudioInputDropdown({
-  items,
-  value,
-  onValueChange
-}: {
-  items: Array<SelectItem<string>>;
-  value: string;
-  onValueChange: (value: string) => void;
-}): JSX.Element {
-  const [open, setOpen] = useState(false);
-  const selectedItem = items.find((item) => item.value === value) ?? items[0];
-
-  return (
-    <div
-      className="relative"
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") setOpen(false);
-      }}
-    >
-      <button
-        type="button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        className="flex min-h-9 w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-2.5 py-2 text-left text-sm text-foreground outline-none transition-colors focus-visible:border-foreground/70 focus-visible:ring-2 focus-visible:ring-foreground/20"
-        onClick={() => setOpen((current) => !current)}
-      >
-        <span className="min-w-0 flex-1 truncate">{selectedItem?.label ?? "Select"}</span>
-        <ChevronDown className={cn("shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} size={16} />
-      </button>
-      {open && (
-        <div
-          role="listbox"
-          className="absolute left-0 right-0 z-[90] mt-1 max-h-56 overflow-y-auto rounded-md border border-border bg-surface-raised p-1 text-sm text-foreground shadow-[var(--console-listbox-shadow)] outline-none"
-        >
-          {items.map((item) => {
-            const selected = item.value === value;
-            return (
-              <button
-                key={item.value}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                disabled={item.disabled}
-                className="grid min-h-8 w-full cursor-default grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded px-2 text-left text-sm outline-none transition-colors hover:bg-muted focus-visible:bg-muted disabled:opacity-40"
-                onClick={() => {
-                  onValueChange(item.value);
-                  setOpen(false);
-                }}
-              >
-                <span className="col-start-1 text-foreground">{selected && <Check size={14} strokeWidth={2.5} />}</span>
-                <span className="col-start-2 min-w-0 truncate">{item.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }
@@ -885,8 +862,8 @@ function HotkeyTestStep({
 
 function ReadyStep({
   microphoneReady,
-  modelName,
-  modelReady,
+  speechReady,
+  speechReadyLabel,
   hotkey,
   hotkeyReady,
   hotkeyRegistered,
@@ -894,8 +871,8 @@ function ReadyStep({
   transcript
 }: {
   microphoneReady: boolean;
-  modelName: string;
-  modelReady: boolean;
+  speechReady: boolean;
+  speechReadyLabel: string;
   hotkey: string;
   hotkeyReady: boolean;
   hotkeyRegistered: boolean;
@@ -906,7 +883,7 @@ function ReadyStep({
     <div className="flex flex-col gap-4">
       <div className="grid gap-2">
         <ReadyItem ready={microphoneReady} label="Microphone ready" />
-        <ReadyItem ready={modelReady} label={`Speech model active: ${modelName}`} />
+        <ReadyItem ready={speechReady} label={speechReadyLabel} />
         <ReadyItem ready={hotkeyReady} warning={!hotkeyRegistered} label={`Hotkey saved: ${hotkey}`} />
         <ReadyItem ready={transcriptionReady} label="Transcription test produced text" />
       </div>

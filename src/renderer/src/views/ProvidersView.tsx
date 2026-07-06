@@ -38,6 +38,7 @@ import {
   createCustomTranscriptionProvider,
   customLlmProviderTypes,
   customTranscriptionProviderTypes,
+  hasCloudCredentialChanges,
   hasProvidersFormChanges,
   isCloudCredentialLlmProvider,
   isCloudCredentialTranscriptionProvider,
@@ -299,7 +300,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
     if (!apiKey.trim()) {
       setCloudValidationByProvider((current) => ({
         ...current,
-        [providerId]: { status: "error", message: `Enter a ${providerName} API key before testing.` }
+        [providerId]: { status: "error", message: `Enter an API key for ${providerName} before testing.` }
       }));
       return;
     }
@@ -389,6 +390,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
       <View title="Connect providers" description="Add API keys or custom endpoints for transcription and language models.">
         <CloudCredentialsSection
           values={currentValues}
+          persistedValues={persistedValuesRef.current}
           validationByProvider={cloudValidationByProvider}
           canSaveKey={(providerId) => hasPendingCloudCredentialKey(providerId, currentValues, persistedValuesRef.current)}
           isSaving={isSaving}
@@ -502,6 +504,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
 
 function CloudCredentialsSection({
   values,
+  persistedValues,
   validationByProvider,
   canSaveKey,
   isSaving,
@@ -511,6 +514,7 @@ function CloudCredentialsSection({
   onDismissValidation
 }: {
   values: ProvidersFormValues;
+  persistedValues: ProvidersFormValues;
   validationByProvider: Partial<Record<CloudCredentialProviderId, ValidationState>>;
   canSaveKey: (providerId: CloudCredentialProviderId) => boolean;
   isSaving: boolean;
@@ -535,6 +539,7 @@ function CloudCredentialsSection({
             key={provider.id}
             provider={provider}
             values={values}
+            persistedValues={persistedValues}
             validation={validationByProvider[provider.id]}
             canSaveKey={canSaveKey(provider.id)}
             isSaving={isSaving}
@@ -552,6 +557,7 @@ function CloudCredentialsSection({
 function CloudCredentialRow({
   provider,
   values,
+  persistedValues,
   validation,
   canSaveKey,
   isSaving,
@@ -562,6 +568,7 @@ function CloudCredentialRow({
 }: {
   provider: (typeof cloudCredentialProviders)[number];
   values: ProvidersFormValues;
+  persistedValues: ProvidersFormValues;
   validation?: ValidationState;
   canSaveKey: boolean;
   isSaving: boolean;
@@ -571,7 +578,11 @@ function CloudCredentialRow({
   onDismissValidation: (providerId: CloudCredentialProviderId) => void;
 }): JSX.Element {
   const apiKey = cloudCredentialApiKey(provider.id, values);
-  const configured = cloudCredentialConfigured(provider.id, values);
+  const configured = cloudCredentialConfigured(provider.id, persistedValues);
+  const currentConfigured = cloudCredentialConfigured(provider.id, values);
+  const hasCredentialChanges = hasCloudCredentialChanges(provider.id, values, persistedValues);
+  const badgeTone = hasCredentialChanges ? "warning" : configured ? "success" : "neutral";
+  const badgeLabel = hasCredentialChanges ? (currentConfigured ? "Unsaved key" : "Unsaved removal") : configured ? "Configured" : "Missing key";
   const showSaveKeyAction = canSaveKey && validation?.status === "success";
 
   return (
@@ -599,7 +610,7 @@ function CloudCredentialRow({
       </Field>
 
       <div className="flex items-center justify-end gap-2 max-[760px]:justify-between">
-        <Badge tone={configured ? "success" : "neutral"}>{configured ? "Configured" : "Missing key"}</Badge>
+        <Badge tone={badgeTone}>{badgeLabel}</Badge>
         <Button size="sm" onClick={() => onValidate(provider.id)} disabled={validation?.status === "validating"}>
           <CheckCircle2 size={15} /> {validation?.status === "validating" ? "Testing..." : "Test key"}
         </Button>
@@ -676,6 +687,7 @@ function CustomProviderEditor({
   onClose: () => void;
 }): JSX.Element {
   const editorParent = useAutoAnimateRef<HTMLDivElement>();
+  const validateButtonLabel = validation?.status === "validating" ? "Testing..." : providerValidationActionLabel(entry);
 
   return (
     <div ref={editorParent} className="flex flex-col gap-4">
@@ -689,7 +701,7 @@ function CustomProviderEditor({
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 max-[640px]:w-full max-[640px]:justify-start">
           <Button size="sm" onClick={onValidate} disabled={validation?.status === "validating"}>
-            <CheckCircle2 size={15} /> {validation?.status === "validating" ? "Testing..." : "Test key"}
+            <CheckCircle2 size={15} /> {validateButtonLabel}
           </Button>
           <Dialog.Root>
             <Dialog.Trigger render={<IconButton title="Delete provider" tone="danger" />}>
@@ -867,6 +879,7 @@ function LlmProviderEditor({
   const isDefault = isDefaultLlmProvider(provider);
   const errors = form.formState.errors.llmProviders?.[index];
   const models = provider.models ?? [];
+  const apiKeyField = llmProviderApiKeyField(provider);
 
   const addModel = (): void => {
     form.setValue(`llmProviders.${index}.models`, [...models, ""], { shouldDirty: true, shouldValidate: true });
@@ -934,9 +947,17 @@ function LlmProviderEditor({
           <Input {...form.register(`llmProviders.${index}.baseUrl`)} spellCheck={false} />
         </Field>
 
-        <Field label="API key" description="Keys are stored locally on this Mac." error={errors?.apiKey?.message}>
-          <Input type="password" autoComplete="off" spellCheck={false} {...form.register(`llmProviders.${index}.apiKey`)} />
-        </Field>
+        {apiKeyField && (
+          <Field label={apiKeyField.label} description={apiKeyField.description} error={errors?.apiKey?.message}>
+            <Input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={apiKeyField.placeholder}
+              {...form.register(`llmProviders.${index}.apiKey`)}
+            />
+          </Field>
+        )}
 
         {provider.type === "custom_openai_compatible" && (
           <div className="col-span-full flex flex-col gap-2 rounded-md border border-border bg-muted/30 p-3">
@@ -1007,6 +1028,33 @@ function providerKindDetail(kind: ProviderKind): string {
 
 function providerTypeLabel(entry: CustomProviderEntry): string {
   return entry.kind === "stt" ? transcriptionProviderTypeLabel(entry.provider.type) : llmProviderTypeLabel(entry.provider.type);
+}
+
+function providerValidationActionLabel(entry: CustomProviderEntry): string {
+  if (entry.kind === "llm" && isLocalConnectionLlmType(entry.provider.type)) return "Test connection";
+  return "Test key";
+}
+
+function isLocalConnectionLlmType(type: LlmProviderConfig["type"]): boolean {
+  return type === "ollama" || type === "lmstudio";
+}
+
+function llmProviderApiKeyField(
+  provider: LlmProviderConfig
+): { label: string; description: string; placeholder: string } | null {
+  if (provider.type === "ollama") return null;
+  if (provider.type === "lmstudio") {
+    return {
+      label: "API key (optional)",
+      description: "Optional. Stored locally if set and sent as a bearer token to LM Studio.",
+      placeholder: "Optional bearer token"
+    };
+  }
+  return {
+    label: "API key",
+    description: "Keys are stored locally on this Mac.",
+    placeholder: "Enter API key"
+  };
 }
 
 function hasPendingCloudCredentialKey(
