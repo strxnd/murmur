@@ -68,13 +68,13 @@ function readAcceleratorArg(args) {
   const index = args.indexOf("--accelerator");
   if (index === -1) return "cpu";
   const value = args[index + 1];
-  if (!value) throw new Error("--accelerator needs a value: cpu, cuda, apple, or all.");
-  if (!["cpu", "cuda", "apple", "all"].includes(value)) throw new Error(`Unsupported accelerator ${value}.`);
+  if (!value) throw new Error("--accelerator needs a value: cpu, cuda, or all.");
+  if (!["cpu", "cuda", "all"].includes(value)) throw new Error(`Unsupported accelerator ${value}.`);
   return value;
 }
 
 function resolveAccelerators(value) {
-  if (value === "all") return ["cpu", "cuda", "apple"];
+  if (value === "all") return ["cpu", "cuda"];
   return [value];
 }
 
@@ -161,7 +161,6 @@ async function prepareWhisperCpp(platformKey, accelerator) {
       "-DGGML_NATIVE=OFF"
     ];
     if (accelerator === "cuda") cmakeArgs.push("-DGGML_CUDA=ON");
-    if (accelerator === "apple") cmakeArgs.push("-DGGML_METAL=ON");
     await run("cmake", cmakeArgs);
     await run("cmake", ["--build", buildDir, "--config", "Release", "--target", "whisper-server"]);
 
@@ -237,7 +236,6 @@ function sherpaAsset(platformKey, accelerator) {
 function supportsWhisperCpp(platformKey, accelerator) {
   if (accelerator === "cpu") return manifest.platforms.includes(platformKey);
   if (accelerator === "cuda") return platformKey.startsWith("linux-");
-  if (accelerator === "apple") return platformKey === "darwin-arm64";
   return false;
 }
 

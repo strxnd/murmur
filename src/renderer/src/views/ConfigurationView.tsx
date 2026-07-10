@@ -7,7 +7,7 @@ import { Controller, useForm, useWatch, type Control, type Path } from "react-ho
 import { z } from "zod";
 import type { AppSettings, AppStateSnapshot, SttRuntimeAccelerator, SttRuntimeInstallState } from "../../../shared/types";
 import { appSettingsSchema } from "../../../shared/schemas";
-import { AcceleratorMark, type BrandAccelerator } from "../components/AccelerationMark";
+import { AccelerationMark, type BrandAccelerator } from "../components/AccelerationMark";
 import { DownloadProgressStatus } from "../components/DownloadProgressStatus";
 import { ShortcutRecorder } from "../components/ShortcutRecorder";
 import { View } from "../components/View";
@@ -362,7 +362,7 @@ interface AccelerationRow {
   runtime?: SttRuntimeInstallState;
 }
 
-const accelerationOrder: BrandAccelerator[] = ["apple", "cuda"];
+const accelerationOrder: BrandAccelerator[] = ["cuda"];
 
 function AccelerationPanel({ state }: { state: AppStateSnapshot }): JSX.Element {
   const detectedAccelerators = detectAccelerators(state);
@@ -391,7 +391,7 @@ function AccelerationStatusRow({ row }: { row: AccelerationRow }): JSX.Element {
   return (
     <article className="grid grid-cols-[2.25rem_minmax(0,1fr)_auto] items-center gap-3 border-t border-border py-3 first:border-t-0 first:pt-0 last:pb-0 max-[760px]:grid-cols-[2.25rem_minmax(0,1fr)]">
       <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-border bg-muted/40 text-foreground">
-        <AcceleratorMark accelerator={row.accelerator} className="h-5 w-5" />
+        <AccelerationMark className="h-5 w-5" />
       </span>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">

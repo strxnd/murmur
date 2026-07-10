@@ -6,10 +6,10 @@ import type {
   SttRuntimeInstallState
 } from "../../../shared/types";
 
-export type DetectedAccelerator = Extract<SttRuntimeAccelerator, "cuda" | "apple">;
+export type DetectedAccelerator = Extract<SttRuntimeAccelerator, "cuda">;
 
 const runtimeOrder: SttRuntimeId[] = ["whisper.cpp", "sherpa-onnx"];
-const acceleratorOrder: SttRuntimeAccelerator[] = ["cpu", "apple", "cuda"];
+const acceleratorOrder: SttRuntimeAccelerator[] = ["cpu", "cuda"];
 
 export interface AccelerationRuntimePromptState {
   accelerators: DetectedAccelerator[];
@@ -26,10 +26,7 @@ export function uniqueRuntimeInstallStates(state: AppStateSnapshot): SttRuntimeI
 }
 
 export function detectedAccelerators(state: AppStateSnapshot): DetectedAccelerator[] {
-  const detected: DetectedAccelerator[] = [];
-  if (state.capabilities.stt.accelerationProbe.apple.available) detected.push("apple");
-  if (state.capabilities.stt.accelerationProbe.nvidia.available) detected.push("cuda");
-  return detected;
+  return state.capabilities.stt.accelerationProbe.nvidia.available ? ["cuda"] : [];
 }
 
 export function accelerationRuntimePromptState(state: AppStateSnapshot): AccelerationRuntimePromptState | null {
@@ -85,7 +82,6 @@ export function userRuntimeStatusMessage(runtime: SttRuntimeInstallState): strin
 }
 
 export function acceleratorLabel(accelerator: SttRuntimeAccelerator): string {
-  if (accelerator === "apple") return "Apple Silicon";
   if (accelerator === "cuda") return "CUDA";
   return "CPU";
 }

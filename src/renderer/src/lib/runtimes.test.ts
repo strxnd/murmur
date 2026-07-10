@@ -117,7 +117,6 @@ function state({
         diagnostics: [],
         accelerationProbe: {
           nvidia: { available: nvidia, devices: nvidia ? ["Test NVIDIA GPU"] : [], diagnostics: [] },
-          apple: { available: false, devices: [], diagnostics: [] },
           diagnostics: []
         }
       },

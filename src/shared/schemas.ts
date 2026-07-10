@@ -37,7 +37,7 @@ export const modelProviderSchema = z.enum([
 export const modelDownloadStrategySchema = z.enum(["direct_file", "archive", "ollama_pull", "none"]);
 export const modelDownloadStatusSchema = z.enum(["not_downloaded", "downloading", "downloaded", "error"]);
 export const sttRuntimeIdSchema = z.enum(["whisper.cpp", "sherpa-onnx"]);
-export const sttRuntimeAcceleratorSchema = z.enum(["cpu", "cuda", "apple"]);
+export const sttRuntimeAcceleratorSchema = z.enum(["cpu", "cuda"]);
 
 const semverPatternSource =
   "(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";
@@ -45,7 +45,7 @@ const semverStringSchema = z.string().regex(new RegExp(`^${semverPatternSource}$
 
 export const sttRuntimeVariantKeySchema = z
   .string()
-  .regex(new RegExp(`^(whisper\\.cpp|sherpa-onnx)\\|[^|]+\\|(cpu|cuda|apple)\\|${semverPatternSource}$`));
+  .regex(new RegExp(`^(whisper\\.cpp|sherpa-onnx)\\|[^|]+\\|(cpu|cuda)\\|${semverPatternSource}$`));
 export const sttRuntimeActionTargetSchema = z.union([
   sttRuntimeVariantKeySchema,
   z.object({
@@ -332,11 +332,6 @@ export const sttSetupSnapshotSchema = z
 
 export const accelerationProbeReportSchema = z.object({
   nvidia: z.object({
-    available: z.boolean(),
-    devices: z.array(z.string()),
-    diagnostics: z.array(z.string())
-  }),
-  apple: z.object({
     available: z.boolean(),
     devices: z.array(z.string()),
     diagnostics: z.array(z.string())

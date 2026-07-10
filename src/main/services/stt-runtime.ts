@@ -806,7 +806,7 @@ export class SttRuntimeService {
     const definition = this.definition(id);
     const platformKey = this.getPlatformKey();
     const supported = new Set(getSttRuntimeSupportedAccelerators(definition, platformKey));
-    return (["apple", "cuda", "cpu"] as const).filter((accelerator) => supported.has(accelerator));
+    return (["cuda", "cpu"] as const).filter((accelerator) => supported.has(accelerator));
   }
 
   private envVar(definition: SttRuntimeCatalogEntry, accelerator: SttRuntimeAccelerator): string {

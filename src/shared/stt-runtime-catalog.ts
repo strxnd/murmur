@@ -25,7 +25,7 @@ export interface SttRuntimeCatalogEntry {
 }
 
 export const supportedSttRuntimePlatformKeys = ["linux-x64", "darwin-arm64", "darwin-x64"] as const;
-export const sttRuntimeAccelerators = ["cpu", "cuda", "apple"] as const satisfies SttRuntimeAccelerator[];
+export const sttRuntimeAccelerators = ["cpu", "cuda"] as const satisfies SttRuntimeAccelerator[];
 export const sttRuntimeReleaseVersion = "0.1.0";
 export const sttRuntimeReleaseTag = `stt-runtimes-${sttRuntimeReleaseVersion}`;
 export const sttGpuRuntimeReleaseVersion = sttRuntimeReleaseVersion;
@@ -40,8 +40,7 @@ export const sttRuntimeCatalog: Record<SttRuntimeId, SttRuntimeCatalogEntry> = {
     envVar: "MURMUR_WHISPER_CPP_SERVER",
     acceleratorEnvVars: {
       cpu: "MURMUR_WHISPER_CPP_SERVER",
-      cuda: "MURMUR_WHISPER_CPP_CUDA_SERVER",
-      apple: "MURMUR_WHISPER_CPP_APPLE_SERVER"
+      cuda: "MURMUR_WHISPER_CPP_CUDA_SERVER"
     },
     upstreamVersion: "1.8.6",
     version: "0.1.0",
@@ -66,17 +65,6 @@ export const sttRuntimeCatalog: Record<SttRuntimeId, SttRuntimeCatalogEntry> = {
             url: runtimeReleaseUrl("murmur-stt-runtime-whisper.cpp-1.8.6-linux-x64-cuda-0.1.0.tar.gz"),
             abi: "CUDA",
             runtimeDir: "whisper.cpp-cuda"
-          }
-        )
-      },
-      "darwin-arm64": {
-        apple: runtimeAsset(
-          "murmur-stt-runtime-whisper.cpp-1.8.6-darwin-arm64-apple-0.1.0.tar.gz",
-          undefined,
-          undefined,
-          {
-            abi: "Metal",
-            runtimeDir: "whisper.cpp-apple"
           }
         )
       }
@@ -176,7 +164,6 @@ export function parseSttRuntimeVariantKey(value: string): {
 
 export function sttRuntimeVariantLabel(entry: SttRuntimeCatalogEntry, accelerator: SttRuntimeAccelerator): string {
   if (accelerator === "cpu") return entry.label;
-  if (accelerator === "apple") return `${entry.label} Apple Silicon`;
   return `${entry.label} ${accelerator.toUpperCase()}`;
 }
 
@@ -208,5 +195,5 @@ function isSttRuntimeId(value: string): value is SttRuntimeId {
 }
 
 function isSttRuntimeAccelerator(value: string): value is SttRuntimeAccelerator {
-  return value === "cpu" || value === "cuda" || value === "apple";
+  return value === "cpu" || value === "cuda";
 }

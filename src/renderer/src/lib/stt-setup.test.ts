@@ -171,7 +171,6 @@ function runtime(id: "whisper.cpp" | "sherpa-onnx", status: SttRuntimeInstallSta
 function emptyAccelerationProbe() {
   return {
     nvidia: { available: false, devices: [], diagnostics: [] },
-    apple: { available: false, devices: [], diagnostics: [] },
     diagnostics: []
   };
 }

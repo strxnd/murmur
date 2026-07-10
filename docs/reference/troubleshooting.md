@@ -19,7 +19,7 @@ This page is a maintainer-oriented checklist for common failure areas.
 
 - `sttSetup.needsSetup` means no usable STT provider or active local voice model is ready.
 - Check `capabilities.sttRuntimes` for runtime variant status and source.
-- Check `capabilities.stt.accelerationProbe` for advisory NVIDIA or Apple Silicon acceleration detection. Launch and transcription success are the source of truth.
+- Check `capabilities.stt.accelerationProbe` for advisory NVIDIA acceleration detection. Launch and transcription success are the source of truth.
 - For bundled Whisper, confirm the model exists under `modelDir` and the runtime can start `whisper-server`.
 - For Sherpa ONNX, confirm `tokens.txt` plus CTC or transducer ONNX files are present.
 - Sherpa ONNX supports CPU and CUDA in this version; macOS Sherpa runtimes are CPU-only.

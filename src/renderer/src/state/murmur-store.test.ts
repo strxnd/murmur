@@ -112,7 +112,6 @@ function testSnapshot(): AppStateSnapshot {
         diagnostics: [],
         accelerationProbe: {
           nvidia: { available: false, devices: [], diagnostics: [] },
-          apple: { available: false, devices: [], diagnostics: [] },
           diagnostics: []
         }
       },

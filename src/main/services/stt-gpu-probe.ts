@@ -1,6 +1,5 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cpus } from "node:os";
 import { join } from "node:path";
 import type { AccelerationProbeReport, GpuProbeAdapterReport } from "../../shared/types";
 
@@ -12,7 +11,6 @@ export class SttAccelerationProbeService {
       const nvidia = probeNvidia();
       return {
         nvidia,
-        apple: emptyAdapter("Apple Silicon acceleration requires macOS on Apple Silicon."),
         diagnostics: [
           "Acceleration probe is advisory only; runtime launch and transcription success decide readiness.",
           ...nvidia.diagnostics
@@ -20,21 +18,8 @@ export class SttAccelerationProbeService {
       };
     }
 
-    if (process.platform === "darwin") {
-      const apple = probeApple();
-      return {
-        nvidia: emptyAdapter("NVIDIA CUDA acceleration is Linux-only."),
-        apple,
-        diagnostics: [
-          "Acceleration probe is advisory only; runtime launch and transcription success decide readiness.",
-          ...apple.diagnostics
-        ]
-      };
-    }
-
     return {
       nvidia: emptyAdapter("NVIDIA CUDA acceleration is Linux-only."),
-      apple: emptyAdapter("Apple Silicon acceleration requires macOS on Apple Silicon."),
       diagnostics: ["Acceleration probing is unavailable on this platform."]
     };
   }
@@ -58,14 +43,6 @@ function probeNvidia(): GpuProbeAdapterReport {
   const available = devices.length > 0 || existsSync("/dev/nvidiactl");
   if (!available) diagnostics.push("No NVIDIA CUDA-capable device was detected.");
   return { available, devices, diagnostics };
-}
-
-function probeApple(): GpuProbeAdapterReport {
-  if (process.arch !== "arm64") {
-    return emptyAdapter("Apple Silicon acceleration requires Apple Silicon.");
-  }
-  const devices = [`Apple Silicon (${cpus()[0]?.model ?? "arm64"})`];
-  return { available: true, devices, diagnostics: ["Apple Silicon detected."] };
 }
 
 function emptyAdapter(message: string): GpuProbeAdapterReport {
