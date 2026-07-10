@@ -387,7 +387,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
 
   return (
     <>
-      <View title="Connect providers" description="Add API keys or custom endpoints for transcription and language models.">
+      <View title="Providers" description="Connect cloud services or custom endpoints for transcription and language models.">
         <CloudCredentialsSection
           values={currentValues}
           persistedValues={persistedValuesRef.current}
@@ -597,7 +597,7 @@ function CloudCredentialRow({
         </div>
       </div>
 
-      <Field label="API key" description="Keys are stored locally on this Mac.">
+      <Field label="API key" description="Keys are stored locally on this device.">
         <Input
           type="password"
           value={apiKey}
@@ -830,7 +830,7 @@ function TranscriptionProviderEditor({
           <Input {...form.register(`transcriptionProviders.${index}.endpointPath`)} disabled={provider.type === "sherpa_onnx"} spellCheck={false} />
         </Field>
 
-        <Field label="API key" description="Keys are stored locally on this Mac." error={errors?.apiKey?.message}>
+        <Field label="API key" description="Keys are stored locally on this device." error={errors?.apiKey?.message}>
           <Input type="password" autoComplete="off" spellCheck={false} {...form.register(`transcriptionProviders.${index}.apiKey`)} />
         </Field>
 
@@ -1052,7 +1052,7 @@ function llmProviderApiKeyField(
   }
   return {
     label: "API key",
-    description: "Keys are stored locally on this Mac.",
+    description: "Keys are stored locally on this device.",
     placeholder: "Enter API key"
   };
 }

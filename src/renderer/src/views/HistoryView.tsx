@@ -51,13 +51,13 @@ export function HistoryView({ state }: { state: AppStateSnapshot }): JSX.Element
 
   return (
     <View
-      title="Review dictations"
-      description="Search previous recordings and open entries to compare raw transcripts with final text."
+      title="History"
+      description="Search past dictations and compare the original transcript with the final text."
       actions={
         <Toolbar>
           <Dialog.Root>
             <Dialog.Trigger disabled={historyCount === 0} render={<Button variant="danger" />}>
-              <Trash2 size={18} /> Clear
+              <Trash2 size={18} /> Clear history
             </Dialog.Trigger>
             <Dialog.Portal>
               <Dialog.Backdrop className="fixed inset-0 z-40 bg-black/50" />
@@ -85,7 +85,7 @@ export function HistoryView({ state }: { state: AppStateSnapshot }): JSX.Element
             className="pl-9"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search dictations"
+            placeholder="Search history"
             aria-label="Search dictation history"
           />
         </label>
@@ -98,7 +98,10 @@ export function HistoryView({ state }: { state: AppStateSnapshot }): JSX.Element
 
       {filtered.length === 0 ? (
         <Panel>
-          <EmptyState title="No dictations found" detail={query ? "Try a different search." : "Completed dictations will appear here."} />
+          <EmptyState
+            title={query ? "No matching dictations" : "No dictations yet"}
+            detail={query ? "Try a different search." : "Your completed dictations will appear here."}
+          />
         </Panel>
       ) : (
         <section ref={historyListParent} className="flex flex-col gap-3" aria-busy={isSearchPending}>

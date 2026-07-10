@@ -28,16 +28,16 @@ export function HomeView({
   const releaseNotesParent = useAutoAnimateRef<HTMLDivElement>();
 
   return (
-    <View title="Dictate" description="Start recording, check recent output, and see how Murmur is working for you." actions={<SessionActions state={state} />}>
+    <View title="Dictate" description="Record a thought and review your recent dictations." actions={<SessionActions state={state} />}>
       {shouldShowSttSetupCallout(state) && <SttSetupCallout onOpenModels={onOpenModels} onOpenOnboarding={onOpenOnboarding} />}
       <GpuRuntimeInstallCallout state={state} />
       {state.session.error && <SessionNotice status={state.session.status} message={state.session.error} />}
 
       <section className="grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[640px]:grid-cols-1">
-        <StatCard label="Average speed" value={metrics.averageSpeed} detail="spoken words per recorded minute" />
-        <StatCard label="Words" value={metrics.words} detail="raw transcript words" />
-        <StatCard label="Apps used" value={metrics.appsUsed} detail="unique captured apps" />
-        <StatCard label="Time saved" value={metrics.timeSaved} detail={`baseline ${state.settings.typingBaselineWpm} WPM`} />
+        <StatCard label="Average speed" value={metrics.averageSpeed} detail="Across recorded dictations" />
+        <StatCard label="Words dictated" value={metrics.words} detail="Before Murmur refines the text" />
+        <StatCard label="Apps" value={metrics.appsUsed} detail="Apps you have dictated into" />
+        <StatCard label="Time saved" value={metrics.timeSaved} detail={`Compared with typing at ${state.settings.typingBaselineWpm} WPM`} />
       </section>
 
       <section className="grid grid-cols-[minmax(0,1fr)_24rem] gap-4 max-[1100px]:grid-cols-1">
@@ -56,7 +56,7 @@ export function HomeView({
                 </p>
               </article>
             ))}
-            {state.history.length === 0 && <p className="m-0 text-sm text-muted-foreground">Completed dictations will appear here.</p>}
+            {state.history.length === 0 && <p className="m-0 text-sm text-muted-foreground">Your completed dictations will appear here.</p>}
           </div>
         </Panel>
         <Panel title="What's new">
@@ -128,15 +128,15 @@ function SttSetupCallout({
     <Panel>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="m-0 text-sm font-medium text-foreground">Local dictation is not set up</h2>
-          <p className="m-0 mt-1 text-sm text-muted-foreground">Recording is disabled until a speech-to-text provider or local voice model is ready.</p>
+          <h2 className="m-0 text-sm font-medium text-foreground">Set up dictation</h2>
+          <p className="m-0 mt-1 text-sm text-muted-foreground">Choose a speech model or connect a transcription provider before recording.</p>
         </div>
         <Toolbar>
           <Button variant="secondary" onClick={onOpenModels}>
-            <Library size={18} /> Models
+            <Library size={18} /> Browse models
           </Button>
           <Button variant="primary" onClick={onOpenOnboarding}>
-            <Wrench size={18} /> Guided setup
+            <Wrench size={18} /> Start setup
           </Button>
         </Toolbar>
       </div>

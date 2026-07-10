@@ -224,7 +224,7 @@ export function OnboardingWizard({
   const probeMicrophone = async (): Promise<void> => {
     if (!navigator.mediaDevices?.getUserMedia) {
       setMicStatus("error");
-      setMicMessage("Microphone capture is unavailable in this renderer.");
+      setMicMessage("Microphone access is unavailable.");
       return;
     }
 
@@ -716,7 +716,7 @@ function SttStep({
           );
         })}
       </div>
-      {models.length === 0 && <StatusMessage status="error">No downloadable local speech models were found in the voice catalog.</StatusMessage>}
+      {models.length === 0 && <StatusMessage status="error">No downloadable local speech models were found in the model catalog.</StatusMessage>}
       <div className="grid grid-cols-3 gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm max-[760px]:grid-cols-1">
         <Metric label="Model" value={selectedModelName} />
         <Metric label="Download" value={downloadStatus === "downloading" ? downloadProgressSummary(download) : downloadStatusLabel(downloadStatus)} />

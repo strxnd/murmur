@@ -70,23 +70,23 @@ export function VocabularyView({ state }: { state: AppStateSnapshot }): JSX.Elem
   };
 
   return (
-    <View title="Teach names and terms" description="Add words Murmur should recognize reliably during dictation.">
+    <View title="Vocabulary" description="Add names and terms you want Murmur to recognize reliably.">
       <Panel>
         <form onSubmit={submit} className="flex max-w-xl items-center gap-2">
           <Input
-            aria-label="Word"
+            aria-label="Name or term"
             value={word}
             onChange={(event) => setWord(event.target.value)}
-            placeholder="Add a word"
+            placeholder="Add a name or term"
             disabled={isSaving}
           />
-          <IconButton title="Add word" type="submit" disabled={isSaving || !word.trim()}>
+          <IconButton title="Add to vocabulary" type="submit" disabled={isSaving || !word.trim()}>
             <Plus size={18} />
           </IconButton>
         </form>
 
         <div ref={vocabularyParent} className="mt-4 flex flex-wrap gap-2">
-          {vocabulary.length === 0 && <p className="m-0 text-sm text-muted-foreground">No words yet.</p>}
+          {vocabulary.length === 0 && <p className="m-0 text-sm text-muted-foreground">Your custom names and terms will appear here.</p>}
           {vocabulary.map((entry) => (
             <span
               key={entry.id}

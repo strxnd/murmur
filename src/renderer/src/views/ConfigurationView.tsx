@@ -251,7 +251,7 @@ export function ConfigurationView({
 
   return (
     <>
-      <View title="Tune Murmur" description="Adjust appearance, shortcuts, audio input, and local runtime settings.">
+      <View title="Settings" description="Manage appearance, shortcuts, audio, storage, and performance.">
         <section className="grid grid-cols-2 gap-4 max-[980px]:grid-cols-1">
           <Panel title="Appearance">
             <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
@@ -264,7 +264,7 @@ export function ConfigurationView({
             </div>
           </Panel>
 
-          <Panel title="Keyboard Shortcuts">
+          <Panel title="Keyboard shortcuts">
             <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
               <Field label="Activation mode" error={form.formState.errors.settings?.activationMode?.message}>
                 <FormSelect control={form.control} name="settings.activationMode" items={activationModeItems} />
@@ -296,7 +296,7 @@ export function ConfigurationView({
         <AccelerationPanel state={state} />
 
         <section id="advanced-settings" className="flex flex-col gap-4">
-          <h2 className="m-0 text-sm font-semibold text-foreground">Advanced Settings</h2>
+          <h2 className="m-0 text-sm font-semibold text-foreground">Advanced settings</h2>
           <Panel title="Clear local data">
             <div className="flex flex-col gap-3">
               <p className="m-0 text-sm text-muted-foreground">Clears persisted settings, modes, providers, vocabulary, and history.</p>
@@ -453,7 +453,7 @@ function accelerationRow(
       accelerator,
       title,
       status: "Needs attention",
-      detail: `${runtimeProofLabel(failed)} can be retried when acceleration is offered on Home.`,
+      detail: `${runtimeProofLabel(failed)} can be retried when acceleration is offered on Dictate.`,
       tone: "danger",
       runtime: undefined
     };
@@ -466,7 +466,7 @@ function accelerationRow(
     title,
     status: "Not installed",
     detail: canInstall
-      ? "A compatible accelerator was detected. Install acceleration from Home."
+      ? "A compatible accelerator was detected. Install acceleration from Dictate."
       : "A compatible accelerator was detected. Acceleration is not available yet.",
     tone: "warning",
     runtime: undefined

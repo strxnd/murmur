@@ -113,7 +113,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
   }, [models]);
 
   return (
-    <View title="Choose models" description="Pick speech and language models, download local options, and activate the ones Murmur should use.">
+    <View title="Models" description="Download and choose the speech and language models Murmur uses.">
       <Panel>
         <div className="grid grid-cols-[minmax(0,1fr)_14rem] gap-3 max-[760px]:grid-cols-1">
           <label className="relative block">
@@ -122,7 +122,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
               className="pl-9"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search model name, provider, or tags"
+              placeholder="Search by name, provider, or tag"
               aria-label="Search models"
             />
           </label>

@@ -236,8 +236,8 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
   return (
     <>
       <View
-        title="Shape your output"
-        description="Create reusable dictation styles for emails, notes, edits, and other writing tasks."
+        title="Modes"
+        description="Create reusable styles for emails, notes, edits, and other writing."
         actions={
           <Toolbar>
             <Button onClick={createMode}>

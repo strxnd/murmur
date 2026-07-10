@@ -1,5 +1,5 @@
 import { Tabs } from "@base-ui/react/tabs";
-import { BookOpen, Clock3, Home, KeyRound, Library, Settings, SlidersHorizontal, type LucideIcon } from "lucide-react";
+import { BookOpen, Clock3, KeyRound, Library, Mic, Settings, SlidersHorizontal, type LucideIcon } from "lucide-react";
 import { useEffect, useState, type JSX } from "react";
 import type { AppStateSnapshot } from "../../../shared/types";
 import { HomeView } from "../views/HomeView";
@@ -17,14 +17,25 @@ import { OnboardingWizard } from "../views/OnboardingWizard";
 type SectionId = "home" | "modes" | "vocabulary" | "configuration" | "providers" | "models" | "history";
 
 const sections: Array<{ id: SectionId; label: string; icon: LucideIcon }> = [
-  { id: "home", label: "Home", icon: Home },
+  { id: "home", label: "Dictate", icon: Mic },
   { id: "modes", label: "Modes", icon: SlidersHorizontal },
   { id: "vocabulary", label: "Vocabulary", icon: BookOpen },
-  { id: "configuration", label: "Configuration", icon: Settings },
-  { id: "providers", label: "Providers", icon: KeyRound },
+  { id: "history", label: "History", icon: Clock3 },
   { id: "models", label: "Models", icon: Library },
-  { id: "history", label: "History", icon: Clock3 }
+  { id: "providers", label: "Providers", icon: KeyRound },
+  { id: "configuration", label: "Settings", icon: Settings }
 ];
+
+const sessionStatusLabels: Record<AppStateSnapshot["session"]["status"], string> = {
+  idle: "Ready",
+  recording: "Listening",
+  transcribing: "Transcribing",
+  processing: "Refining text",
+  pasting: "Pasting",
+  complete: "Complete",
+  cancelled: "Cancelled",
+  error: "Needs attention"
+};
 
 const panelClassName = "h-full min-h-0 overflow-auto outline-none";
 
@@ -71,14 +82,14 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
           </div>
           <div className="min-w-0">
             <div className="truncate font-display text-2xl leading-none text-foreground">Murmur</div>
-            <div className="mt-1 flex items-center gap-2 text-xs capitalize text-muted-foreground">
+            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground" aria-live="polite">
               <span className={cn("h-1.5 w-1.5 rounded-full bg-muted-foreground", state.session.status === "recording" && "animate-pulse bg-foreground")} />
-              {state.session.status}
+              {sessionStatusLabels[state.session.status]}
             </div>
           </div>
         </div>
 
-        <Tabs.List className="flex flex-1 flex-col gap-1 p-3 max-[980px]:flex-row max-[980px]:overflow-x-auto">
+        <Tabs.List aria-label="Main navigation" className="flex flex-1 flex-col gap-1 p-3 max-[980px]:flex-row max-[980px]:overflow-x-auto">
           {sections.map((section) => {
             const Icon = section.icon;
             return (
