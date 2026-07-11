@@ -625,6 +625,7 @@ export class StorageService {
 
   private normalizeMode(mode: LegacyModeConfig | undefined, base: ModeConfig): ModeConfig {
     const context = mode?.context ?? base.context;
+    const legacyWritingStyle = typeof mode?.writingStyle === "string" ? mode.writingStyle.trim() : "";
 
     return {
       id: isUsableModeId(mode?.id) ? mode.id : base.id,
@@ -632,8 +633,9 @@ export class StorageService {
       name: isNonEmptyString(mode?.name) ? mode.name : base.name,
       description: typeof mode?.description === "string" ? mode.description : base.description,
       aiEnabled: typeof mode?.aiEnabled === "boolean" ? mode.aiEnabled : base.aiEnabled,
-      writingStyle: typeof mode?.writingStyle === "string" ? mode.writingStyle : base.writingStyle,
-      instructionPrompt: typeof mode?.instructionPrompt === "string" ? mode.instructionPrompt : base.instructionPrompt,
+      writingStyle: "",
+      instructionPrompt:
+        legacyWritingStyle || (typeof mode?.instructionPrompt === "string" ? mode.instructionPrompt : base.instructionPrompt),
       examples: normalizeExamples(mode?.examples),
       language: isNonEmptyString(mode?.language) ? mode.language : base.language,
       context: {

@@ -442,7 +442,8 @@ describe("StorageService", () => {
             presetId: "message",
             name: "Team chat",
             aiEnabled: true,
-            instructionPrompt: "Keep this casual.",
+            writingStyle: "Keep this casual.",
+            instructionPrompt: "Hidden message preset instruction.",
             examples: [],
             language: "auto",
             context: { app: true, selectedText: true, clipboardText: false }
