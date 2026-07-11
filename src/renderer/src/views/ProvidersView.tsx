@@ -355,12 +355,12 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
 
   const unsavedChangesPrompt = isPromptMounted
     ? createPortal(
-        <div className="pointer-events-none fixed bottom-4 left-[17rem] right-4 z-40 max-[980px]:left-4">
+        <div className="pointer-events-none fixed bottom-24 left-4 right-4 z-40">
           <div
             data-state={hasUnsavedChanges ? "open" : "closed"}
             role="region"
             aria-label="Unsaved provider changes"
-            className="configuration-unsaved-prompt pointer-events-auto mx-auto flex w-full max-w-3xl items-center justify-between gap-3 rounded-md border border-border bg-surface-raised px-3 py-3 shadow-[var(--console-popover-shadow)] max-[760px]:flex-col max-[760px]:items-stretch"
+            className="configuration-unsaved-prompt pointer-events-auto mx-auto flex w-full max-w-3xl items-center justify-between gap-3 rounded-[15px] border border-border bg-surface-raised/95 px-4 py-3 shadow-[var(--studio-float-shadow)] backdrop-blur-xl max-[760px]:flex-col max-[760px]:items-stretch"
           >
             <div className="min-w-0">
               <p className="m-0 text-sm font-medium text-foreground">You have unsaved changes</p>

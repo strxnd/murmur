@@ -10,14 +10,14 @@ interface PanelProps {
 
 export function Panel({ title, actions, className, children }: PanelProps): JSX.Element {
   return (
-    <section className={cn("rounded-md border border-border bg-surface p-4", className)}>
+    <section className={cn("studio-panel min-w-0 overflow-hidden rounded-[15px] border border-border bg-surface", className)}>
       {(title || actions) && (
-        <header className="mb-3 flex items-center justify-between gap-3">
+        <header className="studio-panel-header flex min-h-[46px] items-center justify-between gap-3 border-b border-border px-4 py-3">
           {title && <h2 className="m-0 text-sm font-medium text-foreground">{title}</h2>}
           {actions}
         </header>
       )}
-      {children}
+      <div className="studio-panel-body p-4">{children}</div>
     </section>
   );
 }

@@ -97,6 +97,6 @@ describe("buildProcessingPrompt", () => {
       vocabularyPrompt: ""
     });
 
-    expect(prompt).toContain("Writing style:\nKeep it warm and concise.");
+    expect(prompt).toContain("Model instructions:\nKeep it warm and concise.");
   });
 });

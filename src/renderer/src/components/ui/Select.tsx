@@ -50,7 +50,7 @@ export function Select<TValue extends string = string>({
       <BaseSelect.Trigger
         aria-label={ariaLabel}
         className={cn(
-          "flex min-h-9 w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-2.5 py-2 text-left text-sm text-foreground outline-none transition-colors focus-visible:border-foreground/70 focus-visible:ring-2 focus-visible:ring-foreground/20 data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50",
+          "flex min-h-[38px] w-full items-center justify-between gap-2 rounded-[11px] border border-border bg-surface-raised px-3 py-2 text-left text-sm text-foreground outline-none transition-colors focus-visible:border-foreground/70 focus-visible:ring-2 focus-visible:ring-foreground/20 data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50",
           !selectedItem && "data-[placeholder]:text-subtle",
           className
         )}
@@ -66,7 +66,7 @@ export function Select<TValue extends string = string>({
         <BaseSelect.Positioner sideOffset={6} className={cn("z-50 outline-none", positionerClassName)}>
           <BaseSelect.Popup
             className={cn(
-              "max-h-72 min-w-[var(--anchor-width)] overflow-y-auto rounded-md border border-border bg-surface-raised p-1 text-sm text-foreground shadow-[var(--console-listbox-shadow)] outline-none",
+              "max-h-72 min-w-[var(--anchor-width)] overflow-y-auto rounded-[11px] border border-border bg-surface-raised p-1.5 text-sm text-foreground shadow-[var(--console-listbox-shadow)] outline-none",
               popupClassName
             )}
           >
@@ -76,7 +76,7 @@ export function Select<TValue extends string = string>({
                   key={item.value}
                   value={item.value}
                   disabled={item.disabled}
-                  className="grid min-h-8 cursor-default grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded px-2 text-sm outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-muted"
+                  className="grid min-h-8 cursor-default grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-lg px-2 text-sm outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-muted"
                 >
                   <BaseSelect.ItemIndicator className="col-start-1 text-foreground">
                     <Check size={14} strokeWidth={2.5} />

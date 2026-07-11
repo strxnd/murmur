@@ -6,7 +6,7 @@ export const Input = forwardRef<ElementRef<typeof BaseInput>, ComponentPropsWith
   <BaseInput
     ref={ref}
     className={cn(
-      "min-h-9 w-full rounded-md border border-border bg-surface px-2.5 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-subtle focus:border-foreground/70 focus:ring-2 focus:ring-foreground/20 disabled:cursor-not-allowed disabled:opacity-50",
+      "min-h-[38px] w-full rounded-[11px] border border-border bg-surface-raised px-3 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-subtle focus:border-foreground/70 focus:ring-2 focus:ring-foreground/20 disabled:cursor-not-allowed disabled:opacity-50",
       className
     )}
     {...props}

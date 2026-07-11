@@ -1,30 +1,44 @@
 import { describe, expect, it } from "vitest";
-import { shouldGuardConfigurationNavigation } from "./navigation-guard";
+import { shouldGuardNavigation } from "./navigation-guard";
 
-describe("shouldGuardConfigurationNavigation", () => {
+describe("shouldGuardNavigation", () => {
   it("blocks leaving configuration while settings have unsaved edits", () => {
     expect(
-      shouldGuardConfigurationNavigation({
+      shouldGuardNavigation({
         currentSection: "configuration",
         nextSection: "history",
-        hasUnsavedConfigurationChanges: true
+        hasUnsavedConfigurationChanges: true,
+        hasUnsavedModeChanges: false
       })
     ).toBe(true);
   });
 
-  it("does not block non-configuration navigation or saved configuration", () => {
+  it("blocks leaving modes while a draft or edit is unsaved", () => {
     expect(
-      shouldGuardConfigurationNavigation({
+      shouldGuardNavigation({
+        currentSection: "modes",
+        nextSection: "home",
+        hasUnsavedConfigurationChanges: false,
+        hasUnsavedModeChanges: true
+      })
+    ).toBe(true);
+  });
+
+  it("does not block unrelated navigation or a section without unsaved changes", () => {
+    expect(
+      shouldGuardNavigation({
         currentSection: "history",
         nextSection: "models",
-        hasUnsavedConfigurationChanges: true
+        hasUnsavedConfigurationChanges: true,
+        hasUnsavedModeChanges: true
       })
     ).toBe(false);
     expect(
-      shouldGuardConfigurationNavigation({
+      shouldGuardNavigation({
         currentSection: "configuration",
         nextSection: "models",
-        hasUnsavedConfigurationChanges: false
+        hasUnsavedConfigurationChanges: false,
+        hasUnsavedModeChanges: false
       })
     ).toBe(false);
   });

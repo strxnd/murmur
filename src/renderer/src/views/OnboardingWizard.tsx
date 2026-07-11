@@ -412,10 +412,10 @@ export function OnboardingWizard({
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
         <Dialog.Backdrop className="onboarding-dialog-backdrop fixed inset-0 z-[70] bg-black/50" />
-        <Dialog.Popup className="onboarding-dialog-popup fixed inset-0 z-[80] grid h-dvh w-dvw grid-cols-[16rem_minmax(0,1fr)] overflow-hidden bg-background text-foreground outline-none max-[980px]:grid-cols-1 max-[980px]:grid-rows-[auto_minmax(0,1fr)]">
-          <aside className="flex min-w-0 flex-col border-r border-border bg-surface max-[980px]:border-b max-[980px]:border-r-0">
-            <div className="flex min-h-20 items-center gap-3 border-b border-border px-4 max-[980px]:min-h-16">
-              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border bg-foreground font-display text-2xl text-background">
+        <Dialog.Popup className="onboarding-dialog-popup fixed left-1/2 top-1/2 z-[80] grid h-[min(650px,calc(100dvh-3rem))] w-[min(920px,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 grid-cols-[14rem_minmax(0,1fr)] overflow-hidden rounded-[22px] border border-border bg-surface-raised text-foreground shadow-[var(--studio-float-shadow)] outline-none max-[760px]:grid-cols-1 max-[760px]:grid-rows-[auto_minmax(0,1fr)]">
+          <aside className="flex min-w-0 flex-col border-r border-border bg-surface/90 max-[760px]:border-b max-[760px]:border-r-0">
+            <div className="flex min-h-[68px] items-center gap-3 border-b border-border px-4">
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-[9px] bg-foreground font-display text-xl text-background">
                 M
               </div>
               <div className="min-w-0">
@@ -427,7 +427,7 @@ export function OnboardingWizard({
               </div>
             </div>
 
-            <nav className="flex flex-1 flex-col gap-1 p-3 max-[980px]:flex-row max-[980px]:overflow-x-auto">
+            <nav className="flex flex-1 flex-col gap-1.5 p-3 max-[760px]:flex-row max-[760px]:overflow-x-auto">
               {stepIds.map((stepId, index) => {
                 const Icon = stepMeta[stepId].icon;
                 const disabled = !canNavigateToStep(index);
@@ -440,7 +440,7 @@ export function OnboardingWizard({
                     title={disabled ? "Stop or cancel the dictation test before switching setup steps." : undefined}
                     onClick={() => goToStep(index)}
                     className={cn(
-                      "flex min-h-10 min-w-0 items-center gap-2 rounded-md px-3 text-left text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-foreground/30 disabled:cursor-not-allowed disabled:opacity-50 max-[980px]:shrink-0",
+                      "flex min-h-10 min-w-0 items-center gap-2 rounded-[11px] px-3 text-left text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-foreground/30 disabled:cursor-not-allowed disabled:opacity-50 max-[760px]:shrink-0",
                       index === currentStepIndex && "bg-foreground font-medium text-background hover:bg-foreground hover:text-background"
                     )}
                   >
@@ -462,10 +462,10 @@ export function OnboardingWizard({
             </nav>
           </aside>
 
-          <section className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] bg-background">
-            <header className="sticky top-0 z-20 flex min-h-20 items-center justify-between gap-4 border-b border-border bg-background px-7 py-5 max-[640px]:px-4">
+          <section className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] bg-surface-raised">
+            <header className="sticky top-0 z-20 flex min-h-[76px] items-center justify-between gap-4 border-b border-border bg-surface-raised px-6 py-4 max-[640px]:px-4">
               <div className="min-w-0">
-                <Dialog.Title className="m-0 font-display text-4xl font-normal leading-none text-foreground max-[640px]:text-3xl">
+                <Dialog.Title className="m-0 font-display text-3xl font-medium leading-none tracking-[-0.035em] text-foreground max-[640px]:text-2xl">
                   Set up Murmur
                 </Dialog.Title>
                 <Dialog.Description className="m-0 mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
@@ -477,11 +477,11 @@ export function OnboardingWizard({
               </IconButton>
             </header>
 
-            <main className="min-h-0 overflow-y-auto px-7 py-5 max-[640px]:px-4">
+            <main className="min-h-0 overflow-y-auto p-5 max-[640px]:p-4">
               <Panel
                 title={stepMeta[currentStep].title}
                 actions={<StatusBadge status={currentStepState} />}
-                className="max-w-4xl"
+                className="mx-auto max-w-4xl"
               >
                 {currentStep === "microphone" && (
                   <MicrophoneStep
@@ -546,7 +546,7 @@ export function OnboardingWizard({
               </Panel>
             </main>
 
-            <footer className="flex items-center justify-between gap-3 border-t border-border bg-background px-7 py-4 max-[640px]:px-4 max-[560px]:flex-col max-[560px]:items-stretch">
+            <footer className="flex items-center justify-between gap-3 border-t border-border bg-surface-raised px-6 py-3 max-[640px]:px-4 max-[560px]:flex-col max-[560px]:items-stretch">
               <Button variant="ghost" onClick={() => void skipOnboarding()} disabled={dictationCloseBlocked}>
                 <X size={16} /> Skip
               </Button>

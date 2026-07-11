@@ -69,12 +69,12 @@ function ActionErrorBanner({ error, onDismiss }: { error: ActionError | null; on
   if (!error) return null;
 
   return createPortal(
-    <div className="pointer-events-none fixed right-4 top-4 z-50 max-w-[min(calc(100vw-2rem),28rem)]">
+    <div className="pointer-events-none fixed right-4 top-16 z-50 max-w-[min(calc(100vw-2rem),28rem)]">
       <div
         ref={alertRef}
         role="alert"
         tabIndex={-1}
-        className="pointer-events-auto flex items-start gap-3 rounded-md border border-danger/45 bg-surface-raised p-3 text-sm text-foreground shadow-[var(--console-popover-shadow)] outline-none focus-visible:ring-2 focus-visible:ring-danger/30"
+        className="pointer-events-auto flex items-start gap-3 rounded-[15px] border border-danger/45 bg-surface-raised/95 p-4 text-sm text-foreground shadow-[var(--studio-float-shadow)] outline-none backdrop-blur-xl focus-visible:ring-2 focus-visible:ring-danger/30"
       >
         <AlertTriangle className="mt-0.5 shrink-0 text-danger" size={18} />
         <div className="min-w-0 flex-1">

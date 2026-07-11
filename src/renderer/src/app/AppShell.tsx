@@ -1,23 +1,33 @@
 import { Tabs } from "@base-ui/react/tabs";
-import { BookOpen, Clock3, KeyRound, Library, Mic, Settings, SlidersHorizontal, type LucideIcon } from "lucide-react";
+import {
+  AudioLines,
+  BookOpen,
+  Clock3,
+  House,
+  KeyRound,
+  Library,
+  Settings,
+  SlidersHorizontal,
+  type LucideIcon
+} from "lucide-react";
 import { useEffect, useState, type JSX } from "react";
 import type { AppStateSnapshot } from "../../../shared/types";
-import { HomeView } from "../views/HomeView";
-import { ModesView } from "../views/ModesView";
-import { VocabularyView } from "../views/VocabularyView";
-import { ConfigurationView } from "../views/ConfigurationView";
-import { ProvidersView } from "../views/ProvidersView";
-import { ModelsLibraryView } from "../views/ModelsLibraryView";
-import { HistoryView } from "../views/HistoryView";
 import { cn } from "../lib/cn";
-import { shouldGuardConfigurationNavigation } from "../lib/navigation-guard";
+import { shouldGuardNavigation } from "../lib/navigation-guard";
 import { shouldAutoOpenOnboarding } from "../lib/onboarding";
+import { ConfigurationView } from "../views/ConfigurationView";
+import { HistoryView } from "../views/HistoryView";
+import { HomeView } from "../views/HomeView";
+import { ModelsLibraryView } from "../views/ModelsLibraryView";
+import { ModesView } from "../views/ModesView";
 import { OnboardingWizard } from "../views/OnboardingWizard";
+import { ProvidersView } from "../views/ProvidersView";
+import { VocabularyView } from "../views/VocabularyView";
 
 type SectionId = "home" | "modes" | "vocabulary" | "configuration" | "providers" | "models" | "history";
 
 const sections: Array<{ id: SectionId; label: string; icon: LucideIcon }> = [
-  { id: "home", label: "Dictate", icon: Mic },
+  { id: "home", label: "Home", icon: House },
   { id: "modes", label: "Modes", icon: SlidersHorizontal },
   { id: "vocabulary", label: "Vocabulary", icon: BookOpen },
   { id: "history", label: "History", icon: Clock3 },
@@ -42,9 +52,9 @@ const panelClassName = "h-full min-h-0 overflow-auto outline-none";
 export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
   const [activeSection, setActiveSection] = useState<SectionId>("home");
   const [configurationHasUnsavedChanges, setConfigurationHasUnsavedChanges] = useState(false);
+  const [modesHaveUnsavedChanges, setModesHaveUnsavedChanges] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [autoPromptedOnboarding, setAutoPromptedOnboarding] = useState(false);
-  const isCompact = useMediaQuery("(max-width: 980px)");
 
   useEffect(() => {
     if (autoPromptedOnboarding || !shouldAutoOpenOnboarding(state)) return;
@@ -52,14 +62,31 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
     setOnboardingOpen(true);
   }, [autoPromptedOnboarding, state]);
 
+  useEffect(() => {
+    if (!configurationHasUnsavedChanges && !modesHaveUnsavedChanges) return;
+
+    const preventUnsavedChangesLoss = (event: BeforeUnloadEvent): void => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", preventUnsavedChangesLoss);
+    return () => window.removeEventListener("beforeunload", preventUnsavedChangesLoss);
+  }, [configurationHasUnsavedChanges, modesHaveUnsavedChanges]);
+
   const changeSection = (nextSection: SectionId): void => {
     if (
-      shouldGuardConfigurationNavigation({
+      shouldGuardNavigation({
         currentSection: activeSection,
         nextSection,
-        hasUnsavedConfigurationChanges: configurationHasUnsavedChanges
+        hasUnsavedConfigurationChanges: configurationHasUnsavedChanges,
+        hasUnsavedModeChanges: modesHaveUnsavedChanges
       }) &&
-      !window.confirm("You have unsaved configuration changes. Discard them and switch views?")
+      !window.confirm(
+        activeSection === "modes"
+          ? "You have an unsaved mode draft or edits. Discard them and switch views?"
+          : "You have unsaved configuration changes. Discard them and switch views?"
+      )
     ) {
       return;
     }
@@ -67,89 +94,82 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
     setActiveSection(nextSection);
   };
 
+  const sessionLabel = sessionStatusLabels[state.session.status];
+  const isRecording = state.session.status === "recording";
+
   return (
     <>
       <Tabs.Root
         value={activeSection}
         onValueChange={(value) => changeSection(value as SectionId)}
-        orientation={isCompact ? "horizontal" : "vertical"}
-        className="grid h-screen grid-cols-[16rem_minmax(0,1fr)] bg-background text-foreground max-[980px]:grid-cols-1 max-[980px]:grid-rows-[auto_minmax(0,1fr)]"
+        orientation="horizontal"
+        className="floating-studio grid h-screen grid-rows-[52px_minmax(0,1fr)] overflow-hidden bg-background text-foreground"
+        data-recording={isRecording || undefined}
       >
-        <aside className="flex min-w-0 flex-col border-r border-border bg-surface max-[980px]:sticky max-[980px]:top-0 max-[980px]:z-30 max-[980px]:border-b max-[980px]:border-r-0">
-        <div className="flex min-h-20 items-center gap-3 border-b border-border px-4 max-[980px]:min-h-16">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border bg-foreground font-display text-2xl text-background">
-            M
+        <header className="floating-studio-header">
+          <div className="floating-studio-identity">
+            <span className="floating-studio-logo" aria-hidden="true"><AudioLines size={18} /></span>
+            <span className="text-[13px] font-semibold">Murmur</span>
           </div>
-          <div className="min-w-0">
-            <div className="truncate font-display text-2xl leading-none text-foreground">Murmur</div>
-            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground" aria-live="polite">
-              <span className={cn("h-1.5 w-1.5 rounded-full bg-muted-foreground", state.session.status === "recording" && "animate-pulse bg-foreground")} />
-              {sessionStatusLabels[state.session.status]}
-            </div>
+          <div className="floating-studio-session" aria-live="polite">
+            <span className={cn("h-1.5 w-1.5 rounded-full bg-subtle", isRecording && "animate-pulse bg-foreground")} />
+            <span>{sessionLabel}</span>
           </div>
+        </header>
+
+        <main className="floating-studio-canvas">
+          <div className="floating-studio-content">
+            <Tabs.Panel value="home" id="home" className={panelClassName}>
+              <HomeView
+                state={state}
+                onOpenModels={() => changeSection("models")}
+                onOpenOnboarding={() => setOnboardingOpen(true)}
+              />
+            </Tabs.Panel>
+            <Tabs.Panel value="modes" id="modes" className={panelClassName}>
+              <ModesView state={state} onUnsavedChangesChange={setModesHaveUnsavedChanges} />
+            </Tabs.Panel>
+            <Tabs.Panel value="vocabulary" id="vocabulary" className={panelClassName}>
+              <VocabularyView state={state} />
+            </Tabs.Panel>
+            <Tabs.Panel value="configuration" id="configuration" className={panelClassName}>
+              <ConfigurationView state={state} onUnsavedChangesChange={setConfigurationHasUnsavedChanges} />
+            </Tabs.Panel>
+            <Tabs.Panel value="providers" id="providers" className={panelClassName}>
+              <ProvidersView state={state} />
+            </Tabs.Panel>
+            <Tabs.Panel value="models" id="models" className={panelClassName}>
+              <ModelsLibraryView state={state} />
+            </Tabs.Panel>
+            <Tabs.Panel value="history" id="history" className={panelClassName}>
+              <HistoryView state={state} />
+            </Tabs.Panel>
+          </div>
+        </main>
+
+        <div className="floating-studio-utility" aria-label="Recording shortcut">
+          <AudioLines size={16} />
+          <span>{isRecording ? "Audio stream active" : `${state.settings.activationHotkey} to record`}</span>
         </div>
 
-        <Tabs.List aria-label="Main navigation" className="flex flex-1 flex-col gap-1 p-3 max-[980px]:flex-row max-[980px]:overflow-x-auto">
+        <Tabs.List aria-label="Main navigation" className="floating-studio-dock">
           {sections.map((section) => {
             const Icon = section.icon;
             return (
               <Tabs.Tab
                 key={section.id}
                 value={section.id}
-                className="flex min-h-10 items-center gap-2 rounded-md px-3 text-left text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-foreground/30 data-[active]:bg-foreground data-[active]:font-medium data-[active]:text-background max-[980px]:shrink-0"
+                title={section.label}
+                className="floating-studio-dock-button"
               >
-                <Icon size={16} />
-                <span className="truncate">{section.label}</span>
+                <Icon size={19} />
+                <span>{section.label}</span>
               </Tabs.Tab>
             );
           })}
         </Tabs.List>
-
-        </aside>
-
-        <section className="min-h-0 min-w-0">
-          <Tabs.Panel value="home" id="home" className={panelClassName}>
-            <HomeView
-              state={state}
-              onOpenModels={() => changeSection("models")}
-              onOpenOnboarding={() => setOnboardingOpen(true)}
-            />
-          </Tabs.Panel>
-          <Tabs.Panel value="modes" id="modes" className={panelClassName}>
-            <ModesView state={state} />
-          </Tabs.Panel>
-          <Tabs.Panel value="vocabulary" id="vocabulary" className={panelClassName}>
-            <VocabularyView state={state} />
-          </Tabs.Panel>
-          <Tabs.Panel value="configuration" id="configuration" className={panelClassName}>
-            <ConfigurationView state={state} onUnsavedChangesChange={setConfigurationHasUnsavedChanges} />
-          </Tabs.Panel>
-          <Tabs.Panel value="providers" id="providers" className={panelClassName}>
-            <ProvidersView state={state} />
-          </Tabs.Panel>
-          <Tabs.Panel value="models" id="models" className={panelClassName}>
-            <ModelsLibraryView state={state} />
-          </Tabs.Panel>
-          <Tabs.Panel value="history" id="history" className={panelClassName}>
-            <HistoryView state={state} />
-          </Tabs.Panel>
-        </section>
       </Tabs.Root>
       <OnboardingWizard state={state} open={onboardingOpen} onOpenChange={setOnboardingOpen} />
     </>
   );
-}
-
-function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
-
-  useEffect(() => {
-    const media = window.matchMedia(query);
-    const handleChange = (): void => setMatches(media.matches);
-    handleChange();
-    media.addEventListener("change", handleChange);
-    return () => media.removeEventListener("change", handleChange);
-  }, [query]);
-
-  return matches;
 }

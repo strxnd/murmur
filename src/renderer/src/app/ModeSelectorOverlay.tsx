@@ -5,6 +5,7 @@ import {
   Mic,
   NotebookPen,
   SlidersHorizontal,
+  X,
   type LucideIcon
 } from "lucide-react";
 import {
@@ -169,6 +170,15 @@ export function ModeSelectorOverlay({ state }: { state: ModeSelectorStateSnapsho
   return (
     <div className="mode-selector-shell">
       <div className="mode-selector-panel" data-blocked={isBlocked ? "true" : undefined}>
+        <header className="mode-selector-header">
+          <div>
+            <span>Choose a mode</span>
+            <strong>How should Murmur shape this?</strong>
+          </div>
+          <button type="button" aria-label="Close mode selector" onClick={hide}>
+            <X size={16} />
+          </button>
+        </header>
         <div
           ref={listRef}
           className="mode-selector-list"
@@ -240,7 +250,10 @@ function ModeSelectorRow({
       <span className="mode-selector-row__icon">
         <Icon size={18} />
       </span>
-      <span className="mode-selector-row__name">{mode.name}</span>
+      <span className="mode-selector-row__copy">
+        <strong className="mode-selector-row__name">{mode.name}</strong>
+        <small>{mode.description || (mode.aiEnabled ? "AI cleanup" : "Speech to text")}</small>
+      </span>
       <span className="mode-selector-row__check" aria-hidden="true">
         {active && <Check size={18} />}
       </span>

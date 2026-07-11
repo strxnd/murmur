@@ -1,13 +1,14 @@
 export type GuardedSectionId = "home" | "modes" | "vocabulary" | "configuration" | "providers" | "models" | "history";
 
-export function shouldGuardConfigurationNavigation(options: {
+export function shouldGuardNavigation(options: {
   currentSection: GuardedSectionId;
   nextSection: GuardedSectionId;
   hasUnsavedConfigurationChanges: boolean;
+  hasUnsavedModeChanges: boolean;
 }): boolean {
   return (
-    options.hasUnsavedConfigurationChanges &&
-    options.currentSection === "configuration" &&
-    options.nextSection !== "configuration"
+    options.nextSection !== options.currentSection &&
+    ((options.currentSection === "configuration" && options.hasUnsavedConfigurationChanges) ||
+      (options.currentSection === "modes" && options.hasUnsavedModeChanges))
   );
 }

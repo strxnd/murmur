@@ -1,4 +1,4 @@
-import { CircleAlert, Clock3, Library, Mic, Square, Wrench, X } from "lucide-react";
+import { CircleAlert, Clock3, Library, Wrench, X } from "lucide-react";
 import { useMemo, useState, type JSX } from "react";
 import type { AppStateSnapshot, DictationHistoryItem } from "../../../shared/types";
 import { StatCard } from "../components/StatCard";
@@ -11,7 +11,7 @@ import { Panel } from "../components/ui/Panel";
 import { Toolbar } from "../components/ui/Toolbar";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { accelerationRuntimePromptState, isRuntimeBusy } from "../lib/runtimes";
-import { recordingUnavailableReason, shouldShowSttSetupCallout } from "../lib/stt-setup";
+import { shouldShowSttSetupCallout } from "../lib/stt-setup";
 import { useMurmurStore } from "../state/murmur-store";
 
 export function HomeView({
@@ -28,7 +28,7 @@ export function HomeView({
   const releaseNotesParent = useAutoAnimateRef<HTMLDivElement>();
 
   return (
-    <View title="Dictate" description="Record a thought and review your recent dictations." actions={<SessionActions state={state} />}>
+    <View title="Home" description="An overview of your dictation activity and recent updates.">
       {shouldShowSttSetupCallout(state) && <SttSetupCallout onOpenModels={onOpenModels} onOpenOnboarding={onOpenOnboarding} />}
       <GpuRuntimeInstallCallout state={state} />
       {state.session.error && <SessionNotice status={state.session.status} message={state.session.error} />}
@@ -76,28 +76,6 @@ export function HomeView({
         </Panel>
       </section>
     </View>
-  );
-}
-
-function SessionActions({ state }: { state: AppStateSnapshot }): JSX.Element {
-  const startDictation = useMurmurStore((store) => store.startDictation);
-  const stopDictation = useMurmurStore((store) => store.stopDictation);
-  const isRecording = state.session.status === "recording";
-  const isBusy = ["transcribing", "processing", "pasting"].includes(state.session.status);
-  const unavailableReason = recordingUnavailableReason(state);
-
-  return (
-    <Toolbar>
-      <Button
-        variant="primary"
-        onClick={() => void (isRecording ? stopDictation() : startDictation())}
-        disabled={isBusy || (!isRecording && Boolean(unavailableReason))}
-        title={unavailableReason ?? undefined}
-      >
-        {isRecording ? <Square size={18} /> : <Mic size={18} />}
-        {isRecording ? "Stop" : "Record"}
-      </Button>
-    </Toolbar>
   );
 }
 
@@ -183,7 +161,7 @@ function GpuRuntimeInstallCallout({ state }: { state: AppStateSnapshot }): JSX.E
   };
 
   return (
-    <Panel className="border-emerald-500/45 bg-emerald-500/10 p-3">
+    <Panel className="border-emerald-500/45 bg-emerald-500/10">
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3 max-[640px]:items-stretch">
           <div className="flex min-h-10 min-w-0 flex-1 items-center gap-3">

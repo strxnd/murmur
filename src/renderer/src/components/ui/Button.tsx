@@ -18,9 +18,9 @@ const variants: Record<ButtonVariant, string> = {
 };
 
 const sizes: Record<ButtonSize, string> = {
-  sm: "min-h-8 px-2.5 text-xs",
-  md: "min-h-9 px-3 text-sm",
-  icon: "h-9 w-9 p-0"
+  sm: "min-h-[34px] px-3 text-xs",
+  md: "min-h-[38px] px-3.5 text-sm",
+  icon: "h-[38px] w-[38px] p-0"
 };
 
 export const Button = forwardRef<ElementRef<typeof BaseButton>, ButtonProps>(
@@ -29,7 +29,7 @@ export const Button = forwardRef<ElementRef<typeof BaseButton>, ButtonProps>(
       ref={ref}
       type={type}
       className={cn(
-        "inline-flex shrink-0 items-center justify-center gap-2 rounded-md border font-medium leading-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-foreground/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50",
+        "inline-flex shrink-0 items-center justify-center gap-2 rounded-[11px] border font-medium leading-none outline-none transition-[color,background-color,border-color,transform] active:translate-y-px focus-visible:ring-2 focus-visible:ring-foreground/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:translate-y-0 disabled:opacity-50",
         variants[variant],
         sizes[size],
         className

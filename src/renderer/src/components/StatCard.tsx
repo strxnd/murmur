@@ -8,9 +8,9 @@ interface StatCardProps {
 
 export function StatCard({ label, value, detail }: StatCardProps): JSX.Element {
   return (
-    <section className="rounded-md border border-border bg-surface p-4">
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className="mt-2 text-2xl font-semibold text-foreground">{value}</div>
+    <section className="studio-stat-card relative overflow-hidden rounded-[15px] border border-border bg-surface p-4">
+      <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-subtle">{label}</div>
+      <div className="mt-2 text-2xl font-medium tracking-[-0.035em] text-foreground">{value}</div>
       {detail && <div className="mt-1 text-xs text-muted-foreground">{detail}</div>}
     </section>
   );

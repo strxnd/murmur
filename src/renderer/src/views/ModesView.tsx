@@ -26,6 +26,7 @@ import { Checkbox } from "../components/ui/Checkbox";
 import { Field } from "../components/ui/Field";
 import { IconButton } from "../components/ui/IconButton";
 import { Input } from "../components/ui/Input";
+import { Panel } from "../components/ui/Panel";
 import { Select, type SelectItem } from "../components/ui/Select";
 import { Switch } from "../components/ui/Switch";
 import { Textarea } from "../components/ui/Textarea";
@@ -42,7 +43,7 @@ const modesFormSchema = z.object({
 type ModesFormValues = z.infer<typeof modesFormSchema>;
 
 const languageItems: Array<SelectItem<string>> = [
-  { value: "auto", label: "Auto detect" },
+  { value: "auto", label: "Auto" },
   { value: "af", label: "Afrikaans" },
   { value: "am", label: "Amharic" },
   { value: "ar", label: "Arabic" },
@@ -155,12 +156,17 @@ const modeIcons: Record<ModeIconKey, LucideIcon> = {
   "sliders-horizontal": SlidersHorizontal
 };
 
-export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
+export function ModesView({
+  state,
+  onUnsavedChangesChange
+}: {
+  state: AppStateSnapshot;
+  onUnsavedChangesChange?: (hasUnsavedChanges: boolean) => void;
+}): JSX.Element {
   const setModes = useMurmurStore((store) => store.setModes);
   const activateMode = useMurmurStore((store) => store.activateMode);
-  const [openModeId, setOpenModeId] = useState<string | null>(null);
+  const [openModeId, setOpenModeId] = useState<string | null>(() => state.settings.activeModeId || state.modes[0]?.id || null);
   const [isCreatingMode, setIsCreatingMode] = useState(false);
-  const [isModeDialogOpen, setIsModeDialogOpen] = useState(false);
   const form = useForm<ModesFormValues>({
     resolver: zodResolver(modesFormSchema),
     defaultValues: { modes: state.modes }
@@ -173,16 +179,25 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
   const draftMode = draftForm.watch("modes")[0];
   const openModeIndex = openModeId ? modes.findIndex((mode) => mode.id === openModeId) : -1;
   const openMode = openModeIndex >= 0 ? modes[openModeIndex] : undefined;
-  const dialogMode = isCreatingMode ? draftMode : openMode;
-  const dialogForm = isCreatingMode ? draftForm : form;
-  const dialogModeIndex = isCreatingMode ? 0 : openModeIndex;
-  const modeDialogOpen = isModeDialogOpen && Boolean(dialogMode);
+  const selectedMode = isCreatingMode ? draftMode : openMode;
+  const selectedForm = isCreatingMode ? draftForm : form;
+  const selectedModeIndex = isCreatingMode ? 0 : openModeIndex;
   const modeListParent = useAutoAnimateRef<HTMLDivElement>();
+  const hasUnsavedChanges = form.formState.isDirty || Boolean(draftMode);
 
   useEffect(() => {
     form.reset({ modes: state.modes });
-    setOpenModeId((current) => (current && state.modes.some((mode) => mode.id === current) ? current : null));
+    setOpenModeId((current) =>
+      current && state.modes.some((mode) => mode.id === current)
+        ? current
+        : state.modes.find((mode) => mode.id === state.settings.activeModeId)?.id ?? state.modes[0]?.id ?? null
+    );
   }, [form, state.modes]);
+
+  useEffect(() => {
+    onUnsavedChangesChange?.(hasUnsavedChanges);
+    return () => onUnsavedChangesChange?.(false);
+  }, [hasUnsavedChanges, onUnsavedChangesChange]);
 
   const save = form.handleSubmit(async (values) => {
     const normalizedModes = ensureDefaultFirst(values.modes);
@@ -195,7 +210,6 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
     draftForm.reset({ modes: [next] });
     setIsCreatingMode(true);
     setOpenModeId(null);
-    setIsModeDialogOpen(true);
   };
 
   const commitDraftMode = draftForm.handleSubmit((values) => {
@@ -205,23 +219,26 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
     form.setValue("modes", [...form.getValues("modes"), next], { shouldDirty: true, shouldValidate: true });
     draftForm.reset({ modes: [] });
     setIsCreatingMode(false);
-    closeModePopup();
+    setOpenModeId(next.id);
   });
 
-  const closeModePopup = (): void => {
-    setIsModeDialogOpen(false);
+  const cancelDraftMode = (): void => {
+    draftForm.reset({ modes: [] });
+    setIsCreatingMode(false);
+    setOpenModeId(
+      form.getValues("modes").find((mode) => mode.id === state.settings.activeModeId)?.id ??
+        form.getValues("modes")[0]?.id ??
+        null
+    );
   };
 
   const deleteMode = (modeId: string): void => {
     const mode = form.getValues("modes").find((candidate) => candidate.id === modeId);
     if (!mode || mode.kind !== "custom") return;
 
-    form.setValue(
-      "modes",
-      form.getValues("modes").filter((candidate) => candidate.id !== modeId),
-      { shouldDirty: true, shouldValidate: true }
-    );
-    closeModePopup();
+    const remainingModes = form.getValues("modes").filter((candidate) => candidate.id !== modeId);
+    form.setValue("modes", remainingModes, { shouldDirty: true, shouldValidate: true });
+    setOpenModeId(remainingModes.find((candidate) => candidate.id === state.settings.activeModeId)?.id ?? remainingModes[0]?.id ?? null);
   };
 
   const makeActive = (modeId: string): void => {
@@ -234,13 +251,12 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
   };
 
   return (
-    <>
-      <View
+    <View
         title="Modes"
         description="Create reusable styles for emails, notes, edits, and other writing."
         actions={
           <Toolbar>
-            <Button onClick={createMode}>
+            <Button onClick={createMode} disabled={Boolean(draftMode)}>
               <Plus size={18} /> Create mode
             </Button>
             <Button variant="primary" onClick={() => void save()} disabled={form.formState.isSubmitting || !form.formState.isDirty}>
@@ -248,88 +264,93 @@ export function ModesView({ state }: { state: AppStateSnapshot }): JSX.Element {
             </Button>
           </Toolbar>
         }
-      >
-        <section>
-          <div ref={modeListParent} className="flex flex-col gap-2">
+    >
+      <div className="modes-workspace grid min-h-[560px] grid-cols-[minmax(17rem,0.72fr)_minmax(28rem,1.3fr)] items-stretch gap-3 max-[900px]:grid-cols-1">
+        <Panel
+          title="Your modes"
+          actions={<span className="text-[10px] font-medium uppercase tracking-[0.08em] text-subtle">{modes.length + (draftMode ? 1 : 0)} total</span>}
+          className="modes-master-panel"
+        >
+          <div ref={modeListParent} className="flex flex-col gap-1.5">
             {modes.map((mode) => (
               <button
                 key={mode.id}
                 type="button"
                 className={cn(
-                  "mode-row grid min-h-14 w-full grid-cols-[2.25rem_minmax(0,1fr)_auto_1rem] items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-left outline-none hover:bg-muted/70 focus-visible:bg-muted",
-                  !isCreatingMode && openModeId === mode.id && "bg-muted"
+                  "mode-master-row grid min-h-[54px] w-full grid-cols-[2.25rem_minmax(0,1fr)_auto_1rem] items-center gap-3 rounded-[11px] border border-transparent bg-transparent px-2.5 py-2 text-left outline-none transition-colors hover:border-border hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-foreground/25",
+                  !isCreatingMode && openModeId === mode.id && "border-border bg-muted"
                 )}
                 onClick={() => {
                   setIsCreatingMode(false);
-                  draftForm.reset({ modes: [] });
                   setOpenModeId(mode.id);
-                  setIsModeDialogOpen(true);
                 }}
               >
                 <ModeGlyph iconKey={mode.iconKey} active={openModeId === mode.id} />
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="truncate text-sm font-medium text-foreground">{mode.name}</span>
-                  {mode.kind === "built_in" && <Badge className="shrink-0 text-subtle">Built-in</Badge>}
-                  {mode.id === state.settings.activeModeId && <Badge className="shrink-0">Active</Badge>}
+                <span className="flex min-w-0 flex-col gap-1">
+                  <span className="truncate text-sm font-semibold text-foreground">{mode.name}</span>
+                  <span className="truncate text-xs text-subtle">
+                    {mode.language && mode.language !== "auto" ? mode.language : "Auto"} · {mode.aiEnabled ? "AI cleanup" : "STT only"}
+                  </span>
                 </span>
-                <span className="flex min-w-0 shrink-0 flex-wrap items-center justify-end gap-2">
-                  <Badge className="text-subtle">{mode.language && mode.language !== "auto" ? mode.language : "Auto language"}</Badge>
-                  <Badge className="text-subtle">{mode.aiEnabled ? "AI cleanup" : "STT only"}</Badge>
+                <span className="flex min-w-0 shrink-0 flex-wrap items-center justify-end gap-1.5">
+                  {mode.id === state.settings.activeModeId && <Badge className="shrink-0">Active</Badge>}
+                  {mode.kind === "built_in" && <Badge className="shrink-0 text-subtle">Built-in</Badge>}
                 </span>
                 <ChevronRight
                   size={16}
                   className={cn(
                     "mode-row-chevron text-muted-foreground",
-                    !isCreatingMode && openModeId === mode.id && "rotate-90 text-foreground"
+                    !isCreatingMode && openModeId === mode.id && "text-foreground"
                   )}
                 />
               </button>
             ))}
-          </div>
-        </section>
-      </View>
-
-      <Dialog.Root
-        open={modeDialogOpen}
-        onOpenChange={(open) => {
-          if (open) {
-            setIsModeDialogOpen(true);
-          } else {
-            closeModePopup();
-          }
-        }}
-        onOpenChangeComplete={(open) => {
-          if (!open) {
-            setOpenModeId(null);
-            if (isCreatingMode) {
-              draftForm.reset({ modes: [] });
-              setIsCreatingMode(false);
-            }
-          }
-        }}
-      >
-        <Dialog.Portal>
-          <Dialog.Backdrop className="mode-dialog-backdrop fixed inset-0 z-40 bg-black/50" />
-          <Dialog.Popup
-            className="mode-dialog-popup fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-3rem)] overflow-y-auto rounded-md border border-border bg-surface-raised p-4 text-sm text-foreground shadow-[var(--console-dialog-shadow)] outline-none"
-            style={{ width: "min(36rem, calc(100vw - 2rem))" }}
-          >
-            {dialogMode && (
-              <ModeEditor
-                form={dialogForm}
-                index={dialogModeIndex}
-                mode={dialogMode}
-                activeModeId={state.settings.activeModeId}
-                onCreate={isCreatingMode ? () => void commitDraftMode() : undefined}
-                onClose={closeModePopup}
-                onDelete={isCreatingMode ? undefined : () => deleteMode(dialogMode.id)}
-                onMakeActive={isCreatingMode ? undefined : () => makeActive(dialogMode.id)}
-              />
+            {draftMode && (
+              <button
+                type="button"
+                className={cn(
+                  "mode-master-row grid min-h-[54px] w-full grid-cols-[2.25rem_minmax(0,1fr)_auto_1rem] items-center gap-3 rounded-[11px] border border-border bg-muted px-2.5 py-2 text-left outline-none transition-colors hover:bg-muted/80 focus-visible:ring-2 focus-visible:ring-foreground/25",
+                  !isCreatingMode && "border-transparent bg-transparent"
+                )}
+                onClick={() => {
+                  setOpenModeId(null);
+                  setIsCreatingMode(true);
+                }}
+              >
+                <ModeGlyph iconKey={draftMode.iconKey} active={isCreatingMode} />
+                <span className="flex min-w-0 flex-col gap-1">
+                  <span className="truncate text-sm font-semibold text-foreground">{draftMode.name || "Untitled mode"}</span>
+                  <span className="truncate text-xs text-subtle">
+                    {draftMode.language && draftMode.language !== "auto" ? draftMode.language : "Auto"} · {draftMode.aiEnabled ? "AI cleanup" : "STT only"}
+                  </span>
+                </span>
+                <Badge tone="warning" className="shrink-0">Draft</Badge>
+                <ChevronRight size={16} className={cn("mode-row-chevron text-muted-foreground", isCreatingMode && "text-foreground")} />
+              </button>
             )}
-          </Dialog.Popup>
-        </Dialog.Portal>
-      </Dialog.Root>
-    </>
+          </div>
+        </Panel>
+
+        {selectedMode && (
+          <Panel
+            title={selectedMode.name || "Mode"}
+            actions={<span className="text-[10px] font-medium uppercase tracking-[0.08em] text-subtle">{modeKindLabel(selectedMode.kind)}</span>}
+            className="modes-detail-panel"
+          >
+            <ModeEditor
+              form={selectedForm}
+              index={selectedModeIndex}
+              mode={selectedMode}
+              activeModeId={state.settings.activeModeId}
+              onCreate={isCreatingMode ? () => void commitDraftMode() : undefined}
+              onCancelCreate={isCreatingMode ? cancelDraftMode : undefined}
+              onDelete={isCreatingMode ? undefined : () => deleteMode(selectedMode.id)}
+              onMakeActive={isCreatingMode ? undefined : () => makeActive(selectedMode.id)}
+            />
+          </Panel>
+        )}
+      </div>
+    </View>
   );
 }
 
@@ -339,7 +360,7 @@ function ModeEditor({
   mode,
   activeModeId,
   onCreate,
-  onClose,
+  onCancelCreate,
   onDelete,
   onMakeActive
 }: {
@@ -348,7 +369,7 @@ function ModeEditor({
   mode: ModeConfig;
   activeModeId: string;
   onCreate?: () => void;
-  onClose: () => void;
+  onCancelCreate?: () => void;
   onDelete?: () => void;
   onMakeActive?: () => void;
 }): JSX.Element {
@@ -357,52 +378,47 @@ function ModeEditor({
 
   return (
     <div ref={editorParent} className="flex flex-col gap-4">
-      <header className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <ModeGlyph iconKey={mode.iconKey} active />
-          <div className="min-w-0">
-            <Dialog.Title className="m-0 truncate text-base font-semibold text-foreground">{mode.name || "Mode"}</Dialog.Title>
-            <p className="m-0 truncate text-xs text-muted-foreground">{modeKindLabel(mode.kind)}</p>
-          </div>
-        </div>
+      <header className="flex items-start justify-between gap-5">
+        <p className="m-0 max-w-2xl text-sm leading-6 text-muted-foreground">{mode.description || "Configure how this mode turns speech into finished text."}</p>
         <div className="flex shrink-0 items-center gap-2">
           {onCreate ? (
-            <Button size="sm" variant="primary" onClick={onCreate}>
-              <Plus size={16} /> Create
-            </Button>
+            <>
+              <Button size="sm" onClick={onCancelCreate} disabled={!onCancelCreate}>
+                <X size={16} /> Cancel
+              </Button>
+              <Button size="sm" variant="primary" onClick={onCreate}>
+                <Plus size={16} /> Create
+              </Button>
+            </>
           ) : (
             <>
               <Button size="sm" onClick={onMakeActive} disabled={!onMakeActive || activeModeId === mode.id}>
                 <Check size={16} /> Make active
               </Button>
-              <Dialog.Root>
-                <Dialog.Trigger
-                  disabled={mode.kind !== "custom" || !onDelete}
-                  render={<IconButton title="Delete mode" tone="danger" disabled={mode.kind !== "custom" || !onDelete} />}
-                >
-                  <Trash2 size={18} />
-                </Dialog.Trigger>
-                <Dialog.Portal>
-                  <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/50" />
-                  <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-[var(--console-dialog-shadow)] outline-none">
-                    <Dialog.Title className="m-0 text-base font-semibold text-foreground">Delete mode?</Dialog.Title>
-                    <Dialog.Description className="m-0 mt-2 text-sm leading-6 text-muted-foreground">
-                      This will remove {mode.name || "this mode"} from custom modes. Save changes to persist the deletion.
-                    </Dialog.Description>
-                    <div className="mt-5 flex justify-end gap-2">
-                      <Dialog.Close render={<Button variant="secondary" />}>Cancel</Dialog.Close>
-                      <Dialog.Close onClick={onDelete} render={<Button variant="danger" />}>
-                        Delete mode
-                      </Dialog.Close>
-                    </div>
-                  </Dialog.Popup>
-                </Dialog.Portal>
-              </Dialog.Root>
+              {mode.kind === "custom" && onDelete && (
+                <Dialog.Root>
+                  <Dialog.Trigger render={<IconButton title="Delete mode" tone="danger" />}>
+                    <Trash2 size={18} />
+                  </Dialog.Trigger>
+                  <Dialog.Portal>
+                    <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/50" />
+                    <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-[var(--console-dialog-shadow)] outline-none">
+                      <Dialog.Title className="m-0 text-base font-semibold text-foreground">Delete mode?</Dialog.Title>
+                      <Dialog.Description className="m-0 mt-2 text-sm leading-6 text-muted-foreground">
+                        This will remove {mode.name || "this mode"} from custom modes. Save changes to persist the deletion.
+                      </Dialog.Description>
+                      <div className="mt-5 flex justify-end gap-2">
+                        <Dialog.Close render={<Button variant="secondary" />}>Cancel</Dialog.Close>
+                        <Dialog.Close onClick={onDelete} render={<Button variant="danger" />}>
+                          Delete mode
+                        </Dialog.Close>
+                      </div>
+                    </Dialog.Popup>
+                  </Dialog.Portal>
+                </Dialog.Root>
+              )}
             </>
           )}
-          <IconButton title="Close" onClick={onClose}>
-            <X size={18} />
-          </IconButton>
         </div>
       </header>
 
@@ -435,77 +451,64 @@ function ModeEditor({
         </Field>
       </div>
 
-      <Controller
-        control={form.control}
-        name={`modes.${index}.aiEnabled`}
-        render={({ field }) => (
-          <Switch
-            label="Rewrite with AI"
-            checked={Boolean(field.value)}
-            onCheckedChange={field.onChange}
-            disabled={isBuiltInMode}
-            className="rounded-md border border-border bg-muted/20 p-3"
-          />
-        )}
+      <Switch
+        label="Rewrite with AI"
+        checked={mode.aiEnabled}
+        onCheckedChange={(checked) =>
+          form.setValue(`modes.${index}.aiEnabled`, checked, { shouldDirty: true, shouldValidate: true })
+        }
+        disabled={isBuiltInMode}
+        className="rounded-md border border-border bg-muted/20 p-3"
       />
 
       <section className="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-3">
-        <h3 className="m-0 text-sm font-semibold text-foreground">Writing style</h3>
+        <h3 className="m-0 text-sm font-semibold text-foreground">Model instructions</h3>
         {isBuiltInMode ? (
           <p className="m-0 text-sm leading-6 text-muted-foreground">{mode.description}</p>
         ) : (
-          <Textarea
-            aria-label="Writing style"
-            className="min-h-24"
-            placeholder="Concise, natural, and ready to paste."
-            {...form.register(`modes.${index}.writingStyle`)}
-          />
+          <>
+            <p className="m-0 text-xs leading-5 text-muted-foreground">
+              Tell the model how to rewrite your transcript, including the desired tone, structure, and level of detail.
+            </p>
+            <Textarea
+              aria-label="Model instructions"
+              className="min-h-24"
+              placeholder="For example: Keep it concise and conversational. Use short paragraphs and avoid corporate language."
+              {...form.register(`modes.${index}.writingStyle`)}
+            />
+          </>
         )}
       </section>
 
       <section className="flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-3">
         <h3 className="m-0 text-sm font-semibold text-foreground">Context</h3>
         <div className="grid grid-cols-3 gap-3 max-[760px]:grid-cols-1">
-          <Controller
-            control={form.control}
-            name={`modes.${index}.context.app`}
-            render={({ field }) => (
-              <Checkbox label="Use active app" checked={Boolean(field.value)} onCheckedChange={field.onChange} disabled={isBuiltInMode} />
-            )}
+          <Checkbox
+            label="Use active app"
+            checked={mode.context.app}
+            onCheckedChange={(checked) =>
+              form.setValue(`modes.${index}.context.app`, checked, { shouldDirty: true, shouldValidate: true })
+            }
+            disabled={isBuiltInMode}
           />
-          <Controller
-            control={form.control}
-            name={`modes.${index}.context.selectedText`}
-            render={({ field }) => (
-              <Checkbox label="Use selected text" checked={Boolean(field.value)} onCheckedChange={field.onChange} disabled={isBuiltInMode} />
-            )}
+          <Checkbox
+            label="Use selected text"
+            checked={mode.context.selectedText}
+            onCheckedChange={(checked) =>
+              form.setValue(`modes.${index}.context.selectedText`, checked, { shouldDirty: true, shouldValidate: true })
+            }
+            disabled={isBuiltInMode}
           />
-          <Controller
-            control={form.control}
-            name={`modes.${index}.context.clipboardText`}
-            render={({ field }) => (
-              <Checkbox label="Use clipboard" checked={Boolean(field.value)} onCheckedChange={field.onChange} disabled={isBuiltInMode} />
-            )}
+          <Checkbox
+            label="Use clipboard"
+            checked={mode.context.clipboardText}
+            onCheckedChange={(checked) =>
+              form.setValue(`modes.${index}.context.clipboardText`, checked, { shouldDirty: true, shouldValidate: true })
+            }
+            disabled={isBuiltInMode}
           />
         </div>
       </section>
-
-      {!isBuiltInMode && (
-        <details className="group rounded-md border border-border bg-muted/20 p-3">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-foreground outline-none focus-visible:ring-2 focus-visible:ring-foreground/30">
-            Advanced instructions
-            <ChevronRight size={16} className="shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
-          </summary>
-          <Field label="Raw prompt" className="mt-3">
-            <Textarea
-              aria-label="Advanced instructions"
-              className="min-h-36"
-              placeholder="Add exact prompt instructions for how this mode should process dictation."
-              {...form.register(`modes.${index}.instructionPrompt`)}
-            />
-          </Field>
-        </details>
-      )}
 
       <ExamplesEditor form={form} selectedIndex={index} readOnly={isBuiltInMode} />
     </div>

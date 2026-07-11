@@ -17,7 +17,7 @@ const tones: Record<NonNullable<BadgeProps["tone"]>, string> = {
 export function Badge({ tone = "neutral", className, ...props }: BadgeProps): JSX.Element {
   return (
     <span
-      className={cn("inline-flex items-center rounded border px-1.5 py-1 text-[11px] font-medium leading-none", tones[tone], className)}
+      className={cn("inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-medium leading-none", tones[tone], className)}
       {...props}
     />
   );
