@@ -99,4 +99,27 @@ describe("buildProcessingPrompt", () => {
 
     expect(prompt).toContain("Model instructions:\nKeep it warm and concise.");
   });
+
+  it("uses a replacement instruction instead of a preset instruction", () => {
+    const mailPreset = defaultModes.find((mode) => mode.id === "mail")!;
+    const mode = {
+      ...mailPreset,
+      instructionPrompt: "Turn the transcript into a short status update without an email greeting."
+    };
+    const context: ContextSnapshot = {
+      capturedAt: "2026-01-01T00:00:00.000Z",
+      sourceQuality: "full",
+      diagnostics: []
+    };
+
+    const prompt = buildProcessingPrompt({
+      mode,
+      context,
+      rawTranscript: "we shipped the fix",
+      vocabularyPrompt: ""
+    });
+
+    expect(prompt).toContain("Turn the transcript into a short status update without an email greeting.");
+    expect(prompt).not.toContain("Draft or revise email text");
+  });
 });

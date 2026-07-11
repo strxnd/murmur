@@ -19,7 +19,7 @@ import { Controller, useForm, type UseFormReturn } from "react-hook-form";
 import { z } from "zod";
 import { modePresets } from "../../../shared/defaults";
 import { modeConfigSchema } from "../../../shared/schemas";
-import type { AppStateSnapshot, ModeConfig, ModeIconKey, ModePreset } from "../../../shared/types";
+import type { AppStateSnapshot, ModeConfig, ModeIconKey } from "../../../shared/types";
 import { View } from "../components/View";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -35,6 +35,7 @@ import { Toolbar } from "../components/ui/Toolbar";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { cn } from "../lib/cn";
 import { makeClientId } from "../lib/ids";
+import { matchingModePresetId, modeFromPreset } from "../lib/mode-presets";
 import { useMurmurStore } from "../state/murmur-store";
 
 const modesFormSchema = z.object({
@@ -148,6 +149,7 @@ const languageItems: Array<SelectItem<string>> = [
 ];
 
 const languageItemValues = new Set(languageItems.map((item) => item.value));
+const presetItems: Array<SelectItem<string>> = modePresets.map((preset) => ({ value: preset.id, label: preset.name }));
 
 const modeIcons: Record<ModeIconKey, LucideIcon> = {
   mic: Mic,
@@ -168,7 +170,6 @@ export function ModesView({
   const activateMode = useMurmurStore((store) => store.activateMode);
   const [openModeId, setOpenModeId] = useState<string | null>(() => state.settings.activeModeId || state.modes[0]?.id || null);
   const [isCreatingMode, setIsCreatingMode] = useState(false);
-  const [isPresetDialogOpen, setIsPresetDialogOpen] = useState(false);
   const form = useForm<ModesFormValues>({
     resolver: zodResolver(modesFormSchema),
     defaultValues: { modes: state.modes }
@@ -206,12 +207,12 @@ export function ModesView({
     form.reset({ modes: values.modes });
   });
 
-  const createMode = (preset: ModePreset): void => {
-    const next = createModeFromPreset(preset);
+  const createMode = (): void => {
+    const customPreset = modePresets.find((preset) => preset.id === "custom")!;
+    const next = modeFromPreset(customPreset, makeClientId("mode"));
     draftForm.reset({ modes: [next] });
     setIsCreatingMode(true);
     setOpenModeId(null);
-    setIsPresetDialogOpen(false);
   };
 
   const commitDraftMode = draftForm.handleSubmit((values) => {
@@ -256,7 +257,7 @@ export function ModesView({
         description="Create reusable styles for emails, notes, edits, and other writing."
         actions={
           <Toolbar>
-            <Button onClick={() => setIsPresetDialogOpen(true)} disabled={Boolean(draftMode)}>
+            <Button onClick={createMode} disabled={Boolean(draftMode)}>
               <Plus size={18} /> Create mode
             </Button>
             <Button variant="primary" onClick={() => void save()} disabled={form.formState.isSubmitting || !form.formState.isDirty}>
@@ -265,43 +266,6 @@ export function ModesView({
           </Toolbar>
         }
     >
-      <Dialog.Root open={isPresetDialogOpen} onOpenChange={setIsPresetDialogOpen}>
-        <Dialog.Portal>
-          <Dialog.Backdrop className="mode-dialog-backdrop fixed inset-0 z-40 bg-black/50" />
-          <Dialog.Popup className="mode-dialog-popup fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[min(calc(100vw-2rem),50rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[15px] border border-border bg-surface-raised p-5 text-foreground shadow-[var(--console-dialog-shadow)] outline-none">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <Dialog.Title className="m-0 text-lg font-semibold">Choose a preset</Dialog.Title>
-                <Dialog.Description className="m-0 mt-1 text-sm text-muted-foreground">
-                  Start with a proven setup, then customize every detail.
-                </Dialog.Description>
-              </div>
-              <Dialog.Close render={<IconButton title="Close preset picker" />}>
-                <X size={18} />
-              </Dialog.Close>
-            </div>
-            <div className="mt-5 grid grid-cols-2 gap-3 max-[620px]:grid-cols-1">
-              {modePresets.map((preset) => (
-                <button
-                  key={preset.id}
-                  type="button"
-                  className="group flex min-h-[112px] items-start gap-3 rounded-[13px] border border-border bg-surface p-4 text-left outline-none transition-[border-color,background-color,transform] hover:-translate-y-0.5 hover:border-foreground/35 hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-foreground/30"
-                  onClick={() => createMode(preset)}
-                >
-                  <ModeGlyph iconKey={preset.iconKey} />
-                  <span className="min-w-0">
-                    <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                      {preset.name}
-                      <ChevronRight size={15} className="text-subtle transition-transform group-hover:translate-x-0.5" />
-                    </span>
-                    <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">{preset.description}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </Dialog.Popup>
-        </Dialog.Portal>
-      </Dialog.Root>
       <div className="modes-workspace grid min-h-[560px] grid-cols-[minmax(17rem,0.72fr)_minmax(28rem,1.3fr)] items-stretch gap-3 max-[900px]:grid-cols-1">
         <Panel
           title="Your modes"
@@ -457,7 +421,22 @@ function ModeEditor({
         </div>
       </header>
 
-      <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
+      <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-1">
+        <Field label="Preset">
+          <Select
+            aria-label="Mode preset"
+            items={presetItems}
+            value={matchingModePresetId(mode, modePresets)}
+            onValueChange={(presetId) => {
+              const preset = modePresets.find((candidate) => candidate.id === presetId);
+              if (!preset) return;
+              form.setValue(`modes.${index}`, modeFromPreset(preset, mode.id), {
+                shouldDirty: true,
+                shouldValidate: true
+              });
+            }}
+          />
+        </Field>
         <Field label="Name" error={form.formState.errors.modes?.[index]?.name?.message}>
           <Input
             aria-label="Mode name"
@@ -501,7 +480,7 @@ function ModeEditor({
           aria-label="Model instructions"
           className="min-h-24"
           placeholder="For example: Keep it concise and conversational. Use short paragraphs and avoid corporate language."
-          {...form.register(`modes.${index}.writingStyle`)}
+          {...form.register(`modes.${index}.instructionPrompt`)}
         />
       </section>
 
@@ -615,22 +594,6 @@ function ModeGlyph({ iconKey, active = false }: { iconKey: ModeIconKey; active?:
       <Icon size={17} />
     </span>
   );
-}
-
-function createModeFromPreset(preset: ModePreset): ModeConfig {
-  const isCustom = preset.id === "custom";
-  return {
-    id: makeClientId("mode"),
-    iconKey: preset.iconKey,
-    name: isCustom ? "New mode" : preset.name,
-    description: isCustom ? "" : preset.description,
-    aiEnabled: preset.aiEnabled,
-    writingStyle: preset.writingStyle,
-    instructionPrompt: preset.instructionPrompt,
-    examples: preset.examples.map((example) => ({ ...example })),
-    language: preset.language,
-    context: { ...preset.context }
-  };
 }
 
 function normalizeLanguageValue(value: string | undefined): string {
