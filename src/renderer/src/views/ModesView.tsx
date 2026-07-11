@@ -17,8 +17,9 @@ import {
 import { useEffect, useState, type JSX } from "react";
 import { Controller, useForm, type UseFormReturn } from "react-hook-form";
 import { z } from "zod";
+import { modePresets } from "../../../shared/defaults";
 import { modeConfigSchema } from "../../../shared/schemas";
-import type { AppStateSnapshot, ModeConfig, ModeIconKey } from "../../../shared/types";
+import type { AppStateSnapshot, ModeConfig, ModeIconKey, ModePreset } from "../../../shared/types";
 import { View } from "../components/View";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -167,6 +168,7 @@ export function ModesView({
   const activateMode = useMurmurStore((store) => store.activateMode);
   const [openModeId, setOpenModeId] = useState<string | null>(() => state.settings.activeModeId || state.modes[0]?.id || null);
   const [isCreatingMode, setIsCreatingMode] = useState(false);
+  const [isPresetDialogOpen, setIsPresetDialogOpen] = useState(false);
   const form = useForm<ModesFormValues>({
     resolver: zodResolver(modesFormSchema),
     defaultValues: { modes: state.modes }
@@ -200,16 +202,16 @@ export function ModesView({
   }, [hasUnsavedChanges, onUnsavedChangesChange]);
 
   const save = form.handleSubmit(async (values) => {
-    const normalizedModes = ensureDefaultFirst(values.modes);
-    await setModes(normalizedModes);
-    form.reset({ modes: normalizedModes });
+    await setModes(values.modes);
+    form.reset({ modes: values.modes });
   });
 
-  const createMode = (): void => {
-    const next = createBlankMode();
+  const createMode = (preset: ModePreset): void => {
+    const next = createModeFromPreset(preset);
     draftForm.reset({ modes: [next] });
     setIsCreatingMode(true);
     setOpenModeId(null);
+    setIsPresetDialogOpen(false);
   };
 
   const commitDraftMode = draftForm.handleSubmit((values) => {
@@ -233,8 +235,7 @@ export function ModesView({
   };
 
   const deleteMode = (modeId: string): void => {
-    const mode = form.getValues("modes").find((candidate) => candidate.id === modeId);
-    if (!mode || mode.kind !== "custom") return;
+    if (form.getValues("modes").length <= 1) return;
 
     const remainingModes = form.getValues("modes").filter((candidate) => candidate.id !== modeId);
     form.setValue("modes", remainingModes, { shouldDirty: true, shouldValidate: true });
@@ -243,9 +244,8 @@ export function ModesView({
 
   const makeActive = (modeId: string): void => {
     void form.handleSubmit(async (values) => {
-      const normalizedModes = ensureDefaultFirst(values.modes);
-      await setModes(normalizedModes);
-      form.reset({ modes: normalizedModes });
+      await setModes(values.modes);
+      form.reset({ modes: values.modes });
       await activateMode(modeId);
     })();
   };
@@ -256,7 +256,7 @@ export function ModesView({
         description="Create reusable styles for emails, notes, edits, and other writing."
         actions={
           <Toolbar>
-            <Button onClick={createMode} disabled={Boolean(draftMode)}>
+            <Button onClick={() => setIsPresetDialogOpen(true)} disabled={Boolean(draftMode)}>
               <Plus size={18} /> Create mode
             </Button>
             <Button variant="primary" onClick={() => void save()} disabled={form.formState.isSubmitting || !form.formState.isDirty}>
@@ -265,6 +265,43 @@ export function ModesView({
           </Toolbar>
         }
     >
+      <Dialog.Root open={isPresetDialogOpen} onOpenChange={setIsPresetDialogOpen}>
+        <Dialog.Portal>
+          <Dialog.Backdrop className="mode-dialog-backdrop fixed inset-0 z-40 bg-black/50" />
+          <Dialog.Popup className="mode-dialog-popup fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[min(calc(100vw-2rem),50rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[15px] border border-border bg-surface-raised p-5 text-foreground shadow-[var(--console-dialog-shadow)] outline-none">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <Dialog.Title className="m-0 text-lg font-semibold">Choose a preset</Dialog.Title>
+                <Dialog.Description className="m-0 mt-1 text-sm text-muted-foreground">
+                  Start with a proven setup, then customize every detail.
+                </Dialog.Description>
+              </div>
+              <Dialog.Close render={<IconButton title="Close preset picker" />}>
+                <X size={18} />
+              </Dialog.Close>
+            </div>
+            <div className="mt-5 grid grid-cols-2 gap-3 max-[620px]:grid-cols-1">
+              {modePresets.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  className="group flex min-h-[112px] items-start gap-3 rounded-[13px] border border-border bg-surface p-4 text-left outline-none transition-[border-color,background-color,transform] hover:-translate-y-0.5 hover:border-foreground/35 hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-foreground/30"
+                  onClick={() => createMode(preset)}
+                >
+                  <ModeGlyph iconKey={preset.iconKey} />
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                      {preset.name}
+                      <ChevronRight size={15} className="text-subtle transition-transform group-hover:translate-x-0.5" />
+                    </span>
+                    <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">{preset.description}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </Dialog.Popup>
+        </Dialog.Portal>
+      </Dialog.Root>
       <div className="modes-workspace grid min-h-[560px] grid-cols-[minmax(17rem,0.72fr)_minmax(28rem,1.3fr)] items-stretch gap-3 max-[900px]:grid-cols-1">
         <Panel
           title="Your modes"
@@ -294,7 +331,6 @@ export function ModesView({
                 </span>
                 <span className="flex min-w-0 shrink-0 flex-wrap items-center justify-end gap-1.5">
                   {mode.id === state.settings.activeModeId && <Badge className="shrink-0">Active</Badge>}
-                  {mode.kind === "built_in" && <Badge className="shrink-0 text-subtle">Built-in</Badge>}
                 </span>
                 <ChevronRight
                   size={16}
@@ -334,7 +370,7 @@ export function ModesView({
         {selectedMode && (
           <Panel
             title={selectedMode.name || "Mode"}
-            actions={<span className="text-[10px] font-medium uppercase tracking-[0.08em] text-subtle">{modeKindLabel(selectedMode.kind)}</span>}
+            actions={<span className="text-[10px] font-medium uppercase tracking-[0.08em] text-subtle">Editable mode</span>}
             className="modes-detail-panel"
           >
             <ModeEditor
@@ -344,7 +380,7 @@ export function ModesView({
               activeModeId={state.settings.activeModeId}
               onCreate={isCreatingMode ? () => void commitDraftMode() : undefined}
               onCancelCreate={isCreatingMode ? cancelDraftMode : undefined}
-              onDelete={isCreatingMode ? undefined : () => deleteMode(selectedMode.id)}
+              onDelete={isCreatingMode || modes.length <= 1 ? undefined : () => deleteMode(selectedMode.id)}
               onMakeActive={isCreatingMode ? undefined : () => makeActive(selectedMode.id)}
             />
           </Panel>
@@ -374,7 +410,6 @@ function ModeEditor({
   onMakeActive?: () => void;
 }): JSX.Element {
   const editorParent = useAutoAnimateRef<HTMLDivElement>();
-  const isBuiltInMode = mode.kind === "built_in";
 
   return (
     <div ref={editorParent} className="flex flex-col gap-4">
@@ -395,7 +430,7 @@ function ModeEditor({
               <Button size="sm" onClick={onMakeActive} disabled={!onMakeActive || activeModeId === mode.id}>
                 <Check size={16} /> Make active
               </Button>
-              {mode.kind === "custom" && onDelete && (
+              {onDelete && (
                 <Dialog.Root>
                   <Dialog.Trigger render={<IconButton title="Delete mode" tone="danger" />}>
                     <Trash2 size={18} />
@@ -405,7 +440,7 @@ function ModeEditor({
                     <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-[var(--console-dialog-shadow)] outline-none">
                       <Dialog.Title className="m-0 text-base font-semibold text-foreground">Delete mode?</Dialog.Title>
                       <Dialog.Description className="m-0 mt-2 text-sm leading-6 text-muted-foreground">
-                        This will remove {mode.name || "this mode"} from custom modes. Save changes to persist the deletion.
+                        This will remove {mode.name || "this mode"} from your modes. Save changes to persist the deletion.
                       </Dialog.Description>
                       <div className="mt-5 flex justify-end gap-2">
                         <Dialog.Close render={<Button variant="secondary" />}>Cancel</Dialog.Close>
@@ -427,8 +462,6 @@ function ModeEditor({
           <Input
             aria-label="Mode name"
             {...form.register(`modes.${index}.name`)}
-            readOnly={isBuiltInMode}
-            className={cn(isBuiltInMode && "opacity-60")}
           />
         </Field>
         <Field label="Language">
@@ -443,7 +476,6 @@ function ModeEditor({
                   items={getLanguageItems(value)}
                   value={value}
                   onValueChange={field.onChange}
-                  disabled={isBuiltInMode}
                 />
               );
             }}
@@ -457,27 +489,20 @@ function ModeEditor({
         onCheckedChange={(checked) =>
           form.setValue(`modes.${index}.aiEnabled`, checked, { shouldDirty: true, shouldValidate: true })
         }
-        disabled={isBuiltInMode}
         className="rounded-md border border-border bg-muted/20 p-3"
       />
 
       <section className="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-3">
         <h3 className="m-0 text-sm font-semibold text-foreground">Model instructions</h3>
-        {isBuiltInMode ? (
-          <p className="m-0 text-sm leading-6 text-muted-foreground">{mode.description}</p>
-        ) : (
-          <>
-            <p className="m-0 text-xs leading-5 text-muted-foreground">
-              Tell the model how to rewrite your transcript, including the desired tone, structure, and level of detail.
-            </p>
-            <Textarea
-              aria-label="Model instructions"
-              className="min-h-24"
-              placeholder="For example: Keep it concise and conversational. Use short paragraphs and avoid corporate language."
-              {...form.register(`modes.${index}.writingStyle`)}
-            />
-          </>
-        )}
+        <p className="m-0 text-xs leading-5 text-muted-foreground">
+          Tell the model how to rewrite your transcript, including the desired tone, structure, and level of detail.
+        </p>
+        <Textarea
+          aria-label="Model instructions"
+          className="min-h-24"
+          placeholder="For example: Keep it concise and conversational. Use short paragraphs and avoid corporate language."
+          {...form.register(`modes.${index}.writingStyle`)}
+        />
       </section>
 
       <section className="flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-3">
@@ -489,7 +514,6 @@ function ModeEditor({
             onCheckedChange={(checked) =>
               form.setValue(`modes.${index}.context.app`, checked, { shouldDirty: true, shouldValidate: true })
             }
-            disabled={isBuiltInMode}
           />
           <Checkbox
             label="Use selected text"
@@ -497,7 +521,6 @@ function ModeEditor({
             onCheckedChange={(checked) =>
               form.setValue(`modes.${index}.context.selectedText`, checked, { shouldDirty: true, shouldValidate: true })
             }
-            disabled={isBuiltInMode}
           />
           <Checkbox
             label="Use clipboard"
@@ -505,12 +528,11 @@ function ModeEditor({
             onCheckedChange={(checked) =>
               form.setValue(`modes.${index}.context.clipboardText`, checked, { shouldDirty: true, shouldValidate: true })
             }
-            disabled={isBuiltInMode}
           />
         </div>
       </section>
 
-      <ExamplesEditor form={form} selectedIndex={index} readOnly={isBuiltInMode} />
+      <ExamplesEditor form={form} selectedIndex={index} />
     </div>
   );
 }
@@ -595,19 +617,19 @@ function ModeGlyph({ iconKey, active = false }: { iconKey: ModeIconKey; active?:
   );
 }
 
-function createBlankMode(): ModeConfig {
+function createModeFromPreset(preset: ModePreset): ModeConfig {
+  const isCustom = preset.id === "custom";
   return {
     id: makeClientId("mode"),
-    kind: "custom",
-    iconKey: "sliders-horizontal",
-    name: "New mode",
-    description: "",
-    aiEnabled: true,
-    writingStyle: "",
-    instructionPrompt: "",
-    examples: [],
-    language: "auto",
-    context: { app: true, selectedText: true, clipboardText: true }
+    iconKey: preset.iconKey,
+    name: isCustom ? "New mode" : preset.name,
+    description: isCustom ? "" : preset.description,
+    aiEnabled: preset.aiEnabled,
+    writingStyle: preset.writingStyle,
+    instructionPrompt: preset.instructionPrompt,
+    examples: preset.examples.map((example) => ({ ...example })),
+    language: preset.language,
+    context: { ...preset.context }
   };
 }
 
@@ -619,15 +641,4 @@ function normalizeLanguageValue(value: string | undefined): string {
 function getLanguageItems(value: string): Array<SelectItem<string>> {
   if (languageItemValues.has(value)) return languageItems;
   return [{ value, label: `Custom (${value})` }, ...languageItems];
-}
-
-function modeKindLabel(kind: ModeConfig["kind"]): string {
-  if (kind === "built_in") return "Built-in mode";
-  return "Custom mode";
-}
-
-function ensureDefaultFirst(modes: ModeConfig[]): ModeConfig[] {
-  const defaultMode = modes.find((mode) => mode.id === "default");
-  const otherModes = modes.filter((mode) => mode.id !== "default");
-  return defaultMode ? [{ ...defaultMode, id: "default", kind: "built_in" }, ...otherModes] : otherModes;
 }

@@ -334,7 +334,7 @@ describe("StorageService", () => {
     }
   });
 
-  it("seeds former presets as built-in modes during migration", () => {
+  it("does not restore removed built-in modes during migration", () => {
     const paths = testPaths();
     mkdirSync(paths.configDir, { recursive: true });
     writeFileSync(
@@ -363,16 +363,12 @@ describe("StorageService", () => {
     const storage = jsonStorage(paths);
     const state = storage.getState();
 
-    expect(state.modes.map((mode) => mode.id)).toEqual(defaultModes.map((mode) => mode.id));
-    expect(state.modes.find((mode) => mode.id === "message")).toMatchObject({
-      kind: "built_in",
-      iconKey: "message-square",
-      name: "Message"
-    });
-    expect(state.settings.activeModeId).toBe("message");
+    expect(state.modes.map((mode) => mode.id)).toEqual(["default"]);
+    expect(state.modes[0]).not.toHaveProperty("kind");
+    expect(state.settings.activeModeId).toBe("default");
   });
 
-  it("resets built-in modes to their built-in defaults", () => {
+  it("preserves edits to former built-in modes", () => {
     const paths = testPaths();
     mkdirSync(paths.configDir, { recursive: true });
     writeFileSync(
@@ -408,11 +404,18 @@ describe("StorageService", () => {
     const storage = jsonStorage(paths);
     const defaultMode = storage.getState().modes.find((mode) => mode.id === "default");
     const messageMode = storage.getState().modes.find((mode) => mode.id === "message");
-    const defaultDefaultMode = defaultModes.find((mode) => mode.id === "default");
-    const defaultMessageMode = defaultModes.find((mode) => mode.id === "message");
-
-    expect(defaultMode).toEqual(defaultDefaultMode);
-    expect(messageMode).toEqual(defaultMessageMode);
+    expect(defaultMode).toMatchObject({ id: "default", instructionPrompt: "Default instruction" });
+    expect(messageMode).toMatchObject({
+      id: "message",
+      iconKey: "mail",
+      name: "Edited message",
+      aiEnabled: false,
+      instructionPrompt: "Edited instruction",
+      examples: [{ input: "one", output: "two" }],
+      language: "en",
+      context: { app: false, selectedText: false, clipboardText: true }
+    });
+    expect(messageMode).not.toHaveProperty("kind");
   });
 
   it("converts custom modes from preset ids to icon keys", () => {
@@ -452,13 +455,13 @@ describe("StorageService", () => {
     const customMode = storage.getState().modes.find((mode) => mode.id === "mode-chat");
 
     expect(customMode).toMatchObject({
-      kind: "custom",
       iconKey: "message-square",
       name: "Team chat",
       writingStyle: "",
       instructionPrompt: "Keep this casual.",
       context: { app: true, selectedText: true, clipboardText: false }
     });
+    expect(customMode).not.toHaveProperty("kind");
     expect(customMode).not.toHaveProperty("presetId");
   });
 

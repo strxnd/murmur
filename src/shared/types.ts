@@ -1,4 +1,3 @@
-export type DictationModeKind = "built_in" | "custom";
 export type ModeIconKey = "mic" | "message-square" | "mail" | "notebook-pen" | "sliders-horizontal";
 
 export type SttStreamingMode = "none" | "completed_audio_sse" | "live_realtime";
@@ -114,7 +113,6 @@ export interface ContextSnapshot {
 
 export interface ModeConfig {
   id: string;
-  kind: DictationModeKind;
   iconKey: ModeIconKey;
   name: string;
   description: string;
@@ -129,6 +127,8 @@ export interface ModeConfig {
     clipboardText: boolean;
   };
 }
+
+export type ModePreset = ModeConfig;
 
 export interface ReleaseNote {
   id: string;

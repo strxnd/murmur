@@ -5,6 +5,7 @@ import type {
   LlmProviderConfig,
   ModelLibrarySnapshot,
   ModeConfig,
+  ModePreset,
   TranscriptionProviderConfig
 } from "./types";
 import { defaultReleaseNotes } from "./release-notes";
@@ -33,10 +34,9 @@ export const defaultSession: DictationSession = {
   streamingMode: "none"
 };
 
-export const defaultModes: ModeConfig[] = [
+export const modePresets: ModePreset[] = [
   {
     id: "default",
-    kind: "built_in",
     iconKey: "sliders-horizontal",
     name: "Default",
     description: "Adapts dictation to the active app, selected text, and clipboard so the result is ready for the current task.",
@@ -50,7 +50,6 @@ export const defaultModes: ModeConfig[] = [
   },
   {
     id: "voice_to_text",
-    kind: "built_in",
     iconKey: "mic",
     name: "Voice to text",
     description: "Keeps speech close to the transcript with light cleanup for punctuation, casing, and obvious recognition mistakes.",
@@ -64,7 +63,6 @@ export const defaultModes: ModeConfig[] = [
   },
   {
     id: "message",
-    kind: "built_in",
     iconKey: "message-square",
     name: "Message",
     description: "Turns speech into a concise chat or direct message that sounds natural and is ready to send.",
@@ -78,7 +76,6 @@ export const defaultModes: ModeConfig[] = [
   },
   {
     id: "mail",
-    kind: "built_in",
     iconKey: "mail",
     name: "Mail",
     description: "Drafts or revises email text with a professional tone and useful email structure.",
@@ -92,7 +89,6 @@ export const defaultModes: ModeConfig[] = [
   },
   {
     id: "note",
-    kind: "built_in",
     iconKey: "notebook-pen",
     name: "Note",
     description: "Organizes speech into structured notes with concise headings, bullets, and action items when useful.",
@@ -103,8 +99,24 @@ export const defaultModes: ModeConfig[] = [
     examples: [],
     language: "auto",
     context: { app: true, selectedText: false, clipboardText: false }
+  },
+  {
+    id: "custom",
+    iconKey: "sliders-horizontal",
+    name: "Custom",
+    description: "Start with a blank mode and configure every detail yourself.",
+    aiEnabled: true,
+    writingStyle: "",
+    instructionPrompt: "",
+    examples: [],
+    language: "auto",
+    context: { app: true, selectedText: true, clipboardText: true }
   }
 ];
+
+export const defaultModes: ModeConfig[] = modePresets
+  .filter((preset) => preset.id !== "custom")
+  .map((preset) => ({ ...preset, examples: [...preset.examples], context: { ...preset.context } }));
 
 export const defaultTranscriptionProviders: TranscriptionProviderConfig[] = [
   {
