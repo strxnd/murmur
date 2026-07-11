@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { defaultLlmProviders, defaultTranscriptionProviders } from "./defaults";
 import { modelCatalog } from "./model-catalog";
+import type { ModelCatalogItem } from "./types";
 import {
   isLlmProviderUsable,
   isModelProviderUsable,
@@ -59,22 +60,22 @@ describe("llmProviderFromModel", () => {
       defaultModel: "fallback",
       enabled: true
     };
-    const model = {
+    const model: ModelCatalogItem = {
       id: "team-ollama:llama3.1:8b",
       name: "llama3.1:8b",
-      kind: "language" as const,
-      provider: "ollama" as const,
+      kind: "language",
+      provider: "ollama",
       isCloud: false,
       isOffline: true,
-      tags: ["llm", "local", "ollama", "discovered"],
-      downloadStrategy: "none" as const,
+      downloadStrategy: "none",
       discovery: {
+        origin: "discovered",
         providerId: provider.id,
         reachable: true
       },
       defaultProviderConfig: {
         providerId: provider.id,
-        llmProviderType: "ollama" as const,
+        llmProviderType: "ollama",
         model: "llama3.1:8b"
       }
     };

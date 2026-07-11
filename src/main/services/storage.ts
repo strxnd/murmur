@@ -1058,9 +1058,9 @@ function normalizeDiscoveredModelCatalogItem(item: Partial<ModelCatalogItem>): M
     description: isNonEmptyString(item.description) ? item.description : `${providerDisplayName(provider)} language model.`,
     isCloud: Boolean(item.isCloud),
     isOffline: Boolean(item.isOffline),
-    tags: normalizeTags(item.tags, ["llm", "local", provider, "discovered"]),
     downloadStrategy: "none",
     discovery: {
+      origin: llmProviderType === "custom_openai_compatible" ? "manual" : "discovered",
       providerId: discovery.providerId,
       lastSeenAt: isNonEmptyString(discovery.lastSeenAt) ? discovery.lastSeenAt : undefined,
       reachable: Boolean(discovery.reachable),
@@ -1079,11 +1079,6 @@ function normalizeDiscoveredModelCatalogItem(item: Partial<ModelCatalogItem>): M
 
 function isDynamicModelProvider(provider: unknown): provider is ModelProvider {
   return typeof provider === "string" && modelProviders.has(provider as ModelProvider);
-}
-
-function normalizeTags(tags: unknown, fallback: string[]): string[] {
-  const normalized = Array.isArray(tags) ? tags.filter((tag): tag is string => isNonEmptyString(tag)) : [];
-  return normalized.length > 0 ? normalized : fallback;
 }
 
 function providerDisplayName(provider: ModelProvider): string {

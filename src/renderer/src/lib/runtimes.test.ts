@@ -185,7 +185,6 @@ function voiceModel(): ModelCatalogItem {
     provider: "whisper_cpp",
     isCloud: false,
     isOffline: true,
-    tags: [],
     downloadStrategy: "direct_file",
     defaultProviderConfig: {
       sttProviderType: "whisper_cpp"

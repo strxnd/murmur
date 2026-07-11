@@ -24,6 +24,8 @@ export type LlmProviderType =
 
 export type ModelKind = "voice" | "language";
 
+export type ModelDiscoveryOrigin = "discovered" | "manual";
+
 export type ModelProvider =
   | "whisper_cpp"
   | "nvidia"
@@ -144,7 +146,6 @@ export interface ModelCatalogItem {
   sizeBytes?: number;
   isCloud: boolean;
   isOffline: boolean;
-  tags: string[];
   downloadStrategy: ModelDownloadStrategy;
   downloadUrl?: string;
   filename?: string;
@@ -152,6 +153,7 @@ export interface ModelCatalogItem {
   sha256?: string;
   ollamaModel?: string;
   discovery?: {
+    origin: ModelDiscoveryOrigin;
     providerId: string;
     lastSeenAt?: string;
     reachable: boolean;
