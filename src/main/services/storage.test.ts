@@ -749,9 +749,9 @@ function discoveredModel(id: string): ModelCatalogItem {
     description: "Discovered test model.",
     isCloud: false,
     isOffline: true,
-    tags: ["local", "lmstudio", "discovered"],
     downloadStrategy: "none",
     discovery: {
+      origin: "discovered",
       providerId: "lmstudio",
       lastSeenAt: "2026-06-26T00:00:00.000Z",
       reachable: true,

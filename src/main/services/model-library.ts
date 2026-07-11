@@ -835,21 +835,21 @@ function updateDiscoveredProviderAvailability(
 }
 
 function isDynamicProviderModel(item: ModelCatalogItem): boolean {
-  return Boolean(item.discovery?.providerId && (item.tags.includes("discovered") || item.tags.includes("manual")));
+  return Boolean(item.discovery?.providerId);
 }
 
 function isDiscoveredFromProvider(
   item: ModelCatalogItem,
   provider: Pick<LlmProviderConfig, "id" | "type">
 ): boolean {
-  return item.discovery?.providerId === provider.id && item.provider === providerModelProvider(provider) && item.tags.includes("discovered");
+  return item.discovery?.providerId === provider.id && item.provider === providerModelProvider(provider) && item.discovery.origin === "discovered";
 }
 
 function isManualFromProvider(
   item: ModelCatalogItem,
   provider: Pick<LlmProviderConfig, "id" | "type">
 ): boolean {
-  return item.discovery?.providerId === provider.id && item.provider === providerModelProvider(provider) && item.tags.includes("manual");
+  return item.discovery?.providerId === provider.id && item.provider === providerModelProvider(provider) && item.discovery.origin === "manual";
 }
 
 function providerModelProvider(provider: Pick<LlmProviderConfig, "type">): ModelCatalogItem["provider"] {
@@ -871,9 +871,9 @@ function discoveredModelItem(
     description: `${provider.name} local language model discovered from the running provider.`,
     isCloud: false,
     isOffline: true,
-    tags: ["local", provider.type, "discovered"],
     downloadStrategy: "none",
     discovery: {
+      origin: "discovered",
       providerId: provider.id,
       lastSeenAt: now,
       reachable: true,
@@ -902,9 +902,9 @@ function manualOpenAiCompatibleModelItem(
     description: `${provider.name} OpenAI-compatible language model.`,
     isCloud: provider.isCloud,
     isOffline: !provider.isCloud,
-    tags: [provider.isCloud ? "cloud" : "local", "openai-compatible", "manual"],
     downloadStrategy: "none",
     discovery: {
+      origin: "manual",
       providerId: provider.id,
       lastSeenAt: now,
       reachable,

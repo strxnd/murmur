@@ -67,9 +67,9 @@ describe("llmProviderFromModel", () => {
       provider: "ollama",
       isCloud: false,
       isOffline: true,
-      tags: ["local", "ollama", "discovered"],
       downloadStrategy: "none",
       discovery: {
+        origin: "discovered",
         providerId: provider.id,
         reachable: true
       },

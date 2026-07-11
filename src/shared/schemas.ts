@@ -24,19 +24,7 @@ export const llmProviderTypeSchema = z.enum([
   "custom_openai_compatible"
 ]);
 export const modelKindSchema = z.enum(["voice", "language"]);
-export const modelTagSchema = z.enum([
-  "cloud",
-  "local",
-  "openai",
-  "nvidia",
-  "anthropic",
-  "google",
-  "ollama",
-  "lmstudio",
-  "openai-compatible",
-  "discovered",
-  "manual"
-]);
+export const modelDiscoveryOriginSchema = z.enum(["discovered", "manual"]);
 export const modelProviderSchema = z.enum([
   "whisper_cpp",
   "nvidia",
@@ -128,7 +116,6 @@ export const modelCatalogItemSchema = z.object({
   sizeBytes: z.number().optional(),
   isCloud: z.boolean(),
   isOffline: z.boolean(),
-  tags: z.array(modelTagSchema),
   downloadStrategy: modelDownloadStrategySchema,
   downloadUrl: optionalStringSchema,
   filename: optionalStringSchema,
@@ -137,6 +124,7 @@ export const modelCatalogItemSchema = z.object({
   ollamaModel: optionalStringSchema,
   discovery: z
     .object({
+      origin: modelDiscoveryOriginSchema,
       providerId: z.string().min(1),
       lastSeenAt: optionalStringSchema,
       reachable: z.boolean(),

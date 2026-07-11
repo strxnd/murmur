@@ -20,21 +20,4 @@ describe("modelCatalog", () => {
         .map((model) => model.id)
     );
   });
-
-  it("uses only location and provider tags", () => {
-    const providerTags = {
-      whisper_cpp: "openai",
-      nvidia: "nvidia",
-      ollama: "ollama",
-      lmstudio: "lmstudio",
-      openai: "openai",
-      openai_compatible: "openai-compatible",
-      anthropic: "anthropic",
-      google: "google"
-    } as const;
-
-    for (const model of modelCatalog) {
-      expect(model.tags).toEqual([model.isCloud ? "cloud" : "local", providerTags[model.provider]]);
-    }
-  });
 });

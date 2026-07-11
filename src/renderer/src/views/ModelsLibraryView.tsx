@@ -102,7 +102,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
       if (filter === "favorites" && !download?.favorite) return false;
       if (filter === "downloaded" && !isModelDownloadedOrAvailable(item, download)) return false;
       if (!needle) return true;
-      return [item.name, providerLabel(item.provider), item.description, ...item.tags]
+      return [item.name, providerLabel(item.provider), item.description]
         .filter(Boolean)
         .some((value) => value!.toLowerCase().includes(needle));
     });
@@ -310,16 +310,6 @@ function ModelDetails({
       </div>
 
       {item.description && <p className="m-0 text-sm leading-6 text-muted-foreground">{item.description}</p>}
-
-      {item.tags.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {item.tags.map((tag) => (
-            <Badge key={tag} className="text-subtle">
-              {tag}
-            </Badge>
-          ))}
-        </div>
-      )}
 
       {download?.error && <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">Download failed. Try again.</p>}
       {runtime && <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">{userRuntimeStatusMessage(runtime)}</p>}
