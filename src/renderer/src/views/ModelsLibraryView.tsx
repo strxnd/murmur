@@ -3,6 +3,7 @@ import {
   BrainCircuit,
   Check,
   ChevronRight,
+  Cloud,
   Download,
   HardDrive,
   Heart,
@@ -42,7 +43,7 @@ import { Toolbar } from "../components/ui/Toolbar";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { cn } from "../lib/cn";
 import { downloadProgressSummary, formatBytes } from "../lib/download-progress";
-import { runtimeInstallForModel, runtimeStatusLabel, userRuntimeStatusMessage } from "../lib/runtimes";
+import { runtimeInstallForModel, runtimeStatusLabel } from "../lib/runtimes";
 import { useMurmurStore } from "../state/murmur-store";
 
 type ModelFilter = "all" | "voice" | "language" | "offline" | "favorites" | "downloaded";
@@ -185,7 +186,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
                       <SourceBadge item={item} />
                       <StatusBadge item={item} download={download} />
                       {item.sizeBytes && <Badge>{formatBytes(item.sizeBytes)}</Badge>}
-                      <RuntimeBadge item={item} runtime={runtime} />
+                      <RuntimeBadge runtime={runtime} />
                     </span>
                     <ChevronRight
                       size={16}
@@ -302,17 +303,14 @@ function ModelDetails({
       <div className="flex flex-wrap gap-2">
         <Badge>{kindLabel(item.kind)}</Badge>
         <SourceBadge item={item} />
-        <RuntimeBadge item={item} runtime={runtime} />
-        <Badge>{progress}</Badge>
+        <RuntimeBadge runtime={runtime} />
+        {progress && <Badge>{progress}</Badge>}
         {item.sizeBytes && <Badge>{formatBytes(item.sizeBytes)}</Badge>}
-        {item.downloadStrategy === "direct_file" && <Badge>Direct file</Badge>}
-        {item.downloadStrategy === "archive" && <Badge>Archive</Badge>}
       </div>
 
       {item.description && <p className="m-0 text-sm leading-6 text-muted-foreground">{item.description}</p>}
 
       {download?.error && <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">Download failed. Try again.</p>}
-      {runtime && <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">{userRuntimeStatusMessage(runtime)}</p>}
       {item.discovery && !item.discovery.reachable && (
         <p className="m-0 rounded-md border border-border bg-muted/50 p-2 text-xs text-foreground">Local provider is not reachable.</p>
       )}
@@ -608,13 +606,13 @@ function ModelGlyph({ item, active = false }: { item: ModelCatalogItem; active?:
   );
 }
 
-function StatusBadge({ item, download }: { item: ModelCatalogItem; download?: ModelDownloadState }): JSX.Element {
+function StatusBadge({ item, download }: { item: ModelCatalogItem; download?: ModelDownloadState }): JSX.Element | null {
   if (item.discovery) {
     return <Badge tone={item.discovery.reachable ? "success" : "warning"}>{item.discovery.reachable ? "Available" : "Unavailable"}</Badge>;
   }
 
   if (item.downloadStrategy === "none") {
-    return <Badge tone={item.isCloud ? "cloud" : "local"}>{providerModelLabel(item)}</Badge>;
+    return null;
   }
 
   const status = download?.status ?? "not_downloaded";
@@ -624,22 +622,24 @@ function StatusBadge({ item, download }: { item: ModelCatalogItem; download?: Mo
 }
 
 function SourceBadge({ item }: { item: ModelCatalogItem }): JSX.Element {
-  return <Badge tone={item.isCloud ? "cloud" : "local"}>{item.isCloud ? "Remote/API" : "Local"}</Badge>;
-}
-
-function RuntimeBadge({ item, runtime }: { item: ModelCatalogItem; runtime?: SttRuntimeInstallState }): JSX.Element | null {
-  if (runtime) {
-    return <Badge tone={runtime.status === "ready" ? "success" : "warning"}>{runtimeStatusLabel(runtime)}</Badge>;
+  if (item.isCloud) {
+    return (
+      <Badge tone="cloud" aria-label="Cloud" title="Cloud">
+        <Cloud size={13} aria-hidden="true" />
+      </Badge>
+    );
   }
-  if (item.downloadStrategy === "none") return null;
-  if (item.isCloud) return <Badge tone="cloud">Cloud</Badge>;
-  if (item.isOffline) return <Badge tone="local">Offline</Badge>;
-  return <Badge>Local engine</Badge>;
+  return <Badge tone="local">Local</Badge>;
 }
 
-function providerModelLabel(item: ModelCatalogItem): string {
-  if (item.discovery) return item.discovery.reachable ? "Available local model" : "Unavailable local model";
-  return item.isCloud ? "API-based model" : "Local";
+function RuntimeBadge({ runtime }: { runtime?: SttRuntimeInstallState }): JSX.Element | null {
+  if (!runtime || runtime.status === "ready") return null;
+  return <Badge tone="warning">{runtimeStatusLabel(runtime)}</Badge>;
+}
+
+function providerModelLabel(item: ModelCatalogItem): string | null {
+  if (item.discovery) return item.discovery.reachable ? "Available" : "Unavailable";
+  return null;
 }
 
 function modelGlyphStyle(provider: ModelProvider): CSSProperties {
