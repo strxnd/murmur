@@ -149,7 +149,6 @@ const languageItems: Array<SelectItem<string>> = [
 ];
 
 const languageItemValues = new Set(languageItems.map((item) => item.value));
-const presetItems: Array<SelectItem<string>> = modePresets.map((preset) => ({ value: preset.id, label: preset.name }));
 
 const modeIcons: Record<ModeIconKey, LucideIcon> = {
   mic: Mic,
@@ -158,6 +157,19 @@ const modeIcons: Record<ModeIconKey, LucideIcon> = {
   "notebook-pen": NotebookPen,
   "sliders-horizontal": SlidersHorizontal
 };
+
+const presetItems: Array<SelectItem<string>> = modePresets.map((preset) => {
+  const Icon = modeIcons[preset.iconKey];
+  return {
+    value: preset.id,
+    label: (
+      <span className="flex min-w-0 items-center gap-2">
+        <Icon size={15} className="shrink-0 text-muted-foreground" />
+        <span className="truncate">{preset.name}</span>
+      </span>
+    )
+  };
+});
 
 export function ModesView({
   state,
@@ -421,45 +433,47 @@ function ModeEditor({
         </div>
       </header>
 
-      <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-1">
-        <Field label="Preset">
-          <Select
-            aria-label="Mode preset"
-            items={presetItems}
-            value={matchingModePresetId(mode, modePresets)}
-            onValueChange={(presetId) => {
-              const preset = modePresets.find((candidate) => candidate.id === presetId);
-              if (!preset) return;
-              form.setValue(`modes.${index}`, modeFromPreset(preset, mode.id), {
-                shouldDirty: true,
-                shouldValidate: true
-              });
-            }}
-          />
-        </Field>
+      <div className="flex flex-col gap-3">
         <Field label="Name" error={form.formState.errors.modes?.[index]?.name?.message}>
           <Input
             aria-label="Mode name"
             {...form.register(`modes.${index}.name`)}
           />
         </Field>
-        <Field label="Language">
-          <Controller
-            control={form.control}
-            name={`modes.${index}.language`}
-            render={({ field }) => {
-              const value = normalizeLanguageValue(field.value);
-              return (
-                <Select
-                  aria-label="Mode language"
-                  items={getLanguageItems(value)}
-                  value={value}
-                  onValueChange={field.onChange}
-                />
-              );
-            }}
-          />
-        </Field>
+        <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
+          <Field label="Preset">
+            <Select
+              aria-label="Mode preset"
+              items={presetItems}
+              value={matchingModePresetId(mode, modePresets)}
+              onValueChange={(presetId) => {
+                const preset = modePresets.find((candidate) => candidate.id === presetId);
+                if (!preset) return;
+                form.setValue(`modes.${index}`, modeFromPreset(preset, mode.id), {
+                  shouldDirty: true,
+                  shouldValidate: true
+                });
+              }}
+            />
+          </Field>
+          <Field label="Language">
+            <Controller
+              control={form.control}
+              name={`modes.${index}.language`}
+              render={({ field }) => {
+                const value = normalizeLanguageValue(field.value);
+                return (
+                  <Select
+                    aria-label="Mode language"
+                    items={getLanguageItems(value)}
+                    value={value}
+                    onValueChange={field.onChange}
+                  />
+                );
+              }}
+            />
+          </Field>
+        </div>
       </div>
 
       <Switch
