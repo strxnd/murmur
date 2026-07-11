@@ -3,7 +3,6 @@ import { z } from "zod";
 export const maxIpcTextCharacters = 200_000;
 export const maxRecordingAudioBytes = 150 * 1024 * 1024;
 
-export const dictationModeKindSchema = z.enum(["built_in", "custom"]);
 export const modeIconKeySchema = z.enum(["mic", "message-square", "mail", "notebook-pen", "sliders-horizontal"]);
 export const sttStreamingModeSchema = z.enum(["none", "completed_audio_sse", "live_realtime"]);
 export const recordingPillPositionSchema = z.enum(["bottom_left", "bottom_center", "bottom_right"]);
@@ -84,7 +83,6 @@ export const contextSnapshotSchema = z
 export const modeConfigSchema = z
   .object({
     id: z.string().min(1),
-    kind: dictationModeKindSchema,
     iconKey: modeIconKeySchema.catch("sliders-horizontal"),
     name: z.string().min(1, "Name is required."),
     description: z.string().catch(""),

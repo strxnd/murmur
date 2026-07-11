@@ -16,7 +16,6 @@ import type {
   AppSettings,
   AutoModeRule,
   DictationHistoryItem,
-  DictationModeKind,
   LlmProviderConfig,
   LlmProviderType,
   ModelCatalogItem,
@@ -49,8 +48,8 @@ interface PersistedState extends PersistedConfigState {
   history: DictationHistoryItem[];
 }
 
-type LegacyModeConfig = Omit<Partial<ModeConfig>, "kind"> & {
-  kind?: DictationModeKind | "default";
+type LegacyModeConfig = Partial<ModeConfig> & {
+  kind?: "built_in" | "custom" | "default";
   presetId?: string;
 };
 
@@ -87,8 +86,6 @@ const legacyPresetIconKeys = new Map<string, ModeIconKey>([
   ["note", "notebook-pen"],
   ["custom", "sliders-horizontal"]
 ]);
-const builtInModeDefaults = defaultModes.filter((mode) => mode.kind === "built_in");
-const builtInModeIds = new Set(builtInModeDefaults.map((mode) => mode.id));
 const removedReleaseNoteIds = new Set(["initial-prototype"]);
 const activationModes = new Set<ActivationMode>(["toggle", "push_to_talk"]);
 const recordingPillPositions = new Set<RecordingPillPosition>(["bottom_left", "bottom_center", "bottom_right"]);
@@ -112,7 +109,6 @@ const appSettingKeys = [
 ] satisfies Array<keyof AppSettings>;
 const customModeDefaults: ModeConfig = {
   id: "mode",
-  kind: "custom",
   iconKey: "sliders-horizontal",
   name: "New mode",
   description: "",
@@ -192,7 +188,8 @@ export class StorageService {
 
   setModes(modes: ModeConfig[]): PersistedState {
     const state = this.getState();
-    state.modes = modes;
+    state.modes = this.normalizeModes(modes);
+    state.settings = this.normalizeSettings(state.settings, state.modes);
     return this.writeState(state);
   }
 
@@ -593,7 +590,7 @@ export class StorageService {
     const modeIds = new Set(modes.map((mode) => mode.id));
     normalized.activeModeId = legacyModeIdMap.get(normalized.activeModeId) ?? normalized.activeModeId;
     if (!modeIds.has(normalized.activeModeId)) {
-      normalized.activeModeId = "default";
+      normalized.activeModeId = modes[0]?.id ?? defaultSettings.activeModeId;
     }
     normalized.typingBaselineWpm = Number.isFinite(normalized.typingBaselineWpm)
       ? Math.max(1, normalized.typingBaselineWpm)
@@ -607,44 +604,38 @@ export class StorageService {
   private normalizeModes(modes: LegacyModeConfig[] | undefined): ModeConfig[] {
     if (!modes?.length) return clone(defaultModes);
 
-    const normalizedModes = builtInModeDefaults.map((mode) => this.normalizeMode(mode, "built_in", mode));
-
-    const customModes: ModeConfig[] = [];
-    const seenCustomIds = new Set<string>();
+    const normalizedModes: ModeConfig[] = [];
+    const seenIds = new Set<string>();
 
     for (const mode of modes) {
       if (!isUsableModeId(mode.id)) {
         continue;
       }
       const normalizedId = legacyModeIdMap.get(mode.id) ?? mode.id;
-      if (
-        mode.id === "default" ||
-        mode.kind === "default" ||
-        builtInModeIds.has(normalizedId) ||
-        removedLegacyModeIds.has(mode.id) ||
-        seenCustomIds.has(mode.id)
-      ) {
+      if (removedLegacyModeIds.has(mode.id) || seenIds.has(normalizedId)) {
         continue;
       }
-      seenCustomIds.add(mode.id);
-      customModes.push(this.normalizeMode(mode, "custom", customModeDefaults));
+      seenIds.add(normalizedId);
+      const presetDefaults = defaultModes.find((candidate) => candidate.id === normalizedId) ?? customModeDefaults;
+      normalizedModes.push(this.normalizeMode({ ...mode, id: normalizedId }, presetDefaults));
     }
 
-    return [...normalizedModes, ...customModes];
+    return normalizedModes.length > 0 ? normalizedModes : clone(defaultModes);
   }
 
-  private normalizeMode(mode: LegacyModeConfig | undefined, kind: DictationModeKind, base: ModeConfig): ModeConfig {
+  private normalizeMode(mode: LegacyModeConfig | undefined, base: ModeConfig): ModeConfig {
     const context = mode?.context ?? base.context;
+    const legacyWritingStyle = typeof mode?.writingStyle === "string" ? mode.writingStyle.trim() : "";
 
     return {
-      id: kind === "built_in" ? base.id : isUsableModeId(mode?.id) ? mode.id : base.id,
-      kind,
+      id: isUsableModeId(mode?.id) ? mode.id : base.id,
       iconKey: this.normalizeModeIconKey(mode, base.iconKey),
       name: isNonEmptyString(mode?.name) ? mode.name : base.name,
       description: typeof mode?.description === "string" ? mode.description : base.description,
       aiEnabled: typeof mode?.aiEnabled === "boolean" ? mode.aiEnabled : base.aiEnabled,
-      writingStyle: typeof mode?.writingStyle === "string" ? mode.writingStyle : base.writingStyle,
-      instructionPrompt: typeof mode?.instructionPrompt === "string" ? mode.instructionPrompt : base.instructionPrompt,
+      writingStyle: "",
+      instructionPrompt:
+        legacyWritingStyle || (typeof mode?.instructionPrompt === "string" ? mode.instructionPrompt : base.instructionPrompt),
       examples: normalizeExamples(mode?.examples),
       language: isNonEmptyString(mode?.language) ? mode.language : base.language,
       context: {
