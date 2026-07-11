@@ -4,6 +4,8 @@
 
 Murmur is an Electron desktop app with a React renderer.
 
+- App current state is early development; do not focus on migrating old user profiles or legacy features.
+
 - `src/main/`: Electron main process, IPC registration, window lifecycle, and app orchestration.
 - `src/main/services/`: focused system services for STT, LLMs, storage, context capture, paste automation, and auto-mode matching.
 - `src/preload/`: secure preload bridge exposed as `window.murmur`.

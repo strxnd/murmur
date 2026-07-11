@@ -24,6 +24,7 @@ import type {
   ModelDownloadState,
   ModelLibrarySnapshot,
   ModelProvider,
+  ModelTag,
   ModeConfig,
   ModeIconKey,
   ReleaseNote,
@@ -1058,7 +1059,7 @@ function normalizeDiscoveredModelCatalogItem(item: Partial<ModelCatalogItem>): M
     description: isNonEmptyString(item.description) ? item.description : `${providerDisplayName(provider)} language model.`,
     isCloud: Boolean(item.isCloud),
     isOffline: Boolean(item.isOffline),
-    tags: normalizeTags(item.tags, ["llm", "local", provider, "discovered"]),
+    tags: dynamicModelTags(item, provider, llmProviderType),
     downloadStrategy: "none",
     discovery: {
       providerId: discovery.providerId,
@@ -1081,9 +1082,25 @@ function isDynamicModelProvider(provider: unknown): provider is ModelProvider {
   return typeof provider === "string" && modelProviders.has(provider as ModelProvider);
 }
 
-function normalizeTags(tags: unknown, fallback: string[]): string[] {
-  const normalized = Array.isArray(tags) ? tags.filter((tag): tag is string => isNonEmptyString(tag)) : [];
-  return normalized.length > 0 ? normalized : fallback;
+function dynamicModelTags(
+  item: Partial<ModelCatalogItem>,
+  provider: ModelProvider,
+  llmProviderType: LlmProviderConfig["type"]
+): ModelTag[] {
+  const location: ModelTag = item.isCloud ? "cloud" : "local";
+  const providerTags: Record<ModelProvider, ModelTag> = {
+    whisper_cpp: "openai",
+    nvidia: "nvidia",
+    ollama: "ollama",
+    lmstudio: "lmstudio",
+    openai: "openai",
+    openai_compatible: "openai-compatible",
+    anthropic: "anthropic",
+    google: "google"
+  };
+  const providerTag = providerTags[provider];
+  const origin: ModelTag = llmProviderType === "custom_openai_compatible" ? "manual" : "discovered";
+  return [location, providerTag, origin];
 }
 
 function providerDisplayName(provider: ModelProvider): string {

@@ -454,11 +454,13 @@ describe("ModelLibraryService", () => {
 
       expect(snapshot.catalog.find((item) => item.id === "team-ollama:custom-llama:latest")).toMatchObject({
         provider: "ollama",
+        tags: ["local", "ollama", "discovered"],
         discovery: { providerId: "team-ollama", reachable: true },
         defaultProviderConfig: { providerId: "team-ollama", llmProviderType: "ollama", model: "custom-llama:latest" }
       });
       expect(snapshot.catalog.find((item) => item.id === "team-lmstudio:custom/studio-model")).toMatchObject({
         provider: "lmstudio",
+        tags: ["local", "lmstudio", "discovered"],
         discovery: { providerId: "team-lmstudio", reachable: true },
         defaultProviderConfig: { providerId: "team-lmstudio", llmProviderType: "lmstudio", model: "custom/studio-model" }
       });
@@ -492,6 +494,7 @@ describe("ModelLibraryService", () => {
       provider: "openai_compatible",
       isCloud: true,
       isOffline: false,
+      tags: ["cloud", "openai-compatible", "manual"],
       discovery: { providerId: "custom-openai-compatible", reachable: true },
       defaultProviderConfig: {
         providerId: "custom-openai-compatible",

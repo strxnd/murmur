@@ -24,6 +24,19 @@ export type LlmProviderType =
 
 export type ModelKind = "voice" | "language";
 
+export type ModelTag =
+  | "cloud"
+  | "local"
+  | "openai"
+  | "nvidia"
+  | "anthropic"
+  | "google"
+  | "ollama"
+  | "lmstudio"
+  | "openai-compatible"
+  | "discovered"
+  | "manual";
+
 export type ModelProvider =
   | "whisper_cpp"
   | "nvidia"
@@ -144,7 +157,7 @@ export interface ModelCatalogItem {
   sizeBytes?: number;
   isCloud: boolean;
   isOffline: boolean;
-  tags: string[];
+  tags: ModelTag[];
   downloadStrategy: ModelDownloadStrategy;
   downloadUrl?: string;
   filename?: string;

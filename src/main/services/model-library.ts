@@ -871,7 +871,7 @@ function discoveredModelItem(
     description: `${provider.name} local language model discovered from the running provider.`,
     isCloud: false,
     isOffline: true,
-    tags: ["llm", "local", provider.type, "discovered"],
+    tags: ["local", provider.type, "discovered"],
     downloadStrategy: "none",
     discovery: {
       providerId: provider.id,
@@ -902,7 +902,7 @@ function manualOpenAiCompatibleModelItem(
     description: `${provider.name} OpenAI-compatible language model.`,
     isCloud: provider.isCloud,
     isOffline: !provider.isCloud,
-    tags: ["llm", provider.isCloud ? "remote" : "local", "openai-compatible", "manual"],
+    tags: [provider.isCloud ? "cloud" : "local", "openai-compatible", "manual"],
     downloadStrategy: "none",
     discovery: {
       providerId: provider.id,
