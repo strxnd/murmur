@@ -1,6 +1,6 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { AlertTriangle, CheckCircle2, ChevronRight, KeyRound, MessageSquare, Mic, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
+import { AlertTriangle, Cable, CheckCircle2, ChevronRight, KeyRound, MessageSquare, Mic, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import { createPortal } from "react-dom";
 import { Controller, useForm, useWatch, type Path, type UseFormReturn } from "react-hook-form";
@@ -21,7 +21,6 @@ import { IconButton } from "../components/ui/IconButton";
 import { Input } from "../components/ui/Input";
 import { Select, type SelectItem } from "../components/ui/Select";
 import { Switch } from "../components/ui/Switch";
-import { Toolbar } from "../components/ui/Toolbar";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { cn } from "../lib/cn";
 import { makeClientId } from "../lib/ids";
@@ -406,55 +405,74 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
           }}
         />
 
-        <section className="flex flex-col gap-4 border-t border-border pt-4">
-          <header className="flex items-center justify-between gap-3 max-[760px]:flex-col max-[760px]:items-stretch">
+        <section className="provider-advanced-section" data-open={isAdvancedOpen || undefined}>
+          <header className="provider-advanced-header">
             <button
               type="button"
-              className="provider-advanced-toggle -mx-2 flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-foreground/30"
+              className="provider-advanced-toggle"
               aria-expanded={isAdvancedOpen}
               onClick={() => setIsAdvancedOpen((open) => !open)}
             >
+              <span className="provider-advanced-glyph" aria-hidden="true">
+                <Cable size={18} />
+              </span>
+              <span className="provider-advanced-copy">
+                <span>Custom providers</span>
+                <small>Connect private, local, or OpenAI-compatible endpoints.</small>
+              </span>
+              {customProviders.length > 0 && <Badge>{customProviders.length}</Badge>}
               <ChevronRight
                 size={16}
                 className={cn("provider-row-chevron shrink-0 text-muted-foreground", isAdvancedOpen && "rotate-90 text-foreground")}
               />
-              <span className="min-w-0">
-                <span className="block text-sm font-semibold text-foreground">Advanced</span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  Custom providers{customProviders.length > 0 ? ` (${customProviders.length})` : ""}
-                </span>
-              </span>
             </button>
-            {isAdvancedOpen && (
-              <Toolbar className="justify-end">
-                <Button onClick={addSttProvider}>
-                  <Plus size={16} /> Add custom STT
+            {isAdvancedOpen && customProviders.length > 0 && (
+              <div className="provider-advanced-actions">
+                <Button size="sm" onClick={addSttProvider}>
+                  <Plus size={15} /> Speech endpoint
                 </Button>
-                <Button onClick={addLlmProvider}>
-                  <Plus size={16} /> Add custom LLM
+                <Button size="sm" onClick={addLlmProvider}>
+                  <Plus size={15} /> Language endpoint
                 </Button>
-              </Toolbar>
+              </div>
             )}
           </header>
 
           {isAdvancedOpen && (
-            <div ref={customProviderListParent} className="flex flex-col gap-2">
+            <div ref={customProviderListParent} className="provider-advanced-body">
               {customProviders.length === 0 ? (
-                <div className="flex min-h-24 items-center justify-center rounded-md border border-dashed border-border bg-muted/30 p-4 text-sm text-muted-foreground">
-                  No custom providers.
+                <div className="provider-advanced-empty">
+                  <div className="provider-advanced-empty-copy">
+                    <p>Bring your own endpoint</p>
+                    <span>Add a speech service or language model server. You can test the connection before saving.</span>
+                  </div>
+                  <div className="provider-advanced-empty-actions">
+                    <button type="button" onClick={addSttProvider}>
+                      <ProviderGlyph kind="stt" />
+                      <span><strong>Speech endpoint</strong><small>Transcribe recorded audio</small></span>
+                      <Plus size={16} />
+                    </button>
+                    <button type="button" onClick={addLlmProvider}>
+                      <ProviderGlyph kind="llm" />
+                      <span><strong>Language endpoint</strong><small>Rewrite and refine text</small></span>
+                      <Plus size={16} />
+                    </button>
+                  </div>
                 </div>
               ) : (
-                customProviders.map((entry) => (
-                  <CustomProviderRow
-                    key={`${entry.kind}:${entry.provider.id}`}
-                    entry={entry}
-                    active={openProvider?.kind === entry.kind && openProvider.id === entry.provider.id}
-                    onOpen={() => {
-                      setOpenProvider({ kind: entry.kind, id: entry.provider.id });
-                      setIsProviderDialogOpen(true);
-                    }}
-                  />
-                ))
+                <div className="provider-advanced-list">
+                  {customProviders.map((entry) => (
+                    <CustomProviderRow
+                      key={`${entry.kind}:${entry.provider.id}`}
+                      entry={entry}
+                      active={openProvider?.kind === entry.kind && openProvider.id === entry.provider.id}
+                      onOpen={() => {
+                        setOpenProvider({ kind: entry.kind, id: entry.provider.id });
+                        setIsProviderDialogOpen(true);
+                      }}
+                    />
+                  ))}
+                </div>
               )}
             </div>
           )}
@@ -476,8 +494,8 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
         <Dialog.Portal>
           <Dialog.Backdrop className="mode-dialog-backdrop fixed inset-0 z-40 bg-black/50" />
           <Dialog.Popup
-            className="mode-dialog-popup fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-3rem)] overflow-y-auto rounded-md border border-border bg-surface-raised p-4 text-sm text-foreground shadow-[var(--console-dialog-shadow)] outline-none"
-            style={{ width: "min(42rem, calc(100vw - 2rem))" }}
+            className="provider-editor-dialog mode-dialog-popup fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-3rem)] overflow-y-auto border border-border bg-surface-raised text-sm text-foreground shadow-[var(--console-dialog-shadow)] outline-none"
+            style={{ width: "min(48rem, calc(100vw - 2rem))" }}
           >
             {openProviderEntry && (
               <CustomProviderEditor
@@ -690,8 +708,8 @@ function CustomProviderEditor({
   const validateButtonLabel = validation?.status === "validating" ? "Testing..." : providerValidationActionLabel(entry);
 
   return (
-    <div ref={editorParent} className="flex flex-col gap-4">
-      <header className="flex items-start justify-between gap-3 max-[640px]:flex-col">
+    <div ref={editorParent} className="provider-editor">
+      <header className="provider-editor-header">
         <div className="flex min-w-0 items-center gap-3">
           <ProviderGlyph kind={entry.kind} active />
           <div className="min-w-0">
@@ -699,7 +717,7 @@ function CustomProviderEditor({
             <p className="m-0 truncate text-xs text-muted-foreground">{providerKindDetail(entry.kind)}</p>
           </div>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 max-[640px]:w-full max-[640px]:justify-start">
+        <div className="provider-editor-header-actions">
           <Button size="sm" onClick={onValidate} disabled={validation?.status === "validating"}>
             <CheckCircle2 size={15} /> {validateButtonLabel}
           </Button>
@@ -729,23 +747,25 @@ function CustomProviderEditor({
         </div>
       </header>
 
-      {entry.kind === "stt" ? (
-        <TranscriptionProviderEditor
-          form={form}
-          index={entry.index}
-          provider={entry.provider}
-          validation={validation}
-          onDismissValidation={onDismissValidation}
-        />
-      ) : (
-        <LlmProviderEditor
-          form={form}
-          index={entry.index}
-          provider={entry.provider}
-          validation={validation}
-          onDismissValidation={onDismissValidation}
-        />
-      )}
+      <div className="provider-editor-body">
+        {entry.kind === "stt" ? (
+          <TranscriptionProviderEditor
+            form={form}
+            index={entry.index}
+            provider={entry.provider}
+            validation={validation}
+            onDismissValidation={onDismissValidation}
+          />
+        ) : (
+          <LlmProviderEditor
+            form={form}
+            index={entry.index}
+            provider={entry.provider}
+            validation={validation}
+            onDismissValidation={onDismissValidation}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -769,14 +789,14 @@ function TranscriptionProviderEditor({
 
   return (
     <>
-      <div className="flex flex-wrap gap-2">
+      <div className="provider-editor-meta">
         <Badge>{isDefault ? "Built-in" : "Custom"}</Badge>
         <Badge>{transcriptionProviderTypeLabel(provider.type)}</Badge>
         <Badge tone={provider.isCloud ? "cloud" : "local"}>{provider.isCloud ? "Cloud" : "Local"}</Badge>
         <Badge tone={provider.enabled ? "success" : "neutral"}>{provider.enabled ? "Enabled" : "Disabled"}</Badge>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
+      <div className="provider-editor-form">
         <Controller
           control={form.control}
           name={`transcriptionProviders.${index}.enabled`}
@@ -895,14 +915,14 @@ function LlmProviderEditor({
 
   return (
     <>
-      <div className="flex flex-wrap gap-2">
+      <div className="provider-editor-meta">
         <Badge>{isDefault ? "Built-in" : "Custom"}</Badge>
         <Badge>{llmProviderTypeLabel(provider.type)}</Badge>
         <Badge tone={provider.isCloud ? "cloud" : "local"}>{provider.isCloud ? "Cloud" : "Local"}</Badge>
         <Badge tone={provider.enabled ? "success" : "neutral"}>{provider.enabled ? "Enabled" : "Disabled"}</Badge>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
+      <div className="provider-editor-form">
         <Controller
           control={form.control}
           name={`llmProviders.${index}.enabled`}
@@ -960,7 +980,7 @@ function LlmProviderEditor({
         )}
 
         {provider.type === "custom_openai_compatible" && (
-          <div className="col-span-full flex flex-col gap-2 rounded-md border border-border bg-muted/30 p-3">
+          <div className="provider-editor-models">
             <div className="flex items-center justify-between gap-3">
               <p className="m-0 text-sm font-medium text-foreground">Models</p>
               <Button size="sm" onClick={addModel}>

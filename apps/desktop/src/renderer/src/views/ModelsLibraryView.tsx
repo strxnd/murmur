@@ -1,6 +1,5 @@
 import { Dialog } from "@base-ui/react/dialog";
 import {
-  BrainCircuit,
   Check,
   ChevronRight,
   Cloud,
@@ -8,13 +7,12 @@ import {
   HardDrive,
   Heart,
   KeyRound,
-  Mic,
   Search,
   Trash2,
   Wrench,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useState, type CSSProperties, type JSX } from "react";
+import { useEffect, useMemo, useState, type JSX } from "react";
 import type {
   AppStateSnapshot,
   ModelCatalogItem,
@@ -30,6 +28,7 @@ import {
   type ProviderSetupTarget
 } from "../../../shared/model-provider-setup";
 import { DownloadProgressStatus } from "../components/DownloadProgressStatus";
+import { ModelGlyph } from "../components/ModelGlyph";
 import { View } from "../components/View";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -171,7 +170,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
                     aria-controls={detailId}
                     onClick={() => setOpenModelId((current) => (current === item.id ? null : item.id))}
                   >
-                    <ModelGlyph item={item} active={isOpen || active} />
+                    <ModelGlyph item={item} />
                     <span className="flex min-w-0 items-center gap-2">
                       <span className="truncate text-sm font-medium text-foreground">{item.name}</span>
                       {active && (
@@ -284,7 +283,7 @@ function ModelDetails({
     <div ref={detailParent} className="flex flex-col gap-4">
       <header className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <ModelGlyph item={item} active />
+          <ModelGlyph item={item} />
           <div className="min-w-0">
             <h2 className="m-0 truncate text-base font-semibold text-foreground">{item.name}</h2>
             <p className="m-0 truncate text-xs text-muted-foreground">{providerLabel(item.provider)}</p>
@@ -588,24 +587,6 @@ function FilterButton({
   );
 }
 
-function ModelGlyph({ item, active = false }: { item: ModelCatalogItem; active?: boolean }): JSX.Element {
-  const ProviderIcon = providerIcon(item.provider);
-  const FallbackIcon = item.kind === "language" ? BrainCircuit : Mic;
-
-  return (
-    <span
-      className={cn(
-        "model-glyph relative grid h-9 w-9 shrink-0 place-items-center rounded-md border border-border bg-surface-raised text-foreground",
-        active && "scale-105 border-foreground/40"
-      )}
-      style={modelGlyphStyle(item.provider)}
-    >
-      {ProviderIcon ? <ProviderIcon className="h-[19px] w-[19px]" /> : <FallbackIcon size={17} />}
-      {item.isOffline && <HardDrive size={10} className="absolute bottom-1 right-1 text-muted-foreground" />}
-    </span>
-  );
-}
-
 function StatusBadge({ item, download }: { item: ModelCatalogItem; download?: ModelDownloadState }): JSX.Element | null {
   if (item.discovery) {
     return <Badge tone={item.discovery.reachable ? "success" : "warning"}>{item.discovery.reachable ? "Available" : "Unavailable"}</Badge>;
@@ -629,7 +610,11 @@ function SourceBadge({ item }: { item: ModelCatalogItem }): JSX.Element {
       </Badge>
     );
   }
-  return <Badge tone="local">Local</Badge>;
+  return (
+    <Badge tone="local" aria-label="Local" title="Local">
+      <HardDrive size={13} aria-hidden="true" />
+    </Badge>
+  );
 }
 
 function RuntimeBadge({ runtime }: { runtime?: SttRuntimeInstallState }): JSX.Element | null {
@@ -640,53 +625,6 @@ function RuntimeBadge({ runtime }: { runtime?: SttRuntimeInstallState }): JSX.El
 function providerModelLabel(item: ModelCatalogItem): string | null {
   if (item.discovery) return item.discovery.reachable ? "Available" : "Unavailable";
   return null;
-}
-
-function modelGlyphStyle(provider: ModelProvider): CSSProperties {
-  const styles: Partial<Record<ModelProvider, CSSProperties>> = {
-    whisper_cpp: {
-      "--model-glyph-bg": "#ffffff",
-      "--model-glyph-border": "#e0e0e0",
-      "--model-glyph-icon": "#111111"
-    } as CSSProperties,
-    nvidia: {
-      "--model-glyph-bg": "#76b900",
-      "--model-glyph-border": "#76b900",
-      "--model-glyph-icon": "#ffffff"
-    } as CSSProperties,
-    ollama: {
-      "--model-glyph-bg": "#f7f7f2",
-      "--model-glyph-border": "#d8d8cf",
-      "--model-glyph-icon": "#111111"
-    } as CSSProperties,
-    lmstudio: {
-      "--model-glyph-bg": "#101828",
-      "--model-glyph-border": "#26364f",
-      "--model-glyph-icon": "#ffffff"
-    } as CSSProperties,
-    openai: {
-      "--model-glyph-bg": "#ffffff",
-      "--model-glyph-border": "#e0e0e0",
-      "--model-glyph-icon": "#111111"
-    } as CSSProperties,
-    openai_compatible: {
-      "--model-glyph-bg": "#ffffff",
-      "--model-glyph-border": "#e0e0e0",
-      "--model-glyph-icon": "#111111"
-    } as CSSProperties,
-    anthropic: {
-      "--model-glyph-bg": "#d97757",
-      "--model-glyph-border": "#d97757",
-      "--model-glyph-icon": "#ffffff"
-    } as CSSProperties,
-    google: {
-      "--model-glyph-bg": "#ffffff",
-      "--model-glyph-border": "#e0e0e0",
-      "--model-glyph-icon": "#1f1f1f"
-    } as CSSProperties
-  };
-
-  return styles[provider] ?? {};
 }
 
 function kindLabel(kind: ModelCatalogItem["kind"]): string {
@@ -710,82 +648,6 @@ function isModelDownloadedOrAvailable(item: ModelCatalogItem, download?: ModelDo
 
 function modelDetailId(modelId: string): string {
   return `model-detail-${modelId.replace(/[^A-Za-z0-9_-]/g, "-")}`;
-}
-
-type ProviderIcon = ({ className }: { className?: string }) => JSX.Element;
-
-const openAiLogoPath = [
-  "M22.282 9.821a6 6 0 0 0-.516-4.91 6.05 6.05 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a6 6 0 0 0-3.998 2.9 6.05 6.05 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.05 6.05 0 0 0 6.515 2.9A6 6 0 0 0 13.26 24a6.06 6.06 0 0 0 5.772-4.206 6 6 0 0 0 3.997-2.9 6.06 6.06 0 0 0-.747-7.073",
-  "M13.26 22.43a4.48 4.48 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.8.8 0 0 0 .392-.681v-6.737l2.02 1.168a.07.07 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494",
-  "M3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.77.77 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646",
-  "M2.34 7.896a4.5 4.5 0 0 1 2.366-1.973V11.6a.77.77 0 0 0 .388.677l5.815 3.354-2.02 1.168a.08.08 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872z",
-  "m16.597 3.855-5.833-3.387L15.119 7.2a.08.08 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667",
-  "m2.01-3.023-.141-.085-4.774-2.782a.78.78 0 0 0-.785 0L9.409 9.23V6.897a.07.07 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66z",
-  "m-12.64 4.135-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08L8.704 5.46a.8.8 0 0 0-.393.681z",
-  "m1.097-2.365 2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5Z"
-].join(" ");
-
-const nvidiaLogoPath = [
-  "M8.948 8.798v-1.43a6.7 6.7 0 0 1 .424-.018c3.922-.124 6.493 3.374 6.493 3.374s-2.774 3.851-5.75 3.851c-.398 0-.787-.062-1.158-.185v-4.346c1.528.185 1.837.857 2.747 2.385l2.04-1.714s-1.492-1.952-4-1.952a6.016 6.016 0 0 0-.796.035",
-  "m0-4.735v2.138l.424-.027c5.45-.185 9.01 4.47 9.01 4.47s-4.08 4.964-8.33 4.964c-.37 0-.733-.035-1.095-.097v1.325c.3.035.61.062.91.062 3.957 0 6.82-2.023 9.593-4.408.459.371 2.34 1.263 2.73 1.652-2.633 2.208-8.772 3.984-12.253 3.984-.335 0-.653-.018-.971-.053v1.864H24V4.063z",
-  "m0 10.326v1.131c-3.657-.654-4.673-4.46-4.673-4.46s1.758-1.944 4.673-2.262v1.237H8.94c-1.528-.186-2.73 1.245-2.73 1.245s.68 2.412 2.739 3.11",
-  "M2.456 10.9s2.164-3.197 6.5-3.533V6.201C4.153 6.59 0 10.653 0 10.653s2.35 6.802 8.948 7.42v-1.237c-4.84-.6-6.492-5.936-6.492-5.936z"
-].join(" ");
-
-function providerIcon(provider: ModelProvider): ProviderIcon | null {
-  if (provider === "openai" || provider === "openai_compatible" || provider === "whisper_cpp") return OpenAiMark;
-  if (provider === "nvidia") return NvidiaMark;
-  if (provider === "anthropic") return AnthropicMark;
-  if (provider === "google") return GoogleMark;
-  return null;
-}
-
-function OpenAiMark({ className }: { className?: string }): JSX.Element {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className={className} fill="currentColor">
-      <path d={openAiLogoPath} />
-    </svg>
-  );
-}
-
-function NvidiaMark({ className }: { className?: string }): JSX.Element {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className={className} fill="currentColor">
-      <path d={nvidiaLogoPath} />
-    </svg>
-  );
-}
-
-function AnthropicMark({ className }: { className?: string }): JSX.Element {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className={className} fill="currentColor">
-      <path d="M14.63 4.5 21 19.5h-3.33l-1.3-3.22H9.7L8.39 19.5H5.2L11.58 4.5h3.05Zm.61 8.98-2.2-5.45-2.2 5.45h4.4Z" />
-      <path d="M5.84 4.5 12.2 19.5H9.02L2.65 4.5h3.19Z" />
-    </svg>
-  );
-}
-
-function GoogleMark({ className }: { className?: string }): JSX.Element {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className={className}>
-      <path
-        fill="#4285F4"
-        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09Z"
-      />
-      <path
-        fill="#34A853"
-        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23Z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M5.84 14.1a6.61 6.61 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84Z"
-      />
-      <path
-        fill="#EA4335"
-        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15A10.6 10.6 0 0 0 12 1 11 11 0 0 0 2.18 7.06L5.84 9.9C6.71 7.31 9.14 5.38 12 5.38Z"
-      />
-    </svg>
-  );
 }
 
 function statusLabel(status: ModelDownloadState["status"] | "not_downloaded"): string {

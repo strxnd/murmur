@@ -223,6 +223,12 @@ export class AppController {
       minWidth: 940,
       minHeight: 620,
       title: "Murmur",
+      ...(process.platform === "darwin"
+        ? {
+            titleBarStyle: "hiddenInset" as const,
+            trafficLightPosition: { x: 14, y: 20 }
+          }
+        : {}),
       webPreferences: {
         preload: join(__dirname, "../preload/index.cjs"),
         contextIsolation: true,

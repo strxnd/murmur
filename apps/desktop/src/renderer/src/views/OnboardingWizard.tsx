@@ -3,8 +3,10 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  AudioLines,
   Check,
   CheckCircle2,
+  ChevronRight,
   Download,
   Keyboard,
   Loader2,
@@ -15,12 +17,11 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type RefObject } from "react";
 import type { AppStateSnapshot, ModelCatalogItem, ModelDownloadState, SttRuntimeInstallState } from "../../../shared/types";
 import { DownloadProgressStatus } from "../components/DownloadProgressStatus";
+import { ModelGlyph } from "../components/ModelGlyph";
 import { ShortcutRecorder } from "../components/ShortcutRecorder";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Field } from "../components/ui/Field";
-import { IconButton } from "../components/ui/IconButton";
-import { Panel } from "../components/ui/Panel";
 import { Select, type SelectItem } from "../components/ui/Select";
 import { Textarea } from "../components/ui/Textarea";
 import {
@@ -29,9 +30,8 @@ import {
   preferredAudioInputIdToSelectValue
 } from "../lib/audio-inputs";
 import { cn } from "../lib/cn";
-import { downloadProgressSummary } from "../lib/download-progress";
 import { murmurClient } from "../lib/murmur-client";
-import { runtimeInstallForModel, runtimeStatusLabel, userRuntimeStatusMessage } from "../lib/runtimes";
+import { runtimeStatusLabel, userRuntimeStatusMessage } from "../lib/runtimes";
 import {
   downloadForModel,
   formatBytes,
@@ -48,11 +48,31 @@ import { useMurmurStore } from "../state/murmur-store";
 type ProbeStatus = "idle" | "checking" | "passed" | "warning" | "error";
 type DictationTestStatus = "idle" | "starting" | "recording" | "waiting" | "passed" | "error";
 
-const stepMeta: Record<OnboardingStepId, { title: string; label: string; icon: LucideIcon }> = {
-  microphone: { title: "Check your microphone", label: "Microphone", icon: Mic },
-  stt: { title: "Choose a speech model", label: "Speech model", icon: Download },
-  transcription: { title: "Try a quick dictation", label: "Quick dictation", icon: Keyboard },
-  ready: { title: "You're ready to dictate", label: "Ready", icon: CheckCircle2 }
+const stepMeta: Record<OnboardingStepId, { title: string; label: string; description: string; icon: LucideIcon }> = {
+  microphone: {
+    title: "Make sure Murmur can hear you.",
+    label: "Microphone",
+    description: "Choose the input you use, then let Murmur confirm it is available.",
+    icon: Mic
+  },
+  stt: {
+    title: "Choose how speech becomes text.",
+    label: "Speech model",
+    description: "Pick a local model to transcribe on this device, then download it once.",
+    icon: Download
+  },
+  transcription: {
+    title: "Test the full dictation path.",
+    label: "Quick dictation",
+    description: "Confirm your shortcut, speak one sentence, and check the resulting text.",
+    icon: Keyboard
+  },
+  ready: {
+    title: "Murmur is ready when you are.",
+    label: "Ready",
+    description: "The microphone, speech model, shortcut, and transcript test are all connected.",
+    icon: CheckCircle2
+  }
 };
 
 export function OnboardingWizard({
@@ -141,7 +161,6 @@ export function OnboardingWizard({
   }, [open, selectedVoiceModelId, state, voiceModels]);
 
   const download = voiceModel ? downloadForModel(state, voiceModel.id) : undefined;
-  const runtime = voiceModel ? runtimeInstallForModel(state, voiceModel) : undefined;
   const selectedSttReady = voiceModel ? localVoiceModelActiveAndReady(state, voiceModel) : false;
   const sttReady = onboardingSttReady(state);
   const hotkeyChanged = hotkey !== state.settings.activationHotkey;
@@ -240,7 +259,7 @@ export function OnboardingWizard({
         await updateSettings({ preferredAudioInputId: selectedInputId || undefined });
       }
       setMicStatus("passed");
-      setMicMessage("Microphone is available.");
+      setMicMessage("");
     } catch (error) {
       setMicStatus("error");
       setMicMessage(errorMessage(error));
@@ -334,7 +353,7 @@ export function OnboardingWizard({
       await prepareTranscriptionMode();
       await startDictation();
       setDictationStatus("recording");
-      setDictationMessage("Recording.");
+      setDictationMessage("");
     } catch (error) {
       dictationPendingRef.current = false;
       setDictationStatus("error");
@@ -345,7 +364,7 @@ export function OnboardingWizard({
 
   const stopTestDictation = async (): Promise<void> => {
     setDictationStatus("waiting");
-    setDictationMessage("Transcribing.");
+    setDictationMessage("");
     await stopDictation();
   };
 
@@ -358,7 +377,7 @@ export function OnboardingWizard({
       setDictationValue("");
     }
     setDictationStatus("recording");
-    setDictationMessage("Recording.");
+    setDictationMessage("");
     dictationTextareaRef.current?.focus();
   }, [currentStep, open, state.history.length, state.session.id, state.session.status]);
 
@@ -367,7 +386,7 @@ export function OnboardingWizard({
 
     if (state.session.status === "transcribing" || state.session.status === "processing" || state.session.status === "pasting") {
       setDictationStatus("waiting");
-      setDictationMessage("Transcribing.");
+      setDictationMessage("");
       return;
     }
 
@@ -380,7 +399,7 @@ export function OnboardingWizard({
       dictationPendingRef.current = false;
       setDictationValue(completedText);
       setDictationStatus(completedText.trim().length > 0 ? "passed" : "error");
-      setDictationMessage(completedText.trim().length > 0 ? "Dictation produced text." : "No text was produced.");
+      setDictationMessage(completedText.trim().length > 0 ? "" : "No text was produced.");
       void restorePreviousMode();
       return;
     }
@@ -407,177 +426,191 @@ export function OnboardingWizard({
       : sttReady
         ? "Speech recognition provider ready"
         : "Speech recognition not ready";
+  const CurrentStepIcon = stepMeta[currentStep].icon;
+  const currentStepTitle = currentStep === "ready" && !readyStepComplete ? "Review the remaining checks." : stepMeta[currentStep].title;
+  const currentStepDescription =
+    currentStep === "ready" && !readyStepComplete
+      ? "Return to any unchecked item, then come back here to finish setup."
+      : stepMeta[currentStep].description;
 
   return (
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
-        <Dialog.Backdrop className="onboarding-dialog-backdrop fixed inset-0 z-[70] bg-black/50" />
-        <Dialog.Popup className="onboarding-dialog-popup fixed left-1/2 top-1/2 z-[80] grid h-[min(650px,calc(100dvh-3rem))] w-[min(920px,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 grid-cols-[14rem_minmax(0,1fr)] overflow-hidden rounded-[22px] border border-border bg-surface-raised text-foreground shadow-[var(--studio-float-shadow)] outline-none max-[760px]:grid-cols-1 max-[760px]:grid-rows-[auto_minmax(0,1fr)]">
-          <aside className="flex min-w-0 flex-col border-r border-border bg-surface/90 max-[760px]:border-b max-[760px]:border-r-0">
-            <div className="flex min-h-[68px] items-center gap-3 border-b border-border px-4">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-[9px] bg-foreground font-display text-xl text-background">
-                M
-              </div>
-              <div className="min-w-0">
-                <div className="truncate font-display text-2xl leading-none text-foreground">Murmur</div>
-                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                  <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground" />
-                  Setup
-                </div>
-              </div>
+        <Dialog.Backdrop className="onboarding-dialog-backdrop" />
+        <Dialog.Popup className="onboarding-dialog-popup onboarding-shell">
+          <header className="onboarding-topbar">
+            <div className="onboarding-brand">
+              <span className="onboarding-brand-mark" aria-hidden="true">
+                <AudioLines size={18} />
+              </span>
+              <Dialog.Title className="onboarding-brand-title">Murmur setup</Dialog.Title>
             </div>
-
-            <nav className="flex flex-1 flex-col gap-1.5 p-3 max-[760px]:flex-row max-[760px]:overflow-x-auto">
-              {stepIds.map((stepId, index) => {
-                const Icon = stepMeta[stepId].icon;
-                const disabled = !canNavigateToStep(index);
-                return (
-                  <button
-                    key={stepId}
-                    type="button"
-                    aria-current={index === currentStepIndex ? "step" : undefined}
-                    disabled={disabled}
-                    title={disabled ? "Stop or cancel the dictation test before switching setup steps." : undefined}
-                    onClick={() => goToStep(index)}
-                    className={cn(
-                      "flex min-h-10 min-w-0 items-center gap-2 rounded-[11px] px-3 text-left text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-foreground/30 disabled:cursor-not-allowed disabled:opacity-50 max-[760px]:shrink-0",
-                      index === currentStepIndex && "bg-foreground font-medium text-background hover:bg-foreground hover:text-background"
-                    )}
-                  >
-                    <Icon size={16} />
-                    <span className="truncate">{stepMeta[stepId].label}</span>
-                    <StepStateIcon
-                      state={stepState(stepId, {
-                        micStatus,
-                        sttReady,
-                        hotkeyReady: hotkeyCanProceed,
-                        hotkeyRegistered: state.capabilities.hotkeys.registered,
-                        dictationStatus,
-                        ready: readyStepComplete
-                      })}
-                    />
-                  </button>
-                );
-              })}
-            </nav>
-          </aside>
-
-          <section className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] bg-surface-raised">
-            <header className="sticky top-0 z-20 flex min-h-[76px] items-center justify-between gap-4 border-b border-border bg-surface-raised px-6 py-4 max-[640px]:px-4">
-              <div className="min-w-0">
-                <Dialog.Title className="m-0 font-display text-3xl font-medium leading-none tracking-[-0.035em] text-foreground max-[640px]:text-2xl">
-                  Set up Murmur
-                </Dialog.Title>
-                <Dialog.Description className="m-0 mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                  Check the basics once so dictation works when you need it.
-                </Dialog.Description>
-              </div>
-              <IconButton title="Skip setup" onClick={() => void skipOnboarding()} disabled={dictationCloseBlocked}>
-                <X size={18} />
-              </IconButton>
-            </header>
-
-            <main className="min-h-0 overflow-y-auto p-5 max-[640px]:p-4">
-              <Panel
-                title={stepMeta[currentStep].title}
-                actions={<StatusBadge status={currentStepState} />}
-                className="mx-auto max-w-4xl"
-              >
-                {currentStep === "microphone" && (
-                  <MicrophoneStep
-                    devices={audioInputItems}
-                    selectedInputValue={selectedAudioInputValue}
-                    status={micStatus}
-                    message={micMessage}
-                    onSelectedInputChange={selectAudioInput}
-                    onProbe={() => void probeMicrophone()}
-                  />
-                )}
-                {currentStep === "stt" && (
-                  <SttStep
-                    models={voiceModels}
-                    selectedModelId={voiceModel?.id ?? selectedVoiceModelId}
-                    activeModelId={state.modelLibrary.activeModelIds.voice}
-                    downloads={state.modelLibrary.downloads}
-                    runtimes={state.sttSetup.runtimes}
-                    ready={selectedSttReady}
-                    selectedModel={voiceModel}
-                    download={download}
-                    runtime={runtime}
-                    setupError={sttError}
-                    isSettingUp={isSettingUpStt}
-                    onSelectModel={selectVoiceModel}
-                    onSetup={() => void setupLocalStt()}
-                  />
-                )}
-                {currentStep === "transcription" && (
-                  <HotkeyTestStep
-                    value={hotkey}
-                    changed={hotkeyChanged}
-                    saving={isSavingHotkey}
-                    error={hotkeyError}
-                    registered={state.capabilities.hotkeys.registered}
-                    triggerDescription={state.capabilities.hotkeys.triggerDescription}
-                    dictationStatus={dictationStatus}
-                    dictationMessage={dictationMessage}
-                    dictationValue={dictationValue}
-                    sessionStatus={state.session.status}
-                    textareaRef={dictationTextareaRef}
-                    onChange={setHotkey}
-                    onSave={() => void saveHotkey()}
-                    onDictationChange={setDictationValue}
-                    onStart={() => void startTestDictation()}
-                    onStop={() => void stopTestDictation()}
-                    onCancel={() => void cancelDictation()}
-                  />
-                )}
-                {currentStep === "ready" && (
-                  <ReadyStep
-                    microphoneReady={micStatus === "passed"}
-                    speechReady={sttReady}
-                    speechReadyLabel={speechReadyLabel}
-                    hotkey={state.settings.activationHotkey}
-                    hotkeyReady={hotkeyCanProceed}
-                    hotkeyRegistered={state.capabilities.hotkeys.registered}
-                    transcriptionReady={dictationStatus === "passed"}
-                    transcript={dictationValue}
-                  />
-                )}
-              </Panel>
-            </main>
-
-            <footer className="flex items-center justify-between gap-3 border-t border-border bg-surface-raised px-6 py-3 max-[640px]:px-4 max-[560px]:flex-col max-[560px]:items-stretch">
-              <Button variant="ghost" onClick={() => void skipOnboarding()} disabled={dictationCloseBlocked}>
-                <X size={16} /> Skip
+            <div className="onboarding-topbar-actions">
+              <Button variant="ghost" size="sm" onClick={() => void skipOnboarding()} disabled={dictationCloseBlocked}>
+                <X size={15} /> Set up later
               </Button>
-              <div className="flex items-center justify-end gap-2 max-[560px]:justify-stretch">
-                <Button
-                  variant="secondary"
-                  onClick={() => goToStep(currentStepIndex - 1)}
-                  disabled={currentStepIndex === 0 || !canNavigateToStep(currentStepIndex - 1)}
-                  className="max-[560px]:flex-1"
+            </div>
+          </header>
+
+          <div className="onboarding-layout">
+            <aside className="onboarding-rail">
+              <nav className="onboarding-step-list" aria-label="Setup progress">
+                {stepIds.map((stepId, index) => {
+                  const disabled = !canNavigateToStep(index);
+                  const stateForStep = stepState(stepId, {
+                    micStatus,
+                    sttReady,
+                    hotkeyReady: hotkeyCanProceed,
+                    hotkeyRegistered: state.capabilities.hotkeys.registered,
+                    dictationStatus,
+                    ready: readyStepComplete
+                  });
+                  const stateLabel = stepStateLabel(stateForStep);
+                  return (
+                    <button
+                      key={stepId}
+                      type="button"
+                      aria-current={index === currentStepIndex ? "step" : undefined}
+                      disabled={disabled}
+                      title={disabled ? "Stop or cancel the dictation test before switching setup steps." : undefined}
+                      onClick={() => goToStep(index)}
+                      className={cn(
+                        "onboarding-step-button",
+                        index === currentStepIndex && "onboarding-step-button--active"
+                      )}
+                    >
+                      <span className="onboarding-step-number">{index + 1}</span>
+                      <span className="onboarding-step-copy">
+                        <strong>{stepMeta[stepId].label}</strong>
+                        {stateLabel && <small>{stateLabel}</small>}
+                      </span>
+                      <StepStateIcon state={stateForStep} />
+                    </button>
+                  );
+                })}
+              </nav>
+            </aside>
+
+            <section className="onboarding-workspace">
+              <main className="onboarding-content">
+                <article
+                  className="onboarding-stage"
+                  data-step={currentStep}
+                  data-status={currentStepState}
+                  data-active-signal={
+                    (currentStep === "microphone" && micStatus === "checking") ||
+                    (currentStep === "transcription" && ["starting", "recording", "waiting"].includes(dictationStatus)) ||
+                    undefined
+                  }
                 >
-                  <ArrowLeft size={16} /> Back
-                </Button>
-                <Button
-                  variant="primary"
-                  onClick={() => void goNext()}
-                  disabled={!currentStepCanProceed || !canNavigateToStep(currentStepIndex + 1)}
-                  className="max-[560px]:flex-1"
-                >
-                  {currentStep === "ready" ? (
-                    <>
-                      <Check size={16} /> Finish
-                    </>
-                  ) : (
-                    <>
-                      Next <ArrowRight size={16} />
-                    </>
-                  )}
-                </Button>
-              </div>
-            </footer>
-          </section>
+                  <header className="onboarding-stage-header">
+                    <div className="onboarding-stage-meta">
+                      <span>Step {currentStepIndex + 1} · {stepMeta[currentStep].label}</span>
+                      <StatusBadge status={currentStepState} />
+                    </div>
+                    <div className="onboarding-stage-intro">
+                      <span className="onboarding-stage-mark" aria-hidden="true">
+                        <CurrentStepIcon size={24} />
+                      </span>
+                      <div>
+                        <h2>{currentStepTitle}</h2>
+                        <p>{currentStepDescription}</p>
+                      </div>
+                    </div>
+                    <div className="onboarding-stage-wave" aria-hidden="true">
+                      {Array.from({ length: 16 }, (_, index) => <i key={index} />)}
+                    </div>
+                  </header>
+                  <div className="onboarding-stage-controls">
+                    {currentStep === "microphone" && (
+                      <MicrophoneStep
+                        devices={audioInputItems}
+                        selectedInputValue={selectedAudioInputValue}
+                        status={micStatus}
+                        message={micMessage}
+                        onSelectedInputChange={selectAudioInput}
+                        onProbe={() => void probeMicrophone()}
+                      />
+                    )}
+                    {currentStep === "stt" && (
+                      <SttStep
+                        models={voiceModels}
+                        selectedModelId={voiceModel?.id ?? selectedVoiceModelId}
+                        activeModelId={state.modelLibrary.activeModelIds.voice}
+                        downloads={state.modelLibrary.downloads}
+                        runtimes={state.sttSetup.runtimes}
+                        ready={selectedSttReady}
+                        download={download}
+                        setupError={sttError}
+                        isSettingUp={isSettingUpStt}
+                        onSelectModel={selectVoiceModel}
+                        onSetup={() => void setupLocalStt()}
+                      />
+                    )}
+                    {currentStep === "transcription" && (
+                      <HotkeyTestStep
+                        value={hotkey}
+                        changed={hotkeyChanged}
+                        saving={isSavingHotkey}
+                        error={hotkeyError}
+                        registered={state.capabilities.hotkeys.registered}
+                        dictationStatus={dictationStatus}
+                        dictationMessage={dictationMessage}
+                        dictationValue={dictationValue}
+                        sessionStatus={state.session.status}
+                        textareaRef={dictationTextareaRef}
+                        onChange={setHotkey}
+                        onSave={() => void saveHotkey()}
+                        onDictationChange={setDictationValue}
+                        onStart={() => void startTestDictation()}
+                        onStop={() => void stopTestDictation()}
+                        onCancel={() => void cancelDictation()}
+                      />
+                    )}
+                    {currentStep === "ready" && (
+                      <ReadyStep
+                        microphoneReady={micStatus === "passed"}
+                        speechReady={sttReady}
+                        speechReadyLabel={speechReadyLabel}
+                        hotkey={state.settings.activationHotkey}
+                        hotkeyReady={hotkeyCanProceed}
+                        hotkeyRegistered={state.capabilities.hotkeys.registered}
+                        transcriptionReady={dictationStatus === "passed"}
+                        transcript={dictationValue}
+                      />
+                    )}
+                  </div>
+                </article>
+              </main>
+
+              <footer className="onboarding-footer">
+                <div>
+                  <Button
+                    variant="secondary"
+                    onClick={() => goToStep(currentStepIndex - 1)}
+                    disabled={currentStepIndex === 0 || !canNavigateToStep(currentStepIndex - 1)}
+                  >
+                    <ArrowLeft size={16} /> Back
+                  </Button>
+                  <Button
+                    variant="primary"
+                    onClick={() => void goNext()}
+                    disabled={!currentStepCanProceed || !canNavigateToStep(currentStepIndex + 1)}
+                  >
+                    {currentStep === "ready" ? (
+                      <>
+                        <Check size={16} /> Finish setup
+                      </>
+                    ) : (
+                      <>
+                        Continue <ArrowRight size={16} />
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </footer>
+            </section>
+          </div>
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
@@ -603,29 +636,39 @@ function MicrophoneStep({
   const checking = status === "checking";
 
   return (
-    <div className="flex flex-col gap-4">
-      <Field label="Audio input">
-        <Select
-          items={devices}
-          value={selectedInputValue}
-          onValueChange={onSelectedInputChange}
-          aria-label="Audio input"
-          positionerClassName="z-[90]"
-        />
-      </Field>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant={microphoneAllowed ? "secondary" : "primary"} onClick={onProbe} disabled={checking || microphoneAllowed}>
-          {checking ? (
-            <Loader2 className="animate-spin" size={18} />
-          ) : microphoneAllowed ? (
-            <CheckCircle2 size={18} />
-          ) : (
-            <Mic size={18} />
-          )}
-          {checking ? "Checking..." : microphoneAllowed ? "Microphone allowed" : "Allow microphone"}
-        </Button>
-        <StatusBadge status={status} />
+    <div className="onboarding-microphone-step">
+      <div className="onboarding-control-heading">
+        <span aria-hidden="true"><Mic size={18} /></span>
+        <div>
+          <h3>Input source</h3>
+          <p>Select the microphone you normally use for calls and recordings.</p>
+        </div>
       </div>
+      <div className="onboarding-primary-control">
+        <Field label="Audio input">
+          <Select
+            items={devices}
+            value={selectedInputValue}
+            onValueChange={onSelectedInputChange}
+            aria-label="Audio input"
+            positionerClassName="z-[90]"
+          />
+        </Field>
+        <div className="onboarding-action-row">
+          <Button variant={microphoneAllowed ? "secondary" : "primary"} onClick={onProbe} disabled={checking}>
+            {checking ? (
+              <Loader2 className="animate-spin" size={18} />
+            ) : microphoneAllowed ? (
+              <CheckCircle2 size={18} />
+            ) : (
+              <Mic size={18} />
+            )}
+            {checking ? "Checking..." : microphoneAllowed ? "Check again" : "Allow and check microphone"}
+          </Button>
+          <StatusBadge status={status} />
+        </div>
+      </div>
+      <p className="onboarding-microphone-note">This check opens the selected input briefly, then stops it immediately.</p>
       {message && <StatusMessage status={status}>{message}</StatusMessage>}
     </div>
   );
@@ -638,9 +681,7 @@ function SttStep({
   downloads,
   runtimes,
   ready,
-  selectedModel,
   download,
-  runtime,
   setupError,
   isSettingUp,
   onSelectModel,
@@ -652,22 +693,24 @@ function SttStep({
   downloads: AppStateSnapshot["modelLibrary"]["downloads"];
   runtimes: AppStateSnapshot["sttSetup"]["runtimes"];
   ready: boolean;
-  selectedModel: ModelCatalogItem | null;
   download?: ModelDownloadState;
-  runtime?: SttRuntimeInstallState;
   setupError: string | null;
   isSettingUp: boolean;
   onSelectModel: (modelId: string) => void;
   onSetup: () => void;
 }): JSX.Element {
-  const runtimeBusy = runtime?.status === "downloading" || runtime?.status === "installing";
   const downloadStatus = download?.status ?? "not_downloaded";
-  const selectedModelName = selectedModel?.name ?? "No local speech model selected";
   const setupLabel = downloadStatus === "downloaded" ? "Activate" : "Download and activate";
-
   return (
-    <div className="flex flex-col gap-4">
-      <div className="grid gap-2">
+    <div className="onboarding-model-step">
+      <div className="onboarding-control-heading">
+        <span aria-hidden="true"><Download size={18} /></span>
+        <div>
+          <h3>Local speech model</h3>
+          <p>Smaller models install faster; larger models can improve recognition.</p>
+        </div>
+      </div>
+      <div className="onboarding-model-list">
         {models.map((item) => {
           const itemDownload = downloads.find((candidate) => candidate.modelId === item.id);
           const itemRuntimeId = runtimeIdForVoiceModel(item);
@@ -677,83 +720,71 @@ function SttStep({
           const selected = item.id === selectedModelId;
           const active = activeModelId === item.id;
 
+          const itemDownloadStatus = itemDownload?.status ?? "not_downloaded";
+
           return (
-            <button
-              key={item.id}
-              type="button"
-              aria-pressed={selected}
-              onClick={() => onSelectModel(item.id)}
-              className={cn(
-                "min-w-0 rounded-md border p-3 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-foreground/25",
-                selected ? "border-foreground bg-muted/60" : "border-border bg-muted/20 hover:bg-muted/40"
-              )}
-            >
-              <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="m-0 truncate text-sm font-medium text-foreground">{item.name}</p>
-                  {item.description && <p className="m-0 mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description}</p>}
-                </div>
-                <div className="flex shrink-0 flex-wrap justify-end gap-1">
+            <article key={item.id} className="onboarding-model-entry">
+              <button
+                type="button"
+                aria-expanded={selected}
+                onClick={() => onSelectModel(item.id)}
+                className={cn("onboarding-model-row model-row", selected && "onboarding-model-row--selected")}
+              >
+                <ModelGlyph item={item} />
+                <span className="onboarding-model-name">
+                  <span>{item.name}</span>
                   {active && <Badge tone="success">Active</Badge>}
+                </span>
+                <span className="onboarding-model-row-meta">
                   <Badge>{providerLabelForVoiceModel(item)}</Badge>
-                  {item.sizeBytes && <Badge>{formatBytes(item.sizeBytes)}</Badge>}
-                  <Badge tone={itemDownload?.status === "downloaded" ? "success" : "neutral"}>
-                    {downloadStatusLabel(itemDownload?.status ?? "not_downloaded")}
+                  <Badge tone={itemDownloadStatus === "error" ? "warning" : itemDownloadStatus === "downloaded" ? "success" : "neutral"}>
+                    {downloadStatusLabel(itemDownloadStatus)}
                   </Badge>
-                  {itemRuntime && <Badge tone={itemRuntime.status === "ready" ? "success" : "warning"}>{runtimeStatusLabel(itemRuntime)}</Badge>}
+                  {item.sizeBytes && <Badge>{formatBytes(item.sizeBytes)}</Badge>}
+                </span>
+                <ChevronRight className={cn("model-row-chevron", selected && "rotate-90")} size={16} />
+              </button>
+              {selected && (
+                <div className="onboarding-model-detail">
+                  {item.description && <p className="onboarding-model-description">{item.description}</p>}
+                  {itemRuntime && itemRuntime.status !== "ready" && (
+                    <div className="onboarding-runtime-status">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge>{itemRuntime.label}</Badge>
+                        <Badge tone="warning">{runtimeStatusLabel(itemRuntime)}</Badge>
+                      </div>
+                      <p className="m-0 text-sm leading-6 text-muted-foreground">{userRuntimeStatusMessage(itemRuntime)}</p>
+                      {(itemRuntime.status === "downloading" || itemRuntime.status === "installing") && (
+                        <DownloadProgressStatus
+                          progressKey={`runtime:${itemRuntime.variantKey}`}
+                          progressBytes={itemRuntime.progressBytes}
+                          totalBytes={itemRuntime.totalBytes}
+                          label={`${itemRuntime.label} install progress`}
+                        />
+                      )}
+                    </div>
+                  )}
+                  {itemDownload?.status === "downloading" && (
+                    <DownloadProgressStatus
+                      progressKey={`model:${item.id}`}
+                      progressBytes={itemDownload.progressBytes}
+                      totalBytes={itemDownload.totalBytes}
+                      label={`${item.name} download progress`}
+                    />
+                  )}
+                  <div className="onboarding-action-row">
+                    <Button variant="primary" onClick={onSetup} disabled={ready || isSettingUp}>
+                      {isSettingUp ? <Loader2 className="animate-spin" size={18} /> : ready ? <Check size={18} /> : <Download size={18} />}
+                      {ready ? "Active" : isSettingUp ? "Setting up..." : setupLabel}
+                    </Button>
+                  </div>
                 </div>
-              </div>
-              {itemDownload?.status === "downloading" && (
-                <DownloadProgressStatus
-                  progressKey={`model:${item.id}`}
-                  progressBytes={itemDownload.progressBytes}
-                  totalBytes={itemDownload.totalBytes}
-                  label={`${item.name} download progress`}
-                  className="mt-3"
-                />
               )}
-            </button>
+            </article>
           );
         })}
       </div>
       {models.length === 0 && <StatusMessage status="error">No downloadable local speech models were found in the model catalog.</StatusMessage>}
-      <div className="grid grid-cols-3 gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm max-[760px]:grid-cols-1">
-        <Metric label="Model" value={selectedModelName} />
-        <Metric label="Download" value={downloadStatus === "downloading" ? downloadProgressSummary(download) : downloadStatusLabel(downloadStatus)} />
-        <Metric label="Size" value={selectedModel?.sizeBytes ? formatBytes(selectedModel.sizeBytes) : "Managed"} />
-      </div>
-      {runtime && (
-        <div className="flex flex-col gap-2 rounded-md border border-border bg-muted/30 p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge>{runtime.label}</Badge>
-            <Badge tone={runtime.status === "ready" ? "success" : "warning"}>{runtimeStatusLabel(runtime)}</Badge>
-          </div>
-          <p className="m-0 text-sm leading-6 text-muted-foreground">{userRuntimeStatusMessage(runtime)}</p>
-          {runtimeBusy && (
-            <DownloadProgressStatus
-              progressKey={`runtime:${runtime.variantKey}`}
-              progressBytes={runtime.progressBytes}
-              totalBytes={runtime.totalBytes}
-              label={`${runtime.label} install progress`}
-            />
-          )}
-        </div>
-      )}
-      {downloadStatus === "downloading" && download && (
-        <DownloadProgressStatus
-          progressKey={`model:${download.modelId}`}
-          progressBytes={download.progressBytes}
-          totalBytes={download.totalBytes}
-          label={`${selectedModelName} download progress`}
-        />
-      )}
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" onClick={onSetup} disabled={!selectedModel || ready || isSettingUp}>
-          {isSettingUp ? <Loader2 className="animate-spin" size={18} /> : <Download size={18} />}
-          {ready ? "Ready" : isSettingUp ? "Setting up..." : setupLabel}
-        </Button>
-        <StatusBadge status={ready ? "passed" : setupError ? "error" : "idle"} />
-      </div>
       {setupError && <StatusMessage status="error">{setupError}</StatusMessage>}
     </div>
   );
@@ -765,7 +796,6 @@ function HotkeyTestStep({
   saving,
   error,
   registered,
-  triggerDescription,
   dictationStatus,
   dictationMessage,
   dictationValue,
@@ -783,7 +813,6 @@ function HotkeyTestStep({
   saving: boolean;
   error: string | null;
   registered: boolean;
-  triggerDescription?: string;
   dictationStatus: DictationTestStatus;
   dictationMessage: string;
   dictationValue: string;
@@ -800,62 +829,79 @@ function HotkeyTestStep({
   const busy = dictationStatus === "starting" || dictationStatus === "waiting" || ["transcribing", "processing", "pasting"].includes(sessionStatus);
 
   return (
-    <div className="flex flex-col gap-4">
-      <Field label="Activation shortcut">
-        <ShortcutRecorder
-          value={value}
-          onChange={onChange}
-          label="Activation shortcut"
-          onCaptureStart={murmurClient.beginHotkeyCapture}
-          onCaptureEnd={murmurClient.endHotkeyCapture}
-          disabled={saving}
-        />
-      </Field>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" onClick={onSave} disabled={!changed || saving}>
-          {saving ? <Loader2 className="animate-spin" size={18} /> : <Check size={18} />}
-          {saving ? "Saving..." : changed ? "Save shortcut" : "Saved"}
-        </Button>
-        <StatusBadge status={registered ? "passed" : "warning"} />
-      </div>
-      <div className="grid grid-cols-2 gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm max-[640px]:grid-cols-1">
-        <Metric label="Shortcut" value={registered ? "Ready" : "Needs attention"} />
-        {triggerDescription && <Metric label="System shortcut" value={triggerDescription} />}
-      </div>
-      {error && <StatusMessage status="error">{error}</StatusMessage>}
-      {!registered && <StatusMessage status="warning">Choose a different shortcut or assign it in system settings.</StatusMessage>}
-      <Field label="Transcript test">
-        <Textarea
-          ref={textareaRef}
-          value={dictationValue}
-          onChange={(event) => onDictationChange(event.currentTarget.value)}
-          placeholder="Transcription output"
-          className="min-h-32"
-        />
-      </Field>
-      <div className="flex flex-wrap items-center gap-2">
-        {recording ? (
-          <>
-            <Button variant="primary" onClick={onStop}>
-              <Check size={18} /> Stop test
+    <div className="onboarding-test-step">
+      <section className="onboarding-subpanel">
+        <div className="onboarding-subpanel-heading">
+          <span aria-hidden="true"><Keyboard size={17} /></span>
+          <div>
+            <h3>Recording shortcut</h3>
+            <p>Use this from any app to start or stop dictation.</p>
+          </div>
+          <StatusBadge status={registered ? "passed" : "warning"} />
+        </div>
+        <Field label="Activation shortcut">
+          <ShortcutRecorder
+            value={value}
+            onChange={onChange}
+            label="Activation shortcut"
+            onCaptureStart={murmurClient.beginHotkeyCapture}
+            onCaptureEnd={murmurClient.endHotkeyCapture}
+            disabled={saving}
+          />
+        </Field>
+        {(changed || saving) && (
+          <div className="onboarding-action-row">
+            <Button variant="secondary" onClick={onSave} disabled={saving}>
+              {saving ? <Loader2 className="animate-spin" size={18} /> : <Check size={18} />}
+              {saving ? "Saving..." : "Save shortcut"}
             </Button>
-            <Button variant="secondary" onClick={onCancel}>
-              <X size={18} /> Cancel
-            </Button>
-          </>
-        ) : (
-          <Button variant="primary" onClick={onStart} disabled={changed || saving || busy}>
-            {busy ? <Loader2 className="animate-spin" size={18} /> : <Mic size={18} />}
-            {busy ? "Working..." : "Start test"}
-          </Button>
+          </div>
         )}
-        <StatusBadge status={dictationStatus === "passed" ? "passed" : dictationStatus === "error" ? "error" : busy || recording ? "checking" : "idle"} />
-      </div>
-      {dictationMessage && (
-        <StatusMessage status={dictationStatus === "error" ? "error" : dictationStatus === "passed" ? "passed" : "idle"}>
-          {dictationMessage}
-        </StatusMessage>
-      )}
+        {error && <StatusMessage status="error">{error}</StatusMessage>}
+        {!registered && <StatusMessage status="warning">Choose a different shortcut or assign it in system settings.</StatusMessage>}
+      </section>
+
+      <section className="onboarding-subpanel" data-recording={recording || undefined}>
+        <div className="onboarding-subpanel-heading">
+          <span aria-hidden="true"><Mic size={17} /></span>
+          <div>
+            <h3>Live transcript test</h3>
+            <p>Speak one sentence and confirm that text appears below.</p>
+          </div>
+          <StatusBadge status={dictationStatus === "passed" ? "passed" : dictationStatus === "error" ? "error" : busy || recording ? "checking" : "idle"} />
+        </div>
+        <Field label="Transcription output">
+          <Textarea
+            ref={textareaRef}
+            value={dictationValue}
+            onChange={(event) => onDictationChange(event.currentTarget.value)}
+            placeholder="Your test dictation will appear here."
+            className="min-h-28"
+          />
+        </Field>
+        <div className="onboarding-action-row">
+          {recording ? (
+            <>
+              <Button variant="primary" onClick={onStop}>
+                <Check size={18} /> Stop test
+              </Button>
+              <Button variant="secondary" onClick={onCancel}>
+                <X size={18} /> Cancel
+              </Button>
+            </>
+          ) : (
+            <Button variant="primary" onClick={onStart} disabled={changed || saving || busy}>
+              {busy ? <Loader2 className="animate-spin" size={18} /> : <Mic size={18} />}
+              {busy ? "Preparing text..." : "Start dictation test"}
+            </Button>
+          )}
+        </div>
+        {dictationMessage && (
+          <StatusMessage status={dictationStatus === "error" ? "error" : dictationStatus === "passed" ? "passed" : "idle"}>
+            {dictationMessage}
+          </StatusMessage>
+        )}
+      </section>
     </div>
   );
 }
@@ -879,18 +925,40 @@ function ReadyStep({
   transcriptionReady: boolean;
   transcript: string;
 }): JSX.Element {
+  const allReady = microphoneReady && speechReady && hotkeyReady && transcriptionReady;
+
   return (
-    <div className="flex flex-col gap-4">
-      <div className="grid gap-2">
-        <ReadyItem ready={microphoneReady} label="Microphone ready" />
+    <div className="onboarding-ready-step">
+      <div className="onboarding-ready-callout" data-ready={allReady || undefined}>
+        <span aria-hidden="true">{allReady ? <AudioLines size={22} /> : <AlertTriangle size={20} />}</span>
+        <div>
+          <p>{allReady ? "Dictate from any app" : "Complete the unchecked items"}</p>
+          <span>
+            {allReady ? (
+              <>Press <kbd>{hotkey}</kbd> whenever you want Murmur to listen.</>
+            ) : (
+              "Use the setup rail to return to a check that still needs attention."
+            )}
+          </span>
+        </div>
+      </div>
+      <div className="onboarding-ready-grid">
+        <ReadyItem ready={microphoneReady} label={microphoneReady ? "Microphone confirmed" : "Microphone still needs a check"} />
         <ReadyItem ready={speechReady} label={speechReadyLabel} />
-        <ReadyItem ready={hotkeyReady} warning={!hotkeyRegistered} label={`Hotkey saved: ${hotkey}`} />
-        <ReadyItem ready={transcriptionReady} label="Transcription test produced text" />
+        <ReadyItem
+          ready={hotkeyReady}
+          warning={!hotkeyRegistered}
+          label={hotkeyReady ? `Shortcut saved: ${hotkey}` : "Shortcut still needs to be saved"}
+        />
+        <ReadyItem
+          ready={transcriptionReady}
+          label={transcriptionReady ? "Dictation test produced text" : "Dictation test still needs to run"}
+        />
       </div>
       {transcript.trim().length > 0 && (
-        <div className="rounded-md border border-border bg-muted/30 p-3">
-          <p className="m-0 text-xs font-medium text-muted-foreground">Transcript</p>
-          <p className="m-0 mt-1 whitespace-pre-wrap text-sm leading-6 text-foreground">{transcript}</p>
+        <div className="onboarding-ready-transcript">
+          <p>Test transcript</p>
+          <blockquote>{transcript}</blockquote>
         </div>
       )}
     </div>
@@ -900,53 +968,41 @@ function ReadyStep({
 function ReadyItem({ ready, warning = false, label }: { ready: boolean; warning?: boolean; label: string }): JSX.Element {
   const status: "passed" | "warning" | "idle" = ready ? (warning ? "warning" : "passed") : "idle";
   return (
-    <div className="flex min-w-0 items-center gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
+    <div className="onboarding-ready-item" data-status={status}>
       {status === "passed" ? (
-        <CheckCircle2 size={14} className="shrink-0" />
+        <CheckCircle2 size={15} />
       ) : status === "warning" ? (
-        <AlertTriangle size={14} className="shrink-0" />
+        <AlertTriangle size={15} />
       ) : (
-        <span className="h-2 w-2 shrink-0 rounded-full bg-current opacity-30" />
+        <span aria-hidden="true" />
       )}
-      <span className="min-w-0 flex-1 truncate text-foreground">{label}</span>
+      <p>{label}</p>
     </div>
   );
 }
 
 function StepStateIcon({ state }: { state: "idle" | "passed" | "warning" | "error" }): JSX.Element {
-  if (state === "passed") return <CheckCircle2 size={14} className="ml-auto shrink-0" />;
-  if (state === "warning" || state === "error") return <AlertTriangle size={14} className="ml-auto shrink-0" />;
-  return <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-current opacity-30" />;
+  if (state === "passed") return <CheckCircle2 size={15} className="onboarding-step-state" />;
+  if (state === "warning" || state === "error") return <AlertTriangle size={15} className="onboarding-step-state" />;
+  return <span className="onboarding-step-state onboarding-step-state--idle" />;
 }
 
-function StatusBadge({ status }: { status: ProbeStatus }): JSX.Element {
-  if (status === "checking") return <Badge>Checking</Badge>;
-  if (status === "passed") return <Badge tone="success">Ready</Badge>;
-  if (status === "warning") return <Badge tone="warning">Warning</Badge>;
-  if (status === "error") return <Badge tone="danger">Needs attention</Badge>;
-  return <Badge>Not checked</Badge>;
+function StatusBadge({ status }: { status: ProbeStatus }): JSX.Element | null {
+  if (status === "checking") return <Badge className="onboarding-status-badge">Checking</Badge>;
+  if (status === "warning") return <Badge className="onboarding-status-badge" tone="warning">Warning</Badge>;
+  if (status === "error") return <Badge className="onboarding-status-badge" tone="danger">Needs attention</Badge>;
+  return null;
 }
 
 function StatusMessage({ status, children }: { status: ProbeStatus; children: string }): JSX.Element {
   return (
     <p
       role={status === "error" || status === "warning" ? "alert" : undefined}
-      className={cn(
-        "m-0 rounded-md border border-border bg-muted/40 p-3 text-sm leading-6",
-        status === "error" ? "text-danger" : "text-muted-foreground"
-      )}
+      className="onboarding-status-message"
+      data-status={status}
     >
       {children}
     </p>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }): JSX.Element {
-  return (
-    <div className="min-w-0">
-      <p className="m-0 text-xs font-medium text-muted-foreground">{label}</p>
-      <p className="m-0 mt-1 truncate text-foreground">{value}</p>
-    </div>
   );
 }
 
@@ -970,6 +1026,12 @@ function stepState(
     return "idle";
   }
   return state.ready ? "passed" : "idle";
+}
+
+function stepStateLabel(state: "idle" | "passed" | "warning" | "error"): string | null {
+  if (state === "warning") return "Check settings";
+  if (state === "error") return "Needs attention";
+  return null;
 }
 
 function downloadStatusLabel(status: string): string {
