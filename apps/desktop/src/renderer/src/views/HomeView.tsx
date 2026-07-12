@@ -214,7 +214,7 @@ function runwayCopy(
     case "error":
       return {
         title: "The last dictation did not finish.",
-        description: state.session.error || "Review the message below, then try again."
+        description: "Review the message below, then try again."
       };
     default:
       return {

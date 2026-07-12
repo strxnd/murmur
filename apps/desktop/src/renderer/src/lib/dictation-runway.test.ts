@@ -2,6 +2,30 @@ import { describe, expect, it, vi } from "vitest";
 import { dictationRunwayAction, performDictationRunwayAction } from "./dictation-runway";
 
 describe("Home dictation runway", () => {
+  it("starts an available idle dictation", async () => {
+    const handlers = actionHandlers();
+    const action = dictationRunwayAction({ status: "idle", unavailableReason: null, isActing: false });
+
+    await performDictationRunwayAction(action, handlers);
+
+    expect(action).toBe("start");
+    expect(handlers.startDictation).toHaveBeenCalledOnce();
+    expect(handlers.openSetup).not.toHaveBeenCalled();
+    expect(handlers.stopDictation).not.toHaveBeenCalled();
+  });
+
+  it("is disabled while another dictation action is running", async () => {
+    const handlers = actionHandlers();
+    const action = dictationRunwayAction({ status: "idle", unavailableReason: null, isActing: true });
+
+    await performDictationRunwayAction(action, handlers);
+
+    expect(action).toBe("disabled");
+    expect(handlers.openSetup).not.toHaveBeenCalled();
+    expect(handlers.startDictation).not.toHaveBeenCalled();
+    expect(handlers.stopDictation).not.toHaveBeenCalled();
+  });
+
   it("opens setup instead of recording when dictation is unavailable", async () => {
     const handlers = actionHandlers();
     const action = dictationRunwayAction({

@@ -537,7 +537,6 @@ body {
 
 .dictation-runway[data-status="recording"] .dictation-runway-wave i {
   animation: dictation-runway-wave 760ms ease-in-out infinite alternate;
-  animation-delay: calc(var(--wave-index, 0) * -45ms);
 }
 
 .dictation-runway[data-status="recording"] .dictation-runway-wave i:nth-child(2n) { animation-delay: -280ms; }
@@ -740,7 +739,9 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dictation-runway[data-status="recording"] .dictation-runway-wave i {
+  .dictation-runway[data-status="recording"] .dictation-runway-wave i,
+  .onboarding-stage[data-active-signal="true"] .onboarding-stage-wave i,
+  .onboarding-model-detail {
     animation: none;
   }
 
@@ -1787,7 +1788,7 @@ span.inline-flex.items-center.rounded.border.text-foreground {
   height: 5px;
   margin-right: 5px;
   border-radius: 999px;
-  background: currentColor;
+  background: currentcolor;
   opacity: 0.3;
 }
 
@@ -2224,7 +2225,7 @@ span.inline-flex.items-center.rounded.border.text-foreground {
   height: 6px;
   margin-left: 4px;
   border-radius: 999px;
-  background: currentColor;
+  background: currentcolor;
   opacity: 0.3;
 }
 

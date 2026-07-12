@@ -2,6 +2,27 @@ import { BrainCircuit, Mic } from "lucide-react";
 import type { CSSProperties, JSX } from "react";
 import type { ModelCatalogItem, ModelProvider } from "../../../shared/types";
 
+type ModelGlyphStyle = CSSProperties & {
+  "--model-glyph-bg": string;
+  "--model-glyph-border": string;
+  "--model-glyph-icon": string;
+};
+
+function modelGlyphColors(background: string, border: string, icon: string): ModelGlyphStyle {
+  return { "--model-glyph-bg": background, "--model-glyph-border": border, "--model-glyph-icon": icon };
+}
+
+const modelGlyphStyles: Partial<Record<ModelProvider, ModelGlyphStyle>> = {
+  whisper_cpp: modelGlyphColors("#ffffff", "#e0e0e0", "#111111"),
+  nvidia: modelGlyphColors("#76b900", "#8bd000", "#ffffff"),
+  ollama: modelGlyphColors("#f7f7f2", "#d8d8cf", "#111111"),
+  lmstudio: modelGlyphColors("#101828", "#26364f", "#ffffff"),
+  openai: modelGlyphColors("#ffffff", "#e0e0e0", "#111111"),
+  openai_compatible: modelGlyphColors("#ffffff", "#e0e0e0", "#111111"),
+  anthropic: modelGlyphColors("#d97757", "#d97757", "#ffffff"),
+  google: modelGlyphColors("#ffffff", "#e0e0e0", "#1f1f1f")
+};
+
 export function ModelGlyph({ item }: { item: ModelCatalogItem }): JSX.Element {
   const ProviderIcon = providerIcon(item.provider);
   const FallbackIcon = item.kind === "language" ? BrainCircuit : Mic;
@@ -17,18 +38,7 @@ export function ModelGlyph({ item }: { item: ModelCatalogItem }): JSX.Element {
 }
 
 function modelGlyphStyle(provider: ModelProvider): CSSProperties {
-  const styles: Partial<Record<ModelProvider, CSSProperties>> = {
-    whisper_cpp: { "--model-glyph-bg": "#ffffff", "--model-glyph-border": "#e0e0e0", "--model-glyph-icon": "#111111" } as CSSProperties,
-    nvidia: { "--model-glyph-bg": "#76b900", "--model-glyph-border": "#8bd000", "--model-glyph-icon": "#ffffff" } as CSSProperties,
-    ollama: { "--model-glyph-bg": "#f7f7f2", "--model-glyph-border": "#d8d8cf", "--model-glyph-icon": "#111111" } as CSSProperties,
-    lmstudio: { "--model-glyph-bg": "#101828", "--model-glyph-border": "#26364f", "--model-glyph-icon": "#ffffff" } as CSSProperties,
-    openai: { "--model-glyph-bg": "#ffffff", "--model-glyph-border": "#e0e0e0", "--model-glyph-icon": "#111111" } as CSSProperties,
-    openai_compatible: { "--model-glyph-bg": "#ffffff", "--model-glyph-border": "#e0e0e0", "--model-glyph-icon": "#111111" } as CSSProperties,
-    anthropic: { "--model-glyph-bg": "#d97757", "--model-glyph-border": "#d97757", "--model-glyph-icon": "#ffffff" } as CSSProperties,
-    google: { "--model-glyph-bg": "#ffffff", "--model-glyph-border": "#e0e0e0", "--model-glyph-icon": "#1f1f1f" } as CSSProperties
-  };
-
-  return styles[provider] ?? {};
+  return modelGlyphStyles[provider] ?? {};
 }
 
 type ProviderIcon = ({ className }: { className?: string }) => JSX.Element;

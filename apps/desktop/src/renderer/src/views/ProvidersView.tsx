@@ -1,7 +1,7 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { AlertTriangle, Cable, CheckCircle2, ChevronRight, KeyRound, MessageSquare, Mic, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type JSX } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type JSX } from "react";
 import { createPortal } from "react-dom";
 import { Controller, useForm, useWatch, type Path, type UseFormReturn } from "react-hook-form";
 import { z } from "zod";
@@ -117,6 +117,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
   const [openProvider, setOpenProvider] = useState<ProviderDialogTarget | null>(null);
   const [isProviderDialogOpen, setIsProviderDialogOpen] = useState(false);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
+  const advancedBodyId = useId();
   const customProviderListParent = useAutoAnimateRef<HTMLDivElement>();
   const currentValues: ProvidersFormValues = {
     transcriptionProviders,
@@ -411,6 +412,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
               type="button"
               className="provider-advanced-toggle"
               aria-expanded={isAdvancedOpen}
+              aria-controls={isAdvancedOpen ? advancedBodyId : undefined}
               onClick={() => setIsAdvancedOpen((open) => !open)}
             >
               <span className="provider-advanced-glyph" aria-hidden="true">
@@ -439,7 +441,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
           </header>
 
           {isAdvancedOpen && (
-            <div ref={customProviderListParent} className="provider-advanced-body">
+            <div id={advancedBodyId} ref={customProviderListParent} className="provider-advanced-body">
               {customProviders.length === 0 ? (
                 <div className="provider-advanced-empty">
                   <div className="provider-advanced-empty-copy">
