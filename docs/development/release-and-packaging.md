@@ -48,7 +48,7 @@ mise run release:prepare
 
 The preparation helper verifies the release version and `docs/releases/<version>.md`, checks the git worktree, runs verification steps, prepares bundled STT runtimes, builds current-platform app artifacts, packages current-platform runtime archives, and writes `dist/SHA256SUMS.txt`. It does not edit tracked files, create release notes, commit, tag, push, or call `gh release`.
 
-The helper writes only ignored generated output under paths such as `out/`, `dist/`, `.cache/bundled-runtimes/`, `vendor/runtimes/`, and `resources/bin/*`. For available skips and non-interactive mode:
+The helper writes only ignored generated output under paths such as `apps/desktop/out/`, `dist/`, `.cache/bundled-runtimes/`, `vendor/runtimes/`, and `resources/bin/*`. For available skips and non-interactive mode:
 
 ```sh
 npm run release:prepare -- --help
@@ -84,7 +84,7 @@ The `build` block in `package.json` sets:
 - macOS distributable targets: unsigned/unnotarized `dmg` and `zip`
 - macOS minimum system version: `13.0`
 - macOS microphone usage description in `Info.plist`
-- packaged files from `out/**` and `package.json`
+- packaged files from `apps/desktop/out/**` and `apps/desktop/package.json`
 - extra resources `resources/bin/linux-fast-paste` and `resources/bin/murmur-macos-helper` under `bin/`
 - extra resource `.cache/bundled-runtimes/runtimes` to `runtimes`
 
@@ -170,4 +170,4 @@ mise run runtimes:package
 
 `runtimes:package` writes archives to `dist/runtimes/*.tar.gz`.
 
-Runtime archive metadata used by the app is pinned in [`src/shared/stt-runtime-catalog.ts`](../../src/shared/stt-runtime-catalog.ts). Build inputs are defined in [`scripts/runtime-manifest.json`](../../scripts/runtime-manifest.json).
+Runtime archive metadata used by the app is pinned in [`src/shared/stt-runtime-catalog.ts`](../../apps/desktop/src/shared/stt-runtime-catalog.ts). Build inputs are defined in [`scripts/runtime-manifest.json`](../../scripts/runtime-manifest.json).

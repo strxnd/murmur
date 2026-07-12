@@ -14,7 +14,7 @@ const {
   sttRuntimeCatalog,
   sttRuntimeVariantRuntimeDir,
   supportedSttRuntimePlatformKeys
-} = await loadCatalog(join(repoRoot, "src", "shared", "stt-runtime-catalog.ts"));
+} = await loadCatalog(join(repoRoot, "apps", "desktop", "src", "shared", "stt-runtime-catalog.ts"));
 const target = readTarget(process.argv.slice(2), process.env);
 const platformKey = resolvePlatformKey(target);
 

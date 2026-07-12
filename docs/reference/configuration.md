@@ -1,6 +1,6 @@
 # Configuration
 
-Configuration and snapshot types are defined in [`src/shared/types.ts`](../../src/shared/types.ts). Defaults are defined in [`src/shared/defaults.ts`](../../src/shared/defaults.ts).
+Configuration and snapshot types are defined in [`src/shared/types.ts`](../../apps/desktop/src/shared/types.ts). Defaults are defined in [`src/shared/defaults.ts`](../../apps/desktop/src/shared/defaults.ts).
 
 ## AppStateSnapshot
 

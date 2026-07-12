@@ -1,6 +1,6 @@
 # Providers
 
-Provider config types live in [`src/shared/types.ts`](../../src/shared/types.ts). Defaults live in [`src/shared/defaults.ts`](../../src/shared/defaults.ts).
+Provider config types live in [`src/shared/types.ts`](../../apps/desktop/src/shared/types.ts). Defaults live in [`src/shared/defaults.ts`](../../apps/desktop/src/shared/defaults.ts).
 
 ## STT Providers
 
@@ -41,4 +41,4 @@ If LLM processing fails during dictation, Murmur logs a warning and uses the tra
 
 ## Model Activation
 
-The model library can synthesize provider configs from catalog items through [`src/shared/model-activation.ts`](../../src/shared/model-activation.ts). Voice models map to STT providers; language models map to LLM providers. A model is only selectable when its download state and required runtime are ready.
+The model library can synthesize provider configs from catalog items through [`src/shared/model-activation.ts`](../../apps/desktop/src/shared/model-activation.ts). Voice models map to STT providers; language models map to LLM providers. A model is only selectable when its download state and required runtime are ready.

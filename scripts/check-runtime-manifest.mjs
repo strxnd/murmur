@@ -6,7 +6,7 @@ import ts from "typescript";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
-const catalogPath = join(repoRoot, "src", "shared", "stt-runtime-catalog.ts");
+const catalogPath = join(repoRoot, "apps", "desktop", "src", "shared", "stt-runtime-catalog.ts");
 const releaseMode = process.argv.includes("--release");
 const {
   getSttRuntimeExpectedAssetName,

@@ -33,7 +33,7 @@ sequenceDiagram
 
 ## Desktop Metadata
 
-[`DesktopMetadataService`](../../src/main/services/context-metadata.ts) supports Linux metadata backends:
+[`DesktopMetadataService`](../../apps/desktop/src/main/services/context-metadata.ts) supports Linux metadata backends:
 
 - X11 through `xdotool` and `xprop`.
 - Hyprland through `hyprctl`.
@@ -50,7 +50,7 @@ Selected-text capture only runs when enabled and text automation is available. L
 
 ## Paste Automation
 
-[`LinuxTextAutomationService`](../../src/main/services/linux-text-automation.ts) orders candidate backends by desktop environment:
+[`LinuxTextAutomationService`](../../apps/desktop/src/main/services/linux-text-automation.ts) orders candidate backends by desktop environment:
 
 - Native helper when built and executable.
 - `wtype` for wlroots Wayland sessions.

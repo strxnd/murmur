@@ -1,6 +1,6 @@
 # Model Library and Runtimes
 
-Model library code lives in [`src/main/services/model-library.ts`](../../src/main/services/model-library.ts). Runtime lookup, installation, receipts, and process environment setup live in [`src/main/services/stt-runtime.ts`](../../src/main/services/stt-runtime.ts).
+Model library code lives in [`src/main/services/model-library.ts`](../../apps/desktop/src/main/services/model-library.ts). Runtime lookup, installation, receipts, and process environment setup live in [`src/main/services/stt-runtime.ts`](../../apps/desktop/src/main/services/stt-runtime.ts).
 
 ```mermaid
 flowchart TD

@@ -2,11 +2,11 @@
 
 Renderer entrypoints:
 
-- [`src/renderer/src/main.tsx`](../../src/renderer/src/main.tsx) mounts React.
-- [`src/renderer/src/app/App.tsx`](../../src/renderer/src/app/App.tsx) chooses the main shell or recording pill.
-- [`src/renderer/src/app/AppShell.tsx`](../../src/renderer/src/app/AppShell.tsx) renders the tabbed app frame.
-- [`src/renderer/src/state/murmur-store.ts`](../../src/renderer/src/state/murmur-store.ts) owns client state.
-- [`src/renderer/src/hooks/useRecordingBridge.ts`](../../src/renderer/src/hooks/useRecordingBridge.ts) records and encodes WAV audio.
+- [`src/renderer/src/main.tsx`](../../apps/desktop/src/renderer/src/main.tsx) mounts React.
+- [`src/renderer/src/app/App.tsx`](../../apps/desktop/src/renderer/src/app/App.tsx) chooses the main shell or recording pill.
+- [`src/renderer/src/app/AppShell.tsx`](../../apps/desktop/src/renderer/src/app/AppShell.tsx) renders the tabbed app frame.
+- [`src/renderer/src/state/murmur-store.ts`](../../apps/desktop/src/renderer/src/state/murmur-store.ts) owns client state.
+- [`src/renderer/src/hooks/useRecordingBridge.ts`](../../apps/desktop/src/renderer/src/hooks/useRecordingBridge.ts) records and encodes WAV audio.
 
 ## State
 

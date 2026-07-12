@@ -2,10 +2,10 @@
 
 Key source files:
 
-- [`src/main/app-main.ts`](../../src/main/app-main.ts) starts the Electron app and owns single-instance behavior.
-- [`src/main/app-controller.ts`](../../src/main/app-controller.ts) wires windows, IPC, hotkeys, state snapshots, and services.
-- [`src/preload/index.ts`](../../src/preload/index.ts) exposes the `window.murmur` bridge.
-- [`src/renderer/src/lib/murmur-client.ts`](../../src/renderer/src/lib/murmur-client.ts) validates bridge responses for the renderer.
+- [`src/main/app-main.ts`](../../apps/desktop/src/main/app-main.ts) starts the Electron app and owns single-instance behavior.
+- [`src/main/app-controller.ts`](../../apps/desktop/src/main/app-controller.ts) wires windows, IPC, hotkeys, state snapshots, and services.
+- [`src/preload/index.ts`](../../apps/desktop/src/preload/index.ts) exposes the `window.murmur` bridge.
+- [`src/renderer/src/lib/murmur-client.ts`](../../apps/desktop/src/renderer/src/lib/murmur-client.ts) validates bridge responses for the renderer.
 
 ```mermaid
 flowchart LR
@@ -86,6 +86,6 @@ The main process is the only process that touches Node APIs, native runtime proc
 ## Extension Points
 
 - Add new provider types in shared types, defaults, and the STT or LLM services.
-- Add new model catalog entries in [`src/shared/model-catalog.ts`](../../src/shared/model-catalog.ts).
-- Add bundled runtime metadata in [`src/shared/stt-runtime-catalog.ts`](../../src/shared/stt-runtime-catalog.ts).
-- Add desktop automation backends behind [`TextAutomationBackend`](../../src/main/services/text-automation.ts).
+- Add new model catalog entries in [`src/shared/model-catalog.ts`](../../apps/desktop/src/shared/model-catalog.ts).
+- Add bundled runtime metadata in [`src/shared/stt-runtime-catalog.ts`](../../apps/desktop/src/shared/stt-runtime-catalog.ts).
+- Add desktop automation backends behind [`TextAutomationBackend`](../../apps/desktop/src/main/services/text-automation.ts).

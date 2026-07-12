@@ -11,7 +11,7 @@ import {
   rmSync,
   writeFileSync
 } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   getSttRuntimeSupportedAccelerators,
   getSttRuntimeVariantAsset,
@@ -139,7 +139,7 @@ export class SttRuntimeService {
     this.arch = options.arch ?? process.arch;
     this.env = options.env ?? process.env;
     this.resourcesPath = options.resourcesPath ?? (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-    this.projectRoot = options.projectRoot ?? process.cwd();
+    this.projectRoot = options.projectRoot ?? defaultProjectRoot();
     this.runtimeDir = options.runtimeDir;
     this.exists = options.exists ?? existsSync;
     this.fetchImpl = options.fetch ?? fetch;
@@ -870,6 +870,12 @@ export class SttRuntimeService {
     if (!root || !existsSync(root)) return;
     cleanupPartialEntries(root);
   }
+}
+
+function defaultProjectRoot(): string {
+  const cwd = process.cwd();
+  const monorepoRoot = resolve(cwd, "..", "..");
+  return existsSync(join(monorepoRoot, "apps", "desktop", "package.json")) ? monorepoRoot : cwd;
 }
 
 function inferRuntimeRoot(binaryPath: string): string {

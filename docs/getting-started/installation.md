@@ -18,7 +18,7 @@ mise run dev
 mise run build
 ```
 
-The build runs TypeScript checking and produces Electron/Vite output in `out/`.
+The build runs TypeScript checking and produces Electron/Vite output in `apps/desktop/out/`.
 
 For packaging commands, see [release and packaging](../development/release-and-packaging.md).
 

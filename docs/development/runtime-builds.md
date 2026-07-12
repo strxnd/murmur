@@ -1,6 +1,6 @@
 # Runtime Builds
 
-Local STT runtime build inputs are defined in [`scripts/runtime-manifest.json`](../../scripts/runtime-manifest.json). Murmur runtime archive metadata for local packaging is pinned in [`src/shared/stt-runtime-catalog.ts`](../../src/shared/stt-runtime-catalog.ts).
+Local STT runtime build inputs are defined in [`scripts/runtime-manifest.json`](../../scripts/runtime-manifest.json). Murmur runtime archive metadata for local packaging is pinned in [`src/shared/stt-runtime-catalog.ts`](../../apps/desktop/src/shared/stt-runtime-catalog.ts).
 
 ## Sources
 

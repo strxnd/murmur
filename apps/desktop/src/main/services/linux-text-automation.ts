@@ -329,7 +329,8 @@ function defaultHelperPaths(env: NodeJS.ProcessEnv): string[] {
   return [
     env.MURMUR_LINUX_FAST_PASTE ?? "",
     processWithResources.resourcesPath ? join(processWithResources.resourcesPath, "bin", "linux-fast-paste") : "",
-    join(process.cwd(), "resources", "bin", "linux-fast-paste")
+    join(process.cwd(), "resources", "bin", "linux-fast-paste"),
+    join(process.cwd(), "..", "..", "resources", "bin", "linux-fast-paste")
   ];
 }
 

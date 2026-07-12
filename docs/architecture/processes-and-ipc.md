@@ -1,6 +1,6 @@
 # Processes and IPC
 
-The renderer never imports Electron directly. [`src/preload/index.ts`](../../src/preload/index.ts) exposes `window.murmur`; [`src/renderer/src/lib/murmur-client.ts`](../../src/renderer/src/lib/murmur-client.ts) wraps it and validates responses with shared schemas.
+The renderer never imports Electron directly. [`src/preload/index.ts`](../../apps/desktop/src/preload/index.ts) exposes `window.murmur`; [`src/renderer/src/lib/murmur-client.ts`](../../apps/desktop/src/renderer/src/lib/murmur-client.ts) wraps it and validates responses with shared schemas.
 
 ```mermaid
 flowchart TB

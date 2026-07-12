@@ -6,7 +6,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cleanAll = process.argv.includes("--all");
 
 const baseTargets = [
-  "out",
+  "apps/desktop/out",
   "dist",
   "release",
   "build/Release",

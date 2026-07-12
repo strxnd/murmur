@@ -1,6 +1,6 @@
 # Dictation Lifecycle
 
-Dictation is coordinated by [`AppController`](../../src/main/app-controller.ts). Audio capture happens in the renderer, while STT, prompt construction, LLM processing, paste automation, and history writes happen in the main process.
+Dictation is coordinated by [`AppController`](../../apps/desktop/src/main/app-controller.ts). Audio capture happens in the renderer, while STT, prompt construction, LLM processing, paste automation, and history writes happen in the main process.
 
 ```mermaid
 sequenceDiagram
@@ -64,6 +64,6 @@ The controller blocks a new recording while `transcribing`, `processing`, or `pa
 
 ## Extension Points
 
-- Add new STT provider behavior in [`src/main/services/stt.ts`](../../src/main/services/stt.ts).
-- Add prompt behavior in [`src/shared/prompts.ts`](../../src/shared/prompts.ts).
-- Add paste backends behind [`TextAutomationService`](../../src/main/services/text-automation.ts).
+- Add new STT provider behavior in [`src/main/services/stt.ts`](../../apps/desktop/src/main/services/stt.ts).
+- Add prompt behavior in [`src/shared/prompts.ts`](../../apps/desktop/src/shared/prompts.ts).
+- Add paste backends behind [`TextAutomationService`](../../apps/desktop/src/main/services/text-automation.ts).

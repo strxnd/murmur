@@ -4,7 +4,7 @@ Murmur currently targets Linux desktop sessions.
 
 ## Linux Startup
 
-On Linux Wayland, [`src/main/index.ts`](../../src/main/index.ts) relaunches Electron with `--ozone-platform=x11` unless it has already been relaunched. Packaged Linux builds also use [`scripts/after-pack.cjs`](../../scripts/after-pack.cjs) to wrap the app binary with a launcher that forces XWayland and reads optional user flags from:
+On Linux Wayland, [`src/main/index.ts`](../../apps/desktop/src/main/index.ts) relaunches Electron with `--ozone-platform=x11` unless it has already been relaunched. Packaged Linux builds also use [`scripts/after-pack.cjs`](../../scripts/after-pack.cjs) to wrap the app binary with a launcher that forces XWayland and reads optional user flags from:
 
 ```text
 ${XDG_CONFIG_HOME:-$HOME/.config}/<binary-name>-flags.conf

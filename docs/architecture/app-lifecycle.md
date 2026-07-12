@@ -1,6 +1,6 @@
 # App Lifecycle
 
-[`src/main/index.ts`](../../src/main/index.ts) is the production main entrypoint. On Linux Wayland it relaunches the app with `--ozone-platform=x11` unless that flag is already present or `MURMUR_XWAYLAND_RELAUNCHED=1` is set. It then loads [`src/main/app-main.ts`](../../src/main/app-main.ts).
+[`src/main/index.ts`](../../apps/desktop/src/main/index.ts) is the production main entrypoint. On Linux Wayland it relaunches the app with `--ozone-platform=x11` unless that flag is already present or `MURMUR_XWAYLAND_RELAUNCHED=1` is set. It then loads [`src/main/app-main.ts`](../../apps/desktop/src/main/app-main.ts).
 
 ## Startup
 

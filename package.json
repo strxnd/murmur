@@ -1,120 +1,36 @@
 {
   "name": "murmur",
   "version": "0.1.0",
-  "description": "System-wide AI dictation for Linux and macOS.",
-  "author": {
-    "name": "Kumar Aarav",
-    "email": "kumaraarav@kumaraarav.dev"
-  },
-  "license": "GPL-3.0",
-  "desktopName": "murmur",
-  "main": "out/main/index.cjs",
   "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
   "engines": {
     "node": "25.9.0"
   },
   "scripts": {
-    "dev": "env -u ELECTRON_RUN_AS_NODE electron-vite dev",
-    "build": "tsc --noEmit && electron-vite build",
-    "clean": "node scripts/clean.mjs",
-    "clean:all": "node scripts/clean.mjs --all",
-    "preview": "env -u ELECTRON_RUN_AS_NODE electron-vite preview",
-    "lint": "tsc --noEmit",
-    "test": "vitest run",
-    "runtimes:prepare": "node scripts/prepare-runtimes.mjs --platform current",
-    "runtimes:package": "node scripts/package-runtimes.mjs --platform current",
-    "runtimes:stage": "node scripts/stage-bundled-runtimes.mjs",
-    "runtimes:doctor": "node scripts/check-runtimes.mjs",
-    "runtimes:manifest-check": "node scripts/check-runtime-manifest.mjs",
-    "runtimes:manifest-check:release": "node scripts/check-runtime-manifest.mjs --release",
-    "linux-helper:build": "node scripts/build-linux-fast-paste.mjs",
-    "macos-helper:build": "node scripts/build-macos-helper.mjs",
-    "native-helpers:build": "npm run linux-helper:build && npm run macos-helper:build",
-    "release:prepare": "node scripts/prepare-release.mjs",
-    "pack": "npm run build && npm run native-helpers:build && npm run runtimes:manifest-check && npm run runtimes:stage && electron-builder --dir",
-    "dist": "npm run build && npm run native-helpers:build && npm run runtimes:manifest-check && npm run runtimes:stage && electron-builder"
-  },
-  "build": {
-    "appId": "dev.kumaraarav.murmur",
-    "afterPack": "scripts/after-pack.cjs",
-    "productName": "Murmur",
-    "linux": {
-      "category": "Utility",
-      "syncDesktopName": true,
-      "maintainer": "Kumar Aarav <kumaraarav@kumaraarav.dev>",
-      "synopsis": "System-wide AI dictation",
-      "description": "System-wide AI dictation",
-      "target": [
-        "AppImage",
-        "deb",
-        "rpm"
-      ]
-    },
-    "mac": {
-      "category": "public.app-category.utilities",
-      "target": [
-        "dmg",
-        "zip"
-      ],
-      "minimumSystemVersion": "13.0",
-      "identity": null,
-      "hardenedRuntime": false,
-      "gatekeeperAssess": false,
-      "extendInfo": {
-        "NSMicrophoneUsageDescription": "Murmur records microphone audio only while dictation is active."
-      }
-    },
-    "files": [
-      "out/**",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "resources/bin",
-        "to": "bin",
-        "filter": [
-          "linux-fast-paste",
-          "murmur-macos-helper"
-        ]
-      },
-      {
-        "from": ".cache/bundled-runtimes/runtimes",
-        "to": "runtimes",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ]
-  },
-  "dependencies": {
-    "@homebridge/dbus-native": "^0.7.6",
-    "electron-updater": "^6.6.2",
-    "zod": "^4.1.13"
-  },
-  "devDependencies": {
-    "@base-ui/react": "^1.5.0",
-    "@electron-toolkit/preload": "^3.0.2",
-    "@fontsource/geist": "^5.2.9",
-    "@formkit/auto-animate": "^0.9.0",
-    "@hookform/resolvers": "^5.4.0",
-    "@tailwindcss/vite": "^4.3.0",
-    "@types/node": "^25.0.1",
-    "@types/react": "^19.2.7",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.1.1",
-    "clsx": "^2.1.1",
-    "electron": "^39.2.7",
-    "electron-builder": "^26.15.3",
-    "electron-vite": "^4.0.0",
-    "lucide-react": "^0.561.0",
-    "react": "^19.2.1",
-    "react-dom": "^19.2.1",
-    "react-hook-form": "^7.78.0",
-    "tailwindcss": "^4.3.0",
-    "tailwind-merge": "^3.6.0",
-    "typescript": "^5.9.3",
-    "vite": "^7.2.7",
-    "vitest": "^4.1.8",
-    "zustand": "^5.0.14"
+    "dev": "npm --prefix apps/desktop run dev --",
+    "dev:desktop": "npm --prefix apps/desktop run dev --",
+    "build": "npm --prefix apps/desktop run build --",
+    "build:desktop": "npm --prefix apps/desktop run build --",
+    "clean": "npm --prefix apps/desktop run clean --",
+    "clean:all": "npm --prefix apps/desktop run clean:all --",
+    "preview": "npm --prefix apps/desktop run preview --",
+    "lint": "npm --prefix apps/desktop run lint --",
+    "test": "npm run test:desktop && npm run test:scripts",
+    "test:desktop": "npm --prefix apps/desktop run test --",
+    "test:scripts": "vitest run scripts",
+    "runtimes:prepare": "npm --prefix apps/desktop run runtimes:prepare --",
+    "runtimes:package": "npm --prefix apps/desktop run runtimes:package --",
+    "runtimes:stage": "npm --prefix apps/desktop run runtimes:stage --",
+    "runtimes:doctor": "npm --prefix apps/desktop run runtimes:doctor --",
+    "runtimes:manifest-check": "npm --prefix apps/desktop run runtimes:manifest-check --",
+    "runtimes:manifest-check:release": "npm --prefix apps/desktop run runtimes:manifest-check:release --",
+    "linux-helper:build": "npm --prefix apps/desktop run linux-helper:build --",
+    "macos-helper:build": "npm --prefix apps/desktop run macos-helper:build --",
+    "native-helpers:build": "npm --prefix apps/desktop run native-helpers:build --",
+    "release:prepare": "npm --prefix apps/desktop run release:prepare --",
+    "pack": "npm --prefix apps/desktop run pack --",
+    "dist": "npm --prefix apps/desktop run dist --"
   }
 }

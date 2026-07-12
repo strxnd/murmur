@@ -15,6 +15,5 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx"
-  },
-  "include": ["electron.vite.config.ts", "src/**/*.ts", "src/**/*.tsx"]
+  }
 }

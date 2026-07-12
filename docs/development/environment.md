@@ -42,7 +42,7 @@ This starts Electron through Electron Vite. In non-packaged development builds, 
 
 Do not edit generated output directly:
 
-- `out/`
+- `apps/desktop/out/`
 - `dist/runtimes/`
 - `.cache/bundled-runtimes/`
 - `vendor/runtimes/`

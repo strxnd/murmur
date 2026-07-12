@@ -111,6 +111,7 @@ export function resolveMacosHelperPath(): string | null {
     envPath,
     resourcesPath ? join(resourcesPath, "bin", helperName) : undefined,
     join(process.cwd(), "resources", "bin", helperName),
+    join(process.cwd(), "..", "..", "resources", "bin", helperName),
     join(__dirname, "../../resources/bin", helperName)
   ].filter((value): value is string => Boolean(value));
 

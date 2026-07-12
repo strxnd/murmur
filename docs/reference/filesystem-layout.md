@@ -1,6 +1,6 @@
 # Filesystem Layout
 
-Paths are resolved by [`resolveAppPaths()`](../../src/main/services/app-paths.ts). Absolute XDG environment overrides are honored; relative XDG values are ignored.
+Paths are resolved by [`resolveAppPaths()`](../../apps/desktop/src/main/services/app-paths.ts). Absolute XDG environment overrides are honored; relative XDG values are ignored.
 
 | Field | Default Linux path | Purpose |
 | --- | --- | --- |

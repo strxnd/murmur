@@ -1,6 +1,6 @@
 # IPC API
 
-The public renderer API is exposed as `window.murmur` by [`src/preload/index.ts`](../../src/preload/index.ts). Renderer code normally uses [`murmurClient`](../../src/renderer/src/lib/murmur-client.ts), which validates returned data with shared schemas.
+The public renderer API is exposed as `window.murmur` by [`src/preload/index.ts`](../../apps/desktop/src/preload/index.ts). Renderer code normally uses [`murmurClient`](../../apps/desktop/src/renderer/src/lib/murmur-client.ts), which validates returned data with shared schemas.
 
 ## State and Settings
 

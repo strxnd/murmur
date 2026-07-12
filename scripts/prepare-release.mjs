@@ -28,7 +28,7 @@ try {
 }
 
 async function main() {
-  const packageJson = await readJson(join(repoRoot, "package.json"));
+  const packageJson = await readJson(join(repoRoot, "apps", "desktop", "package.json"));
   const version = packageJson.version;
   const releaseNotesPath = join(repoRoot, "docs", "releases", `${version}.md`);
   const initialGitStatus = await capture("git", ["status", "--short"]);
@@ -170,7 +170,7 @@ Options:
   --skip-tests                      skip npm run test
   -h, --help                        show this help
 
-This script may write ignored generated output under out/, dist/, .cache/,
+This script may write ignored generated output under apps/desktop/out/, dist/, .cache/,
 vendor/runtimes/, and resources/bin/linux-fast-paste.`);
 }
 
@@ -186,7 +186,7 @@ function printHeader(version) {
   console.log("  - call gh release");
   console.log("");
   console.log("It may write ignored generated output:");
-  console.log("  - out/");
+  console.log("  - apps/desktop/out/");
   console.log("  - dist/");
   console.log("  - .cache/bundled-runtimes/");
   console.log("  - vendor/runtimes/");

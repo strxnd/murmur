@@ -1,6 +1,6 @@
 # State and Storage
 
-State shape is defined in [`src/shared/types.ts`](../../src/shared/types.ts). Persistence is implemented in [`src/main/services/storage.ts`](../../src/main/services/storage.ts), and paths are resolved in [`src/main/services/app-paths.ts`](../../src/main/services/app-paths.ts).
+State shape is defined in [`src/shared/types.ts`](../../apps/desktop/src/shared/types.ts). Persistence is implemented in [`src/main/services/storage.ts`](../../apps/desktop/src/main/services/storage.ts), and paths are resolved in [`src/main/services/app-paths.ts`](../../apps/desktop/src/main/services/app-paths.ts).
 
 ```mermaid
 classDiagram

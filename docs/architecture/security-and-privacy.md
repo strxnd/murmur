@@ -5,7 +5,7 @@ Murmur keeps the renderer isolated from Node and Electron internals:
 - Main windows use `contextIsolation: true`.
 - `nodeIntegration` is disabled.
 - The preload bridge exposes only the methods in `window.murmur`.
-- Renderer responses are parsed through schemas in [`src/renderer/src/lib/murmur-client.ts`](../../src/renderer/src/lib/murmur-client.ts).
+- Renderer responses are parsed through schemas in [`src/renderer/src/lib/murmur-client.ts`](../../apps/desktop/src/renderer/src/lib/murmur-client.ts).
 
 ## Cloud Providers
 
