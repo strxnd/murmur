@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type JSX } from "react";
 import type { AppStateSnapshot } from "../../../shared/types";
-import { cn } from "../lib/cn";
 import { shouldGuardNavigation } from "../lib/navigation-guard";
 import { shouldAutoOpenOnboarding } from "../lib/onboarding";
 import { ConfigurationView } from "../views/ConfigurationView";
@@ -26,26 +25,24 @@ import { VocabularyView } from "../views/VocabularyView";
 
 type SectionId = "home" | "modes" | "vocabulary" | "configuration" | "providers" | "models" | "history";
 
-const sections: Array<{ id: SectionId; label: string; icon: LucideIcon }> = [
+interface Section {
+  id: SectionId;
+  label: string;
+  icon: LucideIcon;
+}
+
+const workspaceSections: Section[] = [
   { id: "home", label: "Home", icon: House },
   { id: "modes", label: "Modes", icon: SlidersHorizontal },
   { id: "vocabulary", label: "Vocabulary", icon: BookOpen },
-  { id: "history", label: "History", icon: Clock3 },
+  { id: "history", label: "History", icon: Clock3 }
+];
+
+const systemSections: Section[] = [
   { id: "models", label: "Models", icon: Library },
   { id: "providers", label: "Providers", icon: KeyRound },
   { id: "configuration", label: "Settings", icon: Settings }
 ];
-
-const sessionStatusLabels: Record<AppStateSnapshot["session"]["status"], string> = {
-  idle: "Ready",
-  recording: "Listening",
-  transcribing: "Transcribing",
-  processing: "Refining text",
-  pasting: "Pasting",
-  complete: "Complete",
-  cancelled: "Cancelled",
-  error: "Needs attention"
-};
 
 const panelClassName = "h-full min-h-0 overflow-auto outline-none";
 
@@ -94,28 +91,44 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
     setActiveSection(nextSection);
   };
 
-  const sessionLabel = sessionStatusLabels[state.session.status];
   const isRecording = state.session.status === "recording";
+  const activeMode = state.modes.find((mode) => mode.id === state.settings.activeModeId);
+  const isMac = /mac|iphone|ipad|ipod/i.test(globalThis.navigator?.platform ?? "");
 
   return (
     <>
       <Tabs.Root
         value={activeSection}
         onValueChange={(value) => changeSection(value as SectionId)}
-        orientation="horizontal"
-        className="floating-studio grid h-screen grid-rows-[52px_minmax(0,1fr)] overflow-hidden bg-background text-foreground"
+        orientation="vertical"
+        className="floating-studio grid h-screen grid-cols-[224px_minmax(0,1fr)] overflow-hidden bg-background text-foreground"
         data-recording={isRecording || undefined}
+        data-macos={isMac || undefined}
       >
-        <header className="floating-studio-header">
-          <div className="floating-studio-identity">
-            <span className="floating-studio-logo" aria-hidden="true"><AudioLines size={18} /></span>
-            <span className="text-[13px] font-semibold">Murmur</span>
+        <aside className="voice-console">
+          <div className="voice-console-identity">
+            <span className="voice-console-brand-copy">
+              <strong>Murmur</strong>
+            </span>
           </div>
-          <div className="floating-studio-session" aria-live="polite">
-            <span className={cn("h-1.5 w-1.5 rounded-full bg-subtle", isRecording && "animate-pulse bg-foreground")} />
-            <span>{sessionLabel}</span>
+
+          <Tabs.List aria-label="Main navigation" className="voice-console-navigation">
+            <NavigationGroup label="Workspace" sections={workspaceSections} />
+            <NavigationGroup label="System" sections={systemSections} />
+          </Tabs.List>
+
+          <div className="voice-console-footer">
+            <div className="voice-console-mode">
+              <span>Current mode</span>
+              <strong>{activeMode?.name ?? "Default"}</strong>
+            </div>
+            <div className="voice-console-shortcut" aria-label="Recording shortcut">
+              <AudioLines size={15} aria-hidden="true" />
+              <span>Record anywhere</span>
+              <kbd>{state.settings.activationHotkey}</kbd>
+            </div>
           </div>
-        </header>
+        </aside>
 
         <main className="floating-studio-canvas">
           <div className="floating-studio-content">
@@ -123,6 +136,7 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
               <HomeView
                 state={state}
                 onOpenModels={() => changeSection("models")}
+                onOpenHistory={() => changeSection("history")}
                 onOpenOnboarding={() => setOnboardingOpen(true)}
               />
             </Tabs.Panel>
@@ -146,30 +160,25 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
             </Tabs.Panel>
           </div>
         </main>
-
-        <div className="floating-studio-utility" aria-label="Recording shortcut">
-          <AudioLines size={16} />
-          <span>{isRecording ? "Audio stream active" : `${state.settings.activationHotkey} to record`}</span>
-        </div>
-
-        <Tabs.List aria-label="Main navigation" className="floating-studio-dock">
-          {sections.map((section) => {
-            const Icon = section.icon;
-            return (
-              <Tabs.Tab
-                key={section.id}
-                value={section.id}
-                title={section.label}
-                className="floating-studio-dock-button"
-              >
-                <Icon size={19} />
-                <span>{section.label}</span>
-              </Tabs.Tab>
-            );
-          })}
-        </Tabs.List>
       </Tabs.Root>
       <OnboardingWizard state={state} open={onboardingOpen} onOpenChange={setOnboardingOpen} />
     </>
+  );
+}
+
+function NavigationGroup({ label, sections }: { label: string; sections: Section[] }): JSX.Element {
+  return (
+    <div className="voice-console-navigation-group" role="presentation">
+      <span className="voice-console-navigation-label">{label}</span>
+      {sections.map((section) => {
+        const Icon = section.icon;
+        return (
+          <Tabs.Tab key={section.id} value={section.id} className="voice-console-navigation-button">
+            <Icon size={17} aria-hidden="true" />
+            <span>{section.label}</span>
+          </Tabs.Tab>
+        );
+      })}
+    </div>
   );
 }

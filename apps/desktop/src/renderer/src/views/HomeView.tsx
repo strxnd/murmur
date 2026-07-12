@@ -1,26 +1,28 @@
-import { CircleAlert, Clock3, Library, Wrench, X } from "lucide-react";
+import { ArrowRight, AudioLines, CircleAlert, Clock3, Library, Mic, Square, Wrench, X } from "lucide-react";
 import { useMemo, useState, type JSX } from "react";
 import type { AppStateSnapshot, DictationHistoryItem } from "../../../shared/types";
-import { StatCard } from "../components/StatCard";
-import { View } from "../components/View";
 import { AccelerationMark } from "../components/AccelerationMark";
 import { DownloadProgressStatus } from "../components/DownloadProgressStatus";
+import { StatCard } from "../components/StatCard";
+import { View } from "../components/View";
 import { Button } from "../components/ui/Button";
 import { IconButton } from "../components/ui/IconButton";
 import { Panel } from "../components/ui/Panel";
-import { Toolbar } from "../components/ui/Toolbar";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
+import { dictationRunwayAction, performDictationRunwayAction } from "../lib/dictation-runway";
 import { accelerationRuntimePromptState, isRuntimeBusy } from "../lib/runtimes";
-import { shouldShowSttSetupCallout } from "../lib/stt-setup";
+import { recordingUnavailableReason } from "../lib/stt-setup";
 import { useMurmurStore } from "../state/murmur-store";
 
 export function HomeView({
   state,
   onOpenModels,
+  onOpenHistory,
   onOpenOnboarding
 }: {
   state: AppStateSnapshot;
   onOpenModels: () => void;
+  onOpenHistory: () => void;
   onOpenOnboarding: () => void;
 }): JSX.Element {
   const metrics = useMemo(() => computeHomeMetrics(state), [state]);
@@ -28,24 +30,35 @@ export function HomeView({
   const releaseNotesParent = useAutoAnimateRef<HTMLDivElement>();
 
   return (
-    <View title="Home" description="An overview of your dictation activity and recent updates.">
-      {shouldShowSttSetupCallout(state) && <SttSetupCallout onOpenModels={onOpenModels} onOpenOnboarding={onOpenOnboarding} />}
-      <GpuRuntimeInstallCallout state={state} />
+    <View title="Home" description="Start a dictation or pick up recent text.">
+      <DictationRunway
+        state={state}
+        onOpenModels={onOpenModels}
+        onOpenOnboarding={onOpenOnboarding}
+      />
       {state.session.error && <SessionNotice status={state.session.status} message={state.session.error} />}
+      <GpuRuntimeInstallCallout state={state} />
 
-      <section className="grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[640px]:grid-cols-1">
-        <StatCard label="Average speed" value={metrics.averageSpeed} detail="Across recorded dictations" />
-        <StatCard label="Words dictated" value={metrics.words} detail="Before Murmur refines the text" />
-        <StatCard label="Apps" value={metrics.appsUsed} detail="Apps you have dictated into" />
-        <StatCard label="Time saved" value={metrics.timeSaved} detail={`Compared with typing at ${state.settings.typingBaselineWpm} WPM`} />
+      <section className="home-metrics-grid" aria-label="Dictation activity">
+        <StatCard label="Speaking pace" value={metrics.averageSpeed} detail="Across completed dictations" />
+        <StatCard label="Words captured" value={metrics.words} detail="Before Murmur refines them" />
+        <StatCard label="Apps used" value={metrics.appsUsed} detail="Distinct apps in your history" />
+        <StatCard label="Time saved" value={metrics.timeSaved} detail={`Against ${state.settings.typingBaselineWpm} WPM typing`} />
       </section>
 
-      <section className="grid grid-cols-[minmax(0,1fr)_24rem] gap-4 max-[1100px]:grid-cols-1">
-        <Panel title="Recent history">
-          <div ref={recentHistoryParent} className="flex flex-col">
+      <section className="home-lower-grid">
+        <Panel
+          title="Recent dictations"
+          actions={
+            <Button variant="ghost" size="sm" onClick={onOpenHistory}>
+              View all <ArrowRight size={14} />
+            </Button>
+          }
+        >
+          <div ref={recentHistoryParent} className="home-history-list">
             {state.history.slice(0, 5).map((item) => (
-              <article key={item.id} className="border-t border-border py-3 first:border-t-0 first:pt-0 last:pb-0">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <article key={item.id} className="home-history-item">
+                <div className="home-history-meta">
                   <Clock3 size={14} />
                   {new Date(item.createdAt).toLocaleString()}
                   <span>·</span>
@@ -56,7 +69,15 @@ export function HomeView({
                 </p>
               </article>
             ))}
-            {state.history.length === 0 && <p className="m-0 text-sm text-muted-foreground">Your completed dictations will appear here.</p>}
+            {state.history.length === 0 && (
+              <div className="home-empty-history">
+                <AudioLines size={20} aria-hidden="true" />
+                <div>
+                  <p>Your finished text will appear here.</p>
+                  <span>Start a dictation above or use {state.settings.activationHotkey} from any app.</span>
+                </div>
+              </div>
+            )}
           </div>
         </Panel>
         <Panel title="What's new">
@@ -79,6 +100,130 @@ export function HomeView({
   );
 }
 
+function DictationRunway({
+  state,
+  onOpenModels,
+  onOpenOnboarding
+}: {
+  state: AppStateSnapshot;
+  onOpenModels: () => void;
+  onOpenOnboarding: () => void;
+}): JSX.Element {
+  const startDictation = useMurmurStore((store) => store.startDictation);
+  const stopDictation = useMurmurStore((store) => store.stopDictation);
+  const [isActing, setIsActing] = useState(false);
+  const unavailableReason = recordingUnavailableReason(state);
+  const isRecording = state.session.status === "recording";
+  const action = dictationRunwayAction({ status: state.session.status, unavailableReason, isActing });
+  const isBusy = action === "disabled";
+  const copy = runwayCopy(state, unavailableReason);
+
+  const runPrimaryAction = async (): Promise<void> => {
+    if (action === "setup") return onOpenOnboarding();
+    if (action === "disabled") return;
+    setIsActing(true);
+    try {
+      await performDictationRunwayAction(action, {
+        openSetup: onOpenOnboarding,
+        startDictation,
+        stopDictation
+      });
+    } catch {
+      // The store presents failures in the app-level action banner.
+    } finally {
+      setIsActing(false);
+    }
+  };
+
+  const PrimaryIcon = unavailableReason ? Wrench : isRecording ? Square : Mic;
+  const primaryLabel = isActing
+    ? isRecording
+      ? "Stopping..."
+      : "Starting..."
+    : unavailableReason
+      ? "Finish setup"
+      : isRecording
+        ? "Stop dictation"
+        : isBusy
+          ? "Working..."
+          : "Start dictation";
+
+  return (
+    <section className="dictation-runway" data-status={state.session.status}>
+      <div className="dictation-runway-main">
+        <div className="dictation-runway-copy">
+          <h2>{copy.title}</h2>
+          <p>{copy.description}</p>
+        </div>
+        <div className="dictation-runway-wave" aria-hidden="true">
+          {Array.from({ length: 18 }, (_, index) => (
+            <i key={index} />
+          ))}
+        </div>
+        <div className="dictation-runway-actions">
+          <Button
+            variant="primary"
+            className="dictation-runway-primary"
+            onClick={() => void runPrimaryAction()}
+            disabled={isBusy || isActing}
+          >
+            <PrimaryIcon size={17} fill={isRecording ? "currentColor" : "none"} />
+            {primaryLabel}
+          </Button>
+          {unavailableReason ? (
+            <Button variant="ghost" onClick={onOpenModels}>
+              <Library size={16} /> Browse models
+            </Button>
+          ) : (
+            <span className="dictation-runway-hotkey">
+              Or press <kbd>{state.settings.activationHotkey}</kbd> in any app
+            </span>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function runwayCopy(
+  state: AppStateSnapshot,
+  unavailableReason: string | null
+): { title: string; description: string } {
+  if (unavailableReason) {
+    return {
+      title: "Finish setup to start dictating.",
+      description: "Choose a speech model or connect a transcription provider before your first dictation."
+    };
+  }
+
+  switch (state.session.status) {
+    case "recording":
+      return {
+        title: "Speak naturally. Murmur is listening.",
+        description: `Press ${state.settings.activationHotkey} or stop here when you are finished.`
+      };
+    case "transcribing":
+      return { title: "Turning your voice into text.", description: "Keep working—this usually takes a moment." };
+    case "processing":
+      return {
+        title: "Shaping the transcript for your active app.",
+        description: state.session.transcriptPreview || "Murmur is applying your current mode."
+      };
+    case "pasting":
+      return { title: "Sending the finished text back.", description: "Your dictation is ready to land in the active app." };
+    case "error":
+      return {
+        title: "The last dictation did not finish.",
+        description: "Review the message below, then try again."
+      };
+    default:
+      return {
+        title: "Start a dictation from here—or any app.",
+        description: "Murmur refines your speech and pastes the result where you were working."
+      };
+  }
+}
+
 function SessionNotice({ status, message }: { status: AppStateSnapshot["session"]["status"]; message: string }): JSX.Element {
   const isError = status === "error";
   return (
@@ -92,33 +237,6 @@ function SessionNotice({ status, message }: { status: AppStateSnapshot["session"
         <p className="m-0 mt-1 break-words text-muted-foreground">{message}</p>
       </div>
     </div>
-  );
-}
-
-function SttSetupCallout({
-  onOpenModels,
-  onOpenOnboarding
-}: {
-  onOpenModels: () => void;
-  onOpenOnboarding: () => void;
-}): JSX.Element {
-  return (
-    <Panel>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="m-0 text-sm font-medium text-foreground">Set up dictation</h2>
-          <p className="m-0 mt-1 text-sm text-muted-foreground">Choose a speech model or connect a transcription provider before recording.</p>
-        </div>
-        <Toolbar>
-          <Button variant="secondary" onClick={onOpenModels}>
-            <Library size={18} /> Browse models
-          </Button>
-          <Button variant="primary" onClick={onOpenOnboarding}>
-            <Wrench size={18} /> Start setup
-          </Button>
-        </Toolbar>
-      </div>
-    </Panel>
   );
 }
 
