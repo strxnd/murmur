@@ -104,7 +104,8 @@ function providerLabel(provider: ModelCatalogItem["provider"]): string {
     openai: "OpenAI",
     openai_compatible: "OpenAI-compatible",
     anthropic: "Anthropic",
-    google: "Google"
+    google: "Google",
+    codex: "Codex"
   };
   return labels[provider];
 }

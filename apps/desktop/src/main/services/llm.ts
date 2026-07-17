@@ -7,16 +7,28 @@ interface LlmOptions {
   prompt: string;
 }
 
+interface CodexLlmClient {
+  getStatus(): { status: string; message: string; modelAvailable: boolean };
+  refreshStatus(): Promise<{ status: string; message: string; modelAvailable: boolean }>;
+  processCleanup(options: { prompt: string; model: string }): Promise<ProcessedResult>;
+}
+
 const llmTimeoutMs = 120000;
 const llmIdleTimeoutMs = 30000;
 
 export class LlmService {
+  constructor(private codex?: CodexLlmClient) {}
+
   async process(options: LlmOptions): Promise<ProcessedResult> {
     const { provider } = options;
     if (!provider.enabled) {
       throw new Error(`LLM provider "${provider.name}" is disabled.`);
     }
 
+    if (provider.type === "codex") {
+      if (!this.codex) throw new Error("Codex OAuth is unavailable.");
+      return this.codex.processCleanup({ prompt: options.prompt, model: provider.defaultModel || "gpt-5.6-luna" });
+    }
     if (provider.type === "ollama") return this.processOllama(options);
     if (provider.type === "anthropic") return this.processAnthropic(options);
     if (provider.type === "google") return this.processGoogle(options);
@@ -24,6 +36,14 @@ export class LlmService {
   }
 
   async validate(provider: LlmProviderConfig): Promise<{ ok: boolean; message: string }> {
+    if (provider.type === "codex") {
+      if (!this.codex) return { ok: false, message: "Codex OAuth is unavailable." };
+      const status = await this.codex.refreshStatus();
+      return {
+        ok: status.status === "connected" && status.modelAvailable,
+        message: status.message
+      };
+    }
     if (provider.isCloud && !provider.apiKey) {
       return { ok: false, message: "Cloud LLM provider needs an API key before validation." };
     }

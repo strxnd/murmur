@@ -134,6 +134,9 @@ function state({
       }
     },
     session: defaultSession,
+    providerRuntime: {
+      codex: { status: "signed_out", message: "Sign in to Codex.", modelAvailable: false }
+    },
     capabilities: {
       sttRuntimes: {
         "whisper.cpp|linux-x64|cpu|0.0.0-test": {

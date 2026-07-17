@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultLlmProviders, defaultModes, defaultSettings } from "../../shared/defaults";
 import type { DictationHistoryItem, ModelCatalogItem } from "../../shared/types";
 import { resolveAppPaths, type AppPaths } from "./app-paths";
+import { ProviderSecretStore, secretIdForProvider } from "./provider-secrets";
 import { StorageService } from "./storage";
 
 let tempDirs: string[] = [];
@@ -244,6 +245,79 @@ describe("StorageService", () => {
     const storage = jsonStorage(paths);
 
     expect(storage.getState().llmProviders.find((provider) => provider.id === "lmstudio")?.enabled).toBe(true);
+  });
+
+  it("canonicalizes Codex providers without persisting credential fields", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        llmProviders: [
+          {
+            id: "legacy-codex",
+            type: "codex",
+            name: "OpenAI Codex",
+            baseUrl: "https://example.test/v1",
+            apiKey: "must-not-persist",
+            apiKeySecretId: "legacy-secret",
+            isCloud: false,
+            defaultModel: "another-model",
+            models: ["another-model"],
+            enabled: false
+          }
+        ]
+      })
+    );
+
+    const storage = jsonStorage(paths);
+    const codexProviders = storage.getState().llmProviders.filter((provider) => provider.type === "codex");
+    const configText = readFileSync(paths.configPath, "utf8");
+
+    expect(codexProviders).toEqual([
+      {
+        id: "codex",
+        type: "codex",
+        name: "Codex",
+        isCloud: true,
+        defaultModel: "gpt-5.6-luna",
+        enabled: true
+      }
+    ]);
+    expect(configText).not.toContain("must-not-persist");
+    expect(configText).not.toContain("legacy-secret");
+    expect(configText).not.toContain("https://example.test/v1");
+    expect(configText).not.toContain("another-model");
+  });
+
+  it("deletes explicit and derived secret records for legacy Codex provider ids", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    const secrets = new ProviderSecretStore(paths.providerSecretsPath);
+    const derivedSecretId = secretIdForProvider("llm", "legacy-codex");
+    const unrelatedSecretId = secretIdForProvider("llm", "custom-llm");
+    secrets.set("legacy-secret", "sk-explicit");
+    secrets.set(derivedSecretId, "sk-derived");
+    secrets.set(unrelatedSecretId, "sk-unrelated");
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        llmProviders: [
+          {
+            id: "legacy-codex",
+            type: "codex",
+            name: "OpenAI Codex",
+            apiKeySecretId: "legacy-secret"
+          }
+        ]
+      })
+    );
+
+    jsonStorage(paths);
+
+    expect(secrets.get("legacy-secret")).toBeUndefined();
+    expect(secrets.get(derivedSecretId)).toBeUndefined();
+    expect(secrets.get(unrelatedSecretId)).toBe("sk-unrelated");
   });
 
   it("stores provider API keys outside config snapshots", () => {

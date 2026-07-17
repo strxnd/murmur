@@ -227,6 +227,14 @@ export const defaultLlmProviders: LlmProviderConfig[] = [
     isCloud: true,
     defaultModel: "gemini-2.5-flash",
     enabled: false
+  },
+  {
+    id: "codex",
+    type: "codex",
+    name: "Codex",
+    isCloud: true,
+    defaultModel: "gpt-5.6-luna",
+    enabled: true
   }
 ];
 

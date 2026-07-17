@@ -1,6 +1,5 @@
 import { Tabs } from "@base-ui/react/tabs";
 import {
-  AudioLines,
   BookOpen,
   Clock3,
   House,
@@ -92,7 +91,6 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
   };
 
   const isRecording = state.session.status === "recording";
-  const activeMode = state.modes.find((mode) => mode.id === state.settings.activeModeId);
   const isMac = /mac|iphone|ipad|ipod/i.test(globalThis.navigator?.platform ?? "");
 
   return (
@@ -116,18 +114,6 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
             <NavigationGroup label="Workspace" sections={workspaceSections} />
             <NavigationGroup label="System" sections={systemSections} />
           </Tabs.List>
-
-          <div className="voice-console-footer">
-            <div className="voice-console-mode">
-              <span>Current mode</span>
-              <strong>{activeMode?.name ?? "Default"}</strong>
-            </div>
-            <div className="voice-console-shortcut" aria-label="Recording shortcut">
-              <AudioLines size={15} aria-hidden="true" />
-              <span>Record anywhere</span>
-              <kbd>{state.settings.activationHotkey}</kbd>
-            </div>
-          </div>
         </aside>
 
         <main className="floating-studio-canvas">
@@ -153,7 +139,7 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
               <ProvidersView state={state} />
             </Tabs.Panel>
             <Tabs.Panel value="models" id="models" className={panelClassName}>
-              <ModelsLibraryView state={state} />
+              <ModelsLibraryView state={state} onOpenProviders={() => changeSection("providers")} />
             </Tabs.Panel>
             <Tabs.Panel value="history" id="history" className={panelClassName}>
               <HistoryView state={state} />

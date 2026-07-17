@@ -111,6 +111,9 @@ function state({
       runtimes
     },
     session: defaultSession,
+    providerRuntime: {
+      codex: { status: "signed_out", message: "Sign in to Codex.", modelAvailable: false }
+    },
     capabilities: {
       sttRuntimes: {},
       stt: {

@@ -19,6 +19,7 @@ export type LlmProviderType =
   | "openai"
   | "anthropic"
   | "google"
+  | "codex"
   | "custom_openai_compatible";
 
 export type ModelKind = "voice" | "language";
@@ -33,7 +34,8 @@ export type ModelProvider =
   | "openai"
   | "openai_compatible"
   | "anthropic"
-  | "google";
+  | "google"
+  | "codex";
 
 export type ModelDownloadStrategy = "direct_file" | "archive" | "ollama_pull" | "none";
 export type ModelDownloadStatus = "not_downloaded" | "downloading" | "downloaded" | "error";
@@ -320,6 +322,25 @@ export interface ProcessedResult {
   model?: string;
 }
 
+export type CodexProviderRuntimeStatus =
+  | "checking"
+  | "unavailable"
+  | "signed_out"
+  | "signing_in"
+  | "connected"
+  | "error";
+
+export interface CodexProviderRuntime {
+  status: CodexProviderRuntimeStatus;
+  message: string;
+  accountLabel?: string;
+  modelAvailable: boolean;
+}
+
+export interface ProviderRuntimeSnapshot {
+  codex: CodexProviderRuntime;
+}
+
 export interface AppStateSnapshot {
   settings: AppSettings;
   modes: ModeConfig[];
@@ -331,6 +352,7 @@ export interface AppStateSnapshot {
   modelLibrary: ModelLibrarySnapshot;
   releaseNotes: ReleaseNote[];
   sttSetup: SttSetupSnapshot;
+  providerRuntime: ProviderRuntimeSnapshot;
   session: DictationSession;
   capabilities: CapabilityReport;
 }

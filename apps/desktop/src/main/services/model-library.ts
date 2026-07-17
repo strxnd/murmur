@@ -10,6 +10,7 @@ import type {
   ModelDownloadState,
   ModelKind,
   ModelLibrarySnapshot,
+  ProviderRuntimeSnapshot,
   SttRuntimeId
 } from "../../shared/types";
 import type { AppPaths } from "./app-paths";
@@ -47,6 +48,7 @@ export interface ModelLibraryServiceOptions {
   downloadHeaderTimeoutMs?: number;
   downloadBodyTimeoutMs?: number;
   progressEmitIntervalMs?: number;
+  getProviderRuntime?: () => ProviderRuntimeSnapshot;
 }
 
 export class ModelLibraryService {
@@ -55,6 +57,7 @@ export class ModelLibraryService {
   private downloadHeaderTimeoutMs: number;
   private downloadBodyTimeoutMs: number;
   private progressEmitIntervalMs: number;
+  private getProviderRuntime?: () => ProviderRuntimeSnapshot;
 
   constructor(
     private paths: AppPaths,
@@ -66,6 +69,7 @@ export class ModelLibraryService {
     this.downloadHeaderTimeoutMs = options.downloadHeaderTimeoutMs ?? defaultDownloadHeaderTimeoutMs;
     this.downloadBodyTimeoutMs = options.downloadBodyTimeoutMs ?? defaultDownloadBodyTimeoutMs;
     this.progressEmitIntervalMs = options.progressEmitIntervalMs ?? defaultProgressEmitIntervalMs;
+    this.getProviderRuntime = options.getProviderRuntime;
     this.refreshCachedModelDownloadStates();
   }
 
@@ -661,7 +665,7 @@ export class ModelLibraryService {
   private isModelReady(item: ModelCatalogItem): boolean {
     if (!canActivateModel(item)) return false;
     const state = this.storage.getState();
-    if (!isModelProviderUsable(item, state)) return false;
+    if (!isModelProviderUsable(item, { ...state, providerRuntime: this.getProviderRuntime?.() })) return false;
     if (item.discovery && !item.discovery.reachable) return false;
     if (!this.isRequiredRuntimeAvailable(item)) return false;
     if (item.downloadStrategy === "none") return true;

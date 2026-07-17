@@ -38,6 +38,21 @@ export const modelCatalog: ModelCatalogItem[] = [
     }
   },
   {
+    id: "codex-gpt-5-6-luna",
+    name: "GPT-5.6 Luna",
+    kind: "language",
+    provider: "codex",
+    description: "Codex subscription model for dictation cleanup and rewriting.",
+    isCloud: true,
+    isOffline: false,
+    downloadStrategy: "none",
+    defaultProviderConfig: {
+      providerId: "codex",
+      llmProviderType: "codex",
+      model: "gpt-5.6-luna"
+    }
+  },
+  {
     id: "anthropic-claude-sonnet-4-6",
     name: "Claude Sonnet 4.6",
     kind: "language",
@@ -213,6 +228,7 @@ export const modelCatalog: ModelCatalogItem[] = [
 export const modelListCatalogIds = [
   "openai-gpt-4o-transcribe",
   "openai-gpt-5-5",
+  "codex-gpt-5-6-luna",
   "anthropic-claude-sonnet-4-6",
   "google-gemini-3-5-flash",
   "whisper-tiny",

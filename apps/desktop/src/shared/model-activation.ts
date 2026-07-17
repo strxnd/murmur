@@ -2,6 +2,7 @@ import type {
   LlmProviderConfig,
   ModelCatalogItem,
   ModelProvider,
+  ProviderRuntimeSnapshot,
   TranscriptionProviderConfig
 } from "./types";
 
@@ -19,7 +20,8 @@ const providerLabels: Record<ModelProvider, string> = {
   openai: "OpenAI",
   openai_compatible: "OpenAI-compatible",
   anthropic: "Anthropic",
-  google: "Google"
+  google: "Google",
+  codex: "Codex"
 };
 
 export function providerLabel(provider: ModelProvider): string {
@@ -45,8 +47,11 @@ export function isTranscriptionProviderUsable(provider: TranscriptionProviderCon
   return hasNonEmptyString(provider.baseUrl);
 }
 
-export function isLlmProviderUsable(provider: LlmProviderConfig): boolean {
+export function isLlmProviderUsable(provider: LlmProviderConfig, providerRuntime?: ProviderRuntimeSnapshot): boolean {
   if (!provider.enabled) return false;
+  if (provider.type === "codex") {
+    return providerRuntime?.codex.status === "connected" && providerRuntime.codex.modelAvailable;
+  }
   if (!hasUsableCloudCredentials(provider)) return false;
   if (provider.type === "ollama") return true;
   return hasNonEmptyString(provider.baseUrl);
@@ -57,6 +62,7 @@ export function isModelProviderUsable(
   state: {
     transcriptionProviders: TranscriptionProviderConfig[];
     llmProviders: LlmProviderConfig[];
+    providerRuntime?: ProviderRuntimeSnapshot;
   }
 ): boolean {
   if (item.kind === "voice") {
@@ -65,7 +71,7 @@ export function isModelProviderUsable(
   }
 
   const provider = llmProviderFromModel(item, state.llmProviders);
-  return Boolean(provider && isLlmProviderUsable(provider));
+  return Boolean(provider && isLlmProviderUsable(provider, state.providerRuntime));
 }
 
 export function transcriptionProviderFromModel(
@@ -129,6 +135,7 @@ export function llmProviderId(item: ModelCatalogItem): string {
   if (type === "openai") return "openai-llm";
   if (type === "anthropic") return "anthropic";
   if (type === "google") return "google";
+  if (type === "codex") return "codex";
   if (type === "llama_cpp_openai") return "llama-cpp-openai";
   return `${item.id}-llm`;
 }

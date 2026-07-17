@@ -1,6 +1,7 @@
 import { BrainCircuit, Mic } from "lucide-react";
 import type { CSSProperties, JSX } from "react";
 import type { ModelCatalogItem, ModelProvider } from "../../../shared/types";
+import { CodexMark } from "./CodexMark";
 
 type ModelGlyphStyle = CSSProperties & {
   "--model-glyph-bg": string;
@@ -20,7 +21,8 @@ const modelGlyphStyles: Partial<Record<ModelProvider, ModelGlyphStyle>> = {
   openai: modelGlyphColors("#ffffff", "#e0e0e0", "#111111"),
   openai_compatible: modelGlyphColors("#ffffff", "#e0e0e0", "#111111"),
   anthropic: modelGlyphColors("#d97757", "#d97757", "#ffffff"),
-  google: modelGlyphColors("#ffffff", "#e0e0e0", "#1f1f1f")
+  google: modelGlyphColors("#ffffff", "#e0e0e0", "#1f1f1f"),
+  codex: modelGlyphColors("#ffffff", "#e0e0e0", "#111111")
 };
 
 export function ModelGlyph({ item }: { item: ModelCatalogItem }): JSX.Element {
@@ -32,7 +34,7 @@ export function ModelGlyph({ item }: { item: ModelCatalogItem }): JSX.Element {
       className="model-glyph relative grid h-9 w-9 shrink-0 place-items-center rounded-md border border-border bg-surface-raised text-foreground"
       style={modelGlyphStyle(item.provider)}
     >
-      {ProviderIcon ? <ProviderIcon className="h-5 w-5" /> : <FallbackIcon size={17} />}
+      {ProviderIcon ? <ProviderIcon className={item.provider === "codex" ? "h-7 w-7" : "h-5 w-5"} /> : <FallbackIcon size={17} />}
     </span>
   );
 }
@@ -48,6 +50,7 @@ function providerIcon(provider: ModelProvider): ProviderIcon | null {
   if (provider === "nvidia") return NvidiaMark;
   if (provider === "anthropic") return AnthropicMark;
   if (provider === "google") return GoogleMark;
+  if (provider === "codex") return CodexMark;
   return null;
 }
 

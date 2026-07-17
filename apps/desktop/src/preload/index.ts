@@ -39,6 +39,10 @@ const api = {
     ipcRenderer.invoke("provider:validate-stt", provider),
   validateLlmProvider: (provider: LlmProviderConfig): Promise<ProviderValidationResult> =>
     ipcRenderer.invoke("provider:validate-llm", provider),
+  refreshCodex: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("codex:refresh"),
+  startCodexLogin: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("codex:login-start"),
+  cancelCodexLogin: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("codex:login-cancel"),
+  logoutCodex: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("codex:logout"),
   setAutoModeRules: (rules: AutoModeRule[]): Promise<AppStateSnapshot> => ipcRenderer.invoke("rules:set-auto-mode", rules),
   setVocabulary: (vocabulary: VocabularyEntry[]): Promise<AppStateSnapshot> => ipcRenderer.invoke("vocabulary:set", vocabulary),
   getModelLibrary: (): Promise<ModelLibrarySnapshot> => ipcRenderer.invoke("models:get-library"),

@@ -1,6 +1,6 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LlmProviderConfig } from "../../shared/types";
 import { LlmService } from "./llm";
 
@@ -35,6 +35,37 @@ describe("LlmService", () => {
     const service = new LlmService();
 
     await expect(service.process({ provider: ollamaProvider(url), prompt: "clean this up" })).rejects.toThrow(/Ollama response/);
+  });
+
+  it("dispatches Codex cleanup and validation through the OAuth client", async () => {
+    const processCleanup = vi.fn().mockResolvedValue({ text: "Clean this.", providerId: "codex", model: "gpt-5.6-luna" });
+    const refreshStatus = vi.fn().mockResolvedValue({
+      status: "connected",
+      message: "Connected to Codex.",
+      modelAvailable: true
+    });
+    const service = new LlmService({
+      getStatus: () => ({ status: "connected", message: "Connected to Codex.", modelAvailable: true }),
+      refreshStatus,
+      processCleanup
+    });
+    const provider: LlmProviderConfig = {
+      id: "codex",
+      type: "codex",
+      name: "Codex",
+      isCloud: true,
+      defaultModel: "gpt-5.6-luna",
+      enabled: true
+    };
+
+    await expect(service.process({ provider, prompt: "clean this" })).resolves.toEqual({
+      text: "Clean this.",
+      providerId: "codex",
+      model: "gpt-5.6-luna"
+    });
+    await expect(service.validate(provider)).resolves.toEqual({ ok: true, message: "Connected to Codex." });
+    expect(processCleanup).toHaveBeenCalledWith({ prompt: "clean this", model: "gpt-5.6-luna" });
+    expect(refreshStatus).toHaveBeenCalledOnce();
   });
 });
 

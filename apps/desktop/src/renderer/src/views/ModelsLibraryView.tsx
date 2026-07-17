@@ -56,7 +56,8 @@ const providers: Array<{ value: "all" | ModelProvider; label: string }> = [
   { value: "openai", label: "OpenAI" },
   { value: "openai_compatible", label: "OpenAI-compatible" },
   { value: "anthropic", label: "Anthropic" },
-  { value: "google", label: "Google" }
+  { value: "google", label: "Google" },
+  { value: "codex", label: "Codex" }
 ];
 
 const filters: Array<{ id: ModelFilter; label: string }> = [
@@ -67,7 +68,7 @@ const filters: Array<{ id: ModelFilter; label: string }> = [
   { id: "downloaded", label: "Downloaded" }
 ];
 
-export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.Element {
+export function ModelsLibraryView({ state, onOpenProviders }: { state: AppStateSnapshot; onOpenProviders: () => void }): JSX.Element {
   const getModelLibrary = useMurmurStore((store) => store.getModelLibrary);
   const downloadModel = useMurmurStore((store) => store.downloadModel);
   const cancelModelDownload = useMurmurStore((store) => store.cancelModelDownload);
@@ -210,6 +211,7 @@ export function ModelsLibraryView({ state }: { state: AppStateSnapshot }): JSX.E
                         onInstallRuntime={() => runtime && void downloadSttRuntime(runtime.variantKey)}
                         onRepairRuntime={() => runtime && void repairSttRuntime(runtime.variantKey)}
                         onCancelRuntimeDownload={() => runtime && void cancelSttRuntimeDownload(runtime.variantKey)}
+                        onOpenProviders={onOpenProviders}
                         onClose={() => setOpenModelId(null)}
                         runtime={runtime}
                       />
@@ -239,6 +241,7 @@ function ModelDetails({
   onInstallRuntime,
   onRepairRuntime,
   onCancelRuntimeDownload,
+  onOpenProviders,
   onClose,
   runtime
 }: {
@@ -254,6 +257,7 @@ function ModelDetails({
   onInstallRuntime: () => void;
   onRepairRuntime: () => void;
   onCancelRuntimeDownload: () => void;
+  onOpenProviders: () => void;
   onClose: () => void;
   runtime?: SttRuntimeInstallState;
 }): JSX.Element {
@@ -405,7 +409,12 @@ function ModelDetails({
             />
           </Dialog.Root>
         )}
-        {item.downloadStrategy === "none" && !canActivate && !item.discovery && !setupTarget && (
+        {item.downloadStrategy === "none" && !canActivate && !item.discovery && item.provider === "codex" && (
+          <Button variant="primary" onClick={onOpenProviders}>
+            <KeyRound size={18} /> {state.providerRuntime.codex.status === "connected" ? "Check Codex status" : "Connect Codex"}
+          </Button>
+        )}
+        {item.downloadStrategy === "none" && !canActivate && !item.discovery && !setupTarget && item.provider !== "codex" && (
           <span className="inline-flex min-h-9 items-center gap-2 text-sm text-muted-foreground">Provider setup required</span>
         )}
         {status === "downloaded" && !canActivate && (

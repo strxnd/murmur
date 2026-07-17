@@ -44,10 +44,12 @@ describe("llmProviderFromModel", () => {
     const openai = modelCatalog.find((candidate) => candidate.id === "openai-gpt-5-5");
     const anthropic = modelCatalog.find((candidate) => candidate.id === "anthropic-claude-sonnet-4-6");
     const google = modelCatalog.find((candidate) => candidate.id === "google-gemini-3-5-flash");
+    const codex = modelCatalog.find((candidate) => candidate.id === "codex-gpt-5-6-luna");
 
     expect(llmProviderFromModel(openai!)?.id).toBe("openai-llm");
     expect(llmProviderFromModel(anthropic!)?.id).toBe("anthropic");
     expect(llmProviderFromModel(google!)?.id).toBe("google");
+    expect(llmProviderFromModel(codex!)?.id).toBe("codex");
   });
 
   it("maps dynamic local models to the provider that discovered them", () => {
@@ -108,6 +110,34 @@ describe("provider usability", () => {
     expect(isLlmProviderUsable({ ...provider!, enabled: true, apiKey: "" })).toBe(false);
     expect(isLlmProviderUsable({ ...provider!, enabled: true, apiKey: "sk-test" })).toBe(true);
     expect(isLlmProviderUsable({ ...provider!, enabled: true, apiKeySecretId: "provider-secret:llm:test" })).toBe(true);
+  });
+
+  it("gates Codex on subscription readiness and Luna availability", () => {
+    const provider = defaultLlmProviders.find((candidate) => candidate.id === "codex");
+    const model = modelCatalog.find((candidate) => candidate.id === "codex-gpt-5-6-luna");
+    expect(provider).toBeDefined();
+    expect(model).toBeDefined();
+
+    expect(isLlmProviderUsable(provider!)).toBe(false);
+    expect(
+      isLlmProviderUsable(provider!, {
+        codex: { status: "connected", message: "Connected.", modelAvailable: false }
+      })
+    ).toBe(false);
+    expect(
+      isLlmProviderUsable(provider!, {
+        codex: { status: "connected", message: "Connected.", modelAvailable: true }
+      })
+    ).toBe(true);
+    expect(
+      isModelProviderUsable(model!, {
+        transcriptionProviders: defaultTranscriptionProviders,
+        llmProviders: defaultLlmProviders,
+        providerRuntime: {
+          codex: { status: "connected", message: "Connected.", modelAvailable: true }
+        }
+      })
+    ).toBe(true);
   });
 
   it("gates API-backed model providers on credentials", () => {
