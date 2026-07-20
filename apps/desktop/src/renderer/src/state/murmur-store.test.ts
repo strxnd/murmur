@@ -40,6 +40,27 @@ describe("useMurmurStore action errors", () => {
     expect(useMurmurStore.getState().status).toBe("ready");
     expect(useMurmurStore.getState().actionError?.message).toBe("clipboard unavailable");
   });
+
+  it("commits snapshots returned by Codex account actions", async () => {
+    const connected = testSnapshot();
+    connected.providerRuntime.codex = {
+      status: "connected",
+      message: "Connected to Codex.",
+      modelAvailable: true,
+      accountLabel: "user@example.com"
+    };
+    const refreshCodex = vi.fn<() => Promise<AppStateSnapshot>>().mockResolvedValue(connected);
+    vi.stubGlobal("window", { murmur: { refreshCodex } });
+    useMurmurStore.setState({ status: "ready", snapshot: testSnapshot(), error: null, actionError: null });
+
+    await useMurmurStore.getState().refreshCodex();
+
+    expect(refreshCodex).toHaveBeenCalledOnce();
+    expect(useMurmurStore.getState().snapshot?.providerRuntime.codex).toMatchObject({
+      status: "connected",
+      modelAvailable: true
+    });
+  });
 });
 
 function testSnapshot(): AppStateSnapshot {
@@ -87,6 +108,9 @@ function testSnapshot(): AppStateSnapshot {
       }
     },
     session: defaultSession,
+    providerRuntime: {
+      codex: { status: "signed_out", message: "Sign in to Codex.", modelAvailable: false }
+    },
     capabilities: {
       sttRuntimes: {
         "whisper.cpp|linux-x64|cpu|0.0.0-test": {

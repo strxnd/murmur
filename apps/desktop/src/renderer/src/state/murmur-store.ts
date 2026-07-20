@@ -40,6 +40,10 @@ interface MurmurStore {
   setLlmProviders: (providers: LlmProviderConfig[]) => Promise<void>;
   validateSttProvider: (provider: TranscriptionProviderConfig) => Promise<ProviderValidationResult>;
   validateLlmProvider: (provider: LlmProviderConfig) => Promise<ProviderValidationResult>;
+  refreshCodex: () => Promise<void>;
+  startCodexLogin: () => Promise<void>;
+  cancelCodexLogin: () => Promise<void>;
+  logoutCodex: () => Promise<void>;
   setAutoModeRules: (rules: AutoModeRule[]) => Promise<void>;
   setVocabulary: (entries: VocabularyEntry[]) => Promise<void>;
   getModelLibrary: () => Promise<void>;
@@ -172,6 +176,10 @@ export const useMurmurStore = create<MurmurStore>()((set, get) => {
     setLlmProviders: (providers) => commit(() => murmurClient.setLlmProviders(providers)),
     validateSttProvider: (provider) => runAction(() => murmurClient.validateSttProvider(provider)),
     validateLlmProvider: (provider) => runAction(() => murmurClient.validateLlmProvider(provider)),
+    refreshCodex: () => commit(() => murmurClient.refreshCodex()),
+    startCodexLogin: () => commit(() => murmurClient.startCodexLogin()),
+    cancelCodexLogin: () => commit(() => murmurClient.cancelCodexLogin()),
+    logoutCodex: () => commit(() => murmurClient.logoutCodex()),
     setAutoModeRules: (rules) => commit(() => murmurClient.setAutoModeRules(rules)),
     setVocabulary: (entries) => commit(() => murmurClient.setVocabulary(entries)),
     getModelLibrary: () => commitLibrary(() => murmurClient.getModelLibrary()),

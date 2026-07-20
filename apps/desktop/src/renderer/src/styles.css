@@ -300,54 +300,13 @@ body {
   border-color: color-mix(in srgb, var(--border) 78%, transparent);
   background: var(--surface-raised);
   color: var(--foreground);
+  box-shadow: none;
 }
 
 .voice-console-navigation-button:focus-visible {
   box-shadow: 0 0 0 2px var(--console-focus);
 }
 
-.voice-console-footer {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 20px;
-}
-
-.voice-console-mode {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 7px;
-  color: var(--subtle);
-  font-size: 10px;
-}
-
-.voice-console-mode strong {
-  max-width: 94px;
-  overflow: hidden;
-  color: var(--foreground);
-  font-size: 10px;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.voice-console-shortcut {
-  display: grid;
-  min-height: 46px;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-  border-radius: 12px;
-  background: var(--background);
-  color: var(--muted-foreground);
-  font-size: 9px;
-}
-
-.voice-console-shortcut kbd,
 .dictation-runway-hotkey kbd {
   border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
   border-radius: 6px;
@@ -360,9 +319,6 @@ body {
   white-space: nowrap;
 }
 
-.voice-console-shortcut kbd {
-  padding: 6px;
-}
 
 .floating-studio-canvas {
   min-width: 0;
@@ -399,7 +355,7 @@ body {
 
 .floating-studio .studio-view-header {
   margin-bottom: 22px;
-  padding: 34px 0 0;
+  padding: 46px 0 0;
 }
 
 .floating-studio .studio-view-header h1 {
@@ -696,9 +652,6 @@ body {
     padding: 0 9px;
   }
 
-  .voice-console-footer {
-    display: none;
-  }
 
   .floating-studio .studio-view-header {
     padding-top: 24px;
@@ -1035,11 +988,10 @@ pre {
   height: 48px;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--border);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
+  background: var(--background);
   box-shadow: var(--studio-float-shadow);
-  backdrop-filter: blur(22px);
   contain: layout paint;
 }
 
@@ -1568,17 +1520,17 @@ span.inline-flex.items-center.rounded.border.text-foreground {
 }
 
 .recording-pill {
-  background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
-  border-color: color-mix(in srgb, var(--console-fill) 34%, rgba(255, 255, 255, 0.12));
+  background: var(--background);
+  border-color: color-mix(in srgb, var(--border) 55%, var(--background));
   box-shadow: var(--studio-float-shadow);
 }
 
 .recording-wave__bar::before {
-  background: var(--console-fill);
+  background: var(--foreground);
 }
 
 .recording-wave--muted .recording-wave__bar::before {
-  background: color-mix(in srgb, var(--muted-foreground) 66%, var(--console-contrast));
+  background: var(--muted-foreground);
 }
 
 .h-2.overflow-hidden.rounded-full.bg-muted {

@@ -8,6 +8,7 @@ import type {
   ModePreset,
   TranscriptionProviderConfig
 } from "./types";
+import { codexProviderDefaults } from "./codex-provider";
 import { defaultReleaseNotes } from "./release-notes";
 import { modelCatalog } from "./model-catalog";
 
@@ -227,7 +228,8 @@ export const defaultLlmProviders: LlmProviderConfig[] = [
     isCloud: true,
     defaultModel: "gemini-2.5-flash",
     enabled: false
-  }
+  },
+  { ...codexProviderDefaults }
 ];
 
 export const defaultAutoModeRules: AutoModeRule[] = [];

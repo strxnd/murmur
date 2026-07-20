@@ -22,6 +22,7 @@ import type {
   ModeConfig,
   ModeSelectorStateSnapshot,
   PillStateSnapshot,
+  ProviderRuntimeSnapshot,
   RecordingLevelPayload,
   SttRuntimeActionTarget,
   SttRuntimeId,
@@ -57,6 +58,7 @@ import { buildProcessingPrompt, buildVocabularyPrompt } from "../shared/prompts"
 import { resolveModeByContext } from "./services/auto-mode";
 import { createId } from "./services/ids";
 import { registerElectronShortcutActions, registerModeSelectorNavigationShortcuts } from "./services/electron-global-shortcuts";
+import { CodexOAuthService } from "./services/codex-oauth";
 import { ContextService } from "./services/context";
 import { LlmService } from "./services/llm";
 import { ModelLibraryService } from "./services/model-library";
@@ -90,6 +92,7 @@ import {
   Notification,
   safeStorage,
   screen,
+  shell,
   Tray
 } from "./electron-api";
 
@@ -123,7 +126,9 @@ export class AppController {
   private paths: AppPaths;
   private rendererSource: RendererSource;
   private stt: TranscriptionService;
-  private llm = new LlmService();
+  private codex: CodexOAuthService;
+  private initialCodexRefresh: Promise<unknown> = Promise.resolve();
+  private llm: LlmService;
   private modelLibrary: ModelLibraryService;
   private sttSetup: SttSetupService;
   private session: DictationSession = defaultSession;
@@ -158,7 +163,16 @@ export class AppController {
       envRendererUrl: process.env.ELECTRON_RENDERER_URL,
       rendererFilePath: join(__dirname, "../renderer/index.html")
     });
-    this.storage = new StorageService(this.paths, undefined, createSafeStorageProviderSecretCodec(safeStorage));
+    const secretCodec = createSafeStorageProviderSecretCodec(safeStorage);
+    this.storage = new StorageService(this.paths, undefined, secretCodec);
+    this.codex = new CodexOAuthService({
+      authPath: join(this.paths.configDir, "murmur-codex-auth.json"),
+      secretCodec,
+      openExternal: (url) => shell.openExternal(url),
+      onStatusChange: () => this.broadcastState(),
+      appVersion: app.getVersion()
+    });
+    this.llm = new LlmService(this.codex);
     this.runtimeService = new SttRuntimeService({
       runtimeDir: this.paths.runtimeDir,
       packaged: app.isPackaged,
@@ -170,11 +184,17 @@ export class AppController {
       onBeforeRuntimeMutation: (state) => this.stt?.stopRuntime(state.id)
     });
     this.stt = new TranscriptionService(this.paths, this.runtimeService);
-    this.modelLibrary = new ModelLibraryService(this.paths, this.storage, (state) => {
-      this.mainWindow?.webContents.send("models:download-progress", state);
-      this.pillWindow?.webContents.send("models:download-progress", state);
-      this.broadcastState();
-    }, this.runtimeService);
+    this.modelLibrary = new ModelLibraryService(
+      this.paths,
+      this.storage,
+      (state) => {
+        this.mainWindow?.webContents.send("models:download-progress", state);
+        this.pillWindow?.webContents.send("models:download-progress", state);
+        this.broadcastState();
+      },
+      this.runtimeService,
+      { getProviderRuntime: () => this.getProviderRuntime() }
+    );
     this.sttSetup = new SttSetupService(this.paths, this.storage, this.modelLibrary, this.runtimeService);
   }
 
@@ -187,6 +207,7 @@ export class AppController {
     this.textAutomation.dispose();
     this.context.dispose();
     this.stt.dispose();
+    this.codex.dispose();
     this.closeToTrayNotification?.removeAllListeners();
     this.closeToTrayNotification?.close();
     this.closeToTrayNotification = null;
@@ -202,6 +223,7 @@ export class AppController {
     await this.context.initialize();
     await this.paste.initialize();
     this.registerIpc();
+    this.initialCodexRefresh = this.codex.refreshStatus();
     this.createTray();
     this.createWindows();
     this.applySettings(this.storage.getState().settings);
@@ -570,6 +592,26 @@ export class AppController {
       const provider = parseIpcPayload(llmProviderConfigSchema, payload, "provider:validate-llm") as LlmProviderConfig;
       return this.llm.validate(this.storage.resolveLlmProviderSecret(provider));
     });
+    handle("codex:refresh", async () => {
+      await this.codex.refreshStatus();
+      this.broadcastState();
+      return this.getSnapshot();
+    });
+    handle("codex:login-start", async () => {
+      await this.codex.startLogin();
+      this.broadcastState();
+      return this.getSnapshot();
+    });
+    handle("codex:login-cancel", async () => {
+      await this.codex.cancelLogin();
+      this.broadcastState();
+      return this.getSnapshot();
+    });
+    handle("codex:logout", async () => {
+      await this.codex.logout();
+      this.broadcastState();
+      return this.getSnapshot();
+    });
     handle("rules:set-auto-mode", (_event, payload) => {
       const rules = parseIpcPayload(autoModeRulesSetPayloadSchema, payload, "rules:set-auto-mode");
       this.storage.setAutoModeRules(rules);
@@ -690,6 +732,7 @@ export class AppController {
     });
     handle("history:reprocess", (_event, payload) => this.reprocessHistory(parseIpcPayload(ipcIdPayloadSchema, payload, "history:reprocess")));
     handle("data:clear-local", async () => {
+      await this.codex.logout();
       this.storage.clearLocalData();
       await this.registerHotkeys();
       this.broadcastState();
@@ -1270,7 +1313,12 @@ export class AppController {
       });
 
       let processedText = transcription.text;
-      const selectedLlmProvider = mode.aiEnabled ? this.selectLlmProvider(persisted) : undefined;
+      const selectedLlmProvider = mode.aiEnabled
+        ? await selectLlmProviderAfterInitialRefresh(
+            this.initialCodexRefresh,
+            () => this.selectLlmProvider(persisted)
+          )
+        : undefined;
       let llmProvider = selectedLlmProvider ? this.storage.resolveLlmProviderSecret(selectedLlmProvider) : undefined;
       let llmModel: string | undefined;
       let llmFailureMessage: string | undefined;
@@ -1394,7 +1442,12 @@ export class AppController {
     if (!item) return this.getSnapshot();
 
     const mode = state.modes.find((candidate) => candidate.id === state.settings.activeModeId) ?? state.modes[0];
-    const selectedProvider = this.selectLlmProvider(state);
+    const selectedProvider = mode.aiEnabled
+      ? await selectLlmProviderAfterInitialRefresh(
+          this.initialCodexRefresh,
+          () => this.selectLlmProvider(state)
+        )
+      : undefined;
     if (!mode.aiEnabled || !selectedProvider) return this.getSnapshot();
     const provider = this.storage.resolveLlmProviderSecret(selectedProvider);
 
@@ -1455,8 +1508,9 @@ export class AppController {
   }): LlmProviderConfig | undefined {
     const activeModel = this.selectActiveModel(state, "language");
     const activeProvider = activeModel ? llmProviderFromModel(activeModel, state.llmProviders) : null;
-    if (activeProvider && isLlmProviderUsable(activeProvider)) return activeProvider;
-    return state.llmProviders.find((provider) => isLlmProviderUsable(provider));
+    const providerRuntime = this.getProviderRuntime();
+    if (activeProvider && isLlmProviderUsable(activeProvider, providerRuntime)) return activeProvider;
+    return state.llmProviders.find((provider) => isLlmProviderUsable(provider, providerRuntime));
   }
 
   private selectActiveModel(
@@ -1731,7 +1785,14 @@ export class AppController {
       ...state,
       sttSetup: this.sttSetup.getSnapshot(),
       session: this.session,
-      capabilities: this.getCapabilities()
+      capabilities: this.getCapabilities(),
+      providerRuntime: this.getProviderRuntime()
+    };
+  }
+
+  private getProviderRuntime(): ProviderRuntimeSnapshot {
+    return {
+      codex: this.codex.getStatus()
     };
   }
 
@@ -1804,6 +1865,14 @@ export class AppController {
     this.pillWindow?.webContents.send("pill-state:changed", this.getPillSnapshot(snapshot));
     this.modeSelectorWindow?.webContents.send("mode-selector-state:changed", this.getModeSelectorSnapshot(snapshot));
   }
+}
+
+export async function selectLlmProviderAfterInitialRefresh(
+  initialRefresh: Promise<unknown>,
+  selectProvider: () => LlmProviderConfig | undefined
+): Promise<LlmProviderConfig | undefined> {
+  await initialRefresh;
+  return selectProvider();
 }
 
 export function computeDurationMs(startedAt: string | undefined, stoppedAt: string): number | undefined {

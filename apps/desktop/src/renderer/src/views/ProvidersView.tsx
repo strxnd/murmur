@@ -8,11 +8,13 @@ import { z } from "zod";
 import { llmProviderConfigSchema, transcriptionProviderConfigSchema } from "../../../shared/schemas";
 import type {
   AppStateSnapshot,
+  CodexProviderRuntime,
   LlmProviderConfig,
   ProviderValidationResult,
   SttStreamingMode,
   TranscriptionProviderConfig
 } from "../../../shared/types";
+import { CodexMark } from "../components/CodexMark";
 import { View } from "../components/View";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -93,6 +95,10 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
   const setLlmProviders = useMurmurStore((store) => store.setLlmProviders);
   const validateSttProvider = useMurmurStore((store) => store.validateSttProvider);
   const validateLlmProvider = useMurmurStore((store) => store.validateLlmProvider);
+  const refreshCodex = useMurmurStore((store) => store.refreshCodex);
+  const startCodexLogin = useMurmurStore((store) => store.startCodexLogin);
+  const cancelCodexLogin = useMurmurStore((store) => store.cancelCodexLogin);
+  const logoutCodex = useMurmurStore((store) => store.logoutCodex);
   const form = useForm<ProvidersFormValues>({
     resolver: zodResolver(providersFormSchema),
     defaultValues: providersFormValuesFromState({
@@ -388,6 +394,14 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
   return (
     <>
       <View title="Providers" description="Connect cloud services or custom endpoints for transcription and language models.">
+        <CodexSubscriptionSection
+          runtime={state.providerRuntime.codex}
+          onRefresh={() => void refreshCodex().catch(() => undefined)}
+          onConnect={() => void startCodexLogin().catch(() => undefined)}
+          onCancel={() => void cancelCodexLogin().catch(() => undefined)}
+          onDisconnect={() => void logoutCodex().catch(() => undefined)}
+        />
+
         <CloudCredentialsSection
           values={currentValues}
           persistedValues={persistedValuesRef.current}
@@ -520,6 +534,123 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
       {unsavedChangesPrompt}
     </>
   );
+}
+
+function CodexSubscriptionSection({
+  runtime,
+  onRefresh,
+  onConnect,
+  onCancel,
+  onDisconnect
+}: {
+  runtime: CodexProviderRuntime;
+  onRefresh: () => void;
+  onConnect: () => void;
+  onCancel: () => void;
+  onDisconnect: () => void;
+}): JSX.Element {
+  const connected = runtime.status === "connected";
+  const busy = runtime.status === "checking" || runtime.status === "signing_in";
+  const statusLabel = codexStatusLabel(runtime);
+  const statusTone = connected && runtime.modelAvailable ? "success" : runtime.status === "error" ? "danger" : busy ? "cloud" : "warning";
+  const accountLabelIsEmail = runtime.accountLabel?.includes("@") ?? false;
+  const [accountLabelVisible, setAccountLabelVisible] = useState(false);
+
+  useEffect(() => {
+    setAccountLabelVisible(false);
+  }, [runtime.accountLabel]);
+
+  return (
+    <section className="flex flex-col gap-3">
+      <header className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="m-0 text-sm font-semibold text-foreground">Subscription connections</h2>
+          <p className="m-0 mt-1 text-xs text-muted-foreground">Connect your ChatGPT subscription directly with Murmur-owned OAuth credentials.</p>
+        </div>
+        <Badge tone="cloud">ChatGPT OAuth</Badge>
+      </header>
+
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-md border border-border bg-surface px-3 py-3 max-[760px]:grid-cols-1">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[#e0e0e0] bg-white">
+            <CodexMark className="h-7 w-7" />
+          </span>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="m-0 text-sm font-medium text-foreground">Codex</p>
+              <Badge tone={statusTone}>{statusLabel}</Badge>
+            </div>
+            <p className="m-0 mt-1 text-xs text-muted-foreground">{runtime.message}</p>
+            {runtime.accountLabel && (
+              <p className="m-0 mt-1 text-xs text-muted-foreground">
+                {runtime.accountLabel && accountLabelIsEmail ? (
+                  <button
+                    type="button"
+                    aria-label={accountLabelVisible ? "Hide Codex account email" : "Reveal Codex account email"}
+                    aria-pressed={accountLabelVisible}
+                    className="rounded-sm border-0 bg-transparent p-0 text-inherit outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
+                    title={accountLabelVisible ? "Hide email" : "Reveal email"}
+                    onClick={() => setAccountLabelVisible((visible) => !visible)}
+                  >
+                    <span aria-hidden="true" className={cn("inline-block transition-[filter]", !accountLabelVisible && "select-none blur-[5px]")}>
+                      {runtime.accountLabel}
+                    </span>
+                  </button>
+                ) : (
+                  runtime.accountLabel
+                )}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-2 max-[760px]:justify-start">
+          {runtime.status === "signing_in" ? (
+            <Button size="sm" variant="secondary" onClick={onCancel}>
+              <X size={15} /> Cancel
+            </Button>
+          ) : runtime.status === "signed_out" ? (
+            <Button size="sm" variant="primary" onClick={onConnect}>
+              <Cable size={15} /> Connect
+            </Button>
+          ) : connected ? (
+            <Dialog.Root>
+              <Dialog.Trigger render={<Button size="sm" variant="secondary" />}>
+                <X size={15} /> Disconnect
+              </Dialog.Trigger>
+              <Dialog.Portal>
+                <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/50" />
+                <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] w-[min(calc(100vw-2rem),30rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-[var(--console-dialog-shadow)] outline-none">
+                  <Dialog.Title className="m-0 text-base font-semibold text-foreground">Disconnect Codex?</Dialog.Title>
+                  <Dialog.Description className="m-0 mt-2 text-sm leading-6 text-muted-foreground">
+                    This removes Murmur's Codex credentials. It does not sign you out of Codex CLI, VS Code, or other applications.
+                  </Dialog.Description>
+                  <div className="mt-5 flex justify-end gap-2">
+                    <Dialog.Close render={<Button variant="secondary" />}>Cancel</Dialog.Close>
+                    <Dialog.Close onClick={onDisconnect} render={<Button variant="danger" />}>Disconnect</Dialog.Close>
+                  </div>
+                </Dialog.Popup>
+              </Dialog.Portal>
+            </Dialog.Root>
+          ) : null}
+          {runtime.status !== "signing_in" && (
+            <Button size="sm" onClick={onRefresh} disabled={runtime.status === "checking"}>
+              <RotateCcw size={15} /> {runtime.status === "checking" ? "Checking..." : "Refresh"}
+            </Button>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function codexStatusLabel(runtime: CodexProviderRuntime): string {
+  if (runtime.status === "checking") return "Checking";
+  if (runtime.status === "unavailable") return "Unavailable";
+  if (runtime.status === "signed_out") return "Signed out";
+  if (runtime.status === "signing_in") return "Signing in";
+  if (runtime.status === "error") return "Error";
+  return runtime.modelAvailable ? "Ready" : "Model unavailable";
 }
 
 function CloudCredentialsSection({

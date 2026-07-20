@@ -1,7 +1,7 @@
 import { Check, Download, Heart, Trash2 } from "lucide-react";
 import type { JSX } from "react";
 import type { ModelCatalogItem, ModelDownloadState } from "../../../shared/types";
-import { canActivateModel } from "../../../shared/model-activation";
+import { canActivateModel, providerLabel } from "../../../shared/model-activation";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { downloadProgressSummary, formatBytes } from "../lib/download-progress";
 import { DownloadProgressStatus } from "./DownloadProgressStatus";
@@ -93,20 +93,6 @@ export function ModelCard({
       </Toolbar>
     </article>
   );
-}
-
-function providerLabel(provider: ModelCatalogItem["provider"]): string {
-  const labels: Record<ModelCatalogItem["provider"], string> = {
-    whisper_cpp: "whisper.cpp",
-    nvidia: "NVIDIA",
-    ollama: "Ollama",
-    lmstudio: "LM Studio",
-    openai: "OpenAI",
-    openai_compatible: "OpenAI-compatible",
-    anthropic: "Anthropic",
-    google: "Google"
-  };
-  return labels[provider];
 }
 
 function statusLabel(status: ModelDownloadState["status"] | "not_downloaded"): string {

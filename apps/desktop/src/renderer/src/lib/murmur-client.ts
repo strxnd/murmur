@@ -52,6 +52,10 @@ export const murmurClient = {
     window.murmur.validateSttProvider(provider).then(parseProviderValidation),
   validateLlmProvider: (provider: LlmProviderConfig): Promise<ProviderValidationResult> =>
     window.murmur.validateLlmProvider(provider).then(parseProviderValidation),
+  refreshCodex: (): Promise<AppStateSnapshot> => window.murmur.refreshCodex().then(parseState),
+  startCodexLogin: (): Promise<AppStateSnapshot> => window.murmur.startCodexLogin().then(parseState),
+  cancelCodexLogin: (): Promise<AppStateSnapshot> => window.murmur.cancelCodexLogin().then(parseState),
+  logoutCodex: (): Promise<AppStateSnapshot> => window.murmur.logoutCodex().then(parseState),
   setAutoModeRules: (rules: AutoModeRule[]): Promise<AppStateSnapshot> => window.murmur.setAutoModeRules(rules).then(parseState),
   setVocabulary: (vocabulary: VocabularyEntry[]): Promise<AppStateSnapshot> => window.murmur.setVocabulary(vocabulary).then(parseState),
   getModelLibrary: (): Promise<ModelLibrarySnapshot> => window.murmur.getModelLibrary().then(parseModelLibrary),

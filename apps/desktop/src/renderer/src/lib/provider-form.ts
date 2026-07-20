@@ -1,3 +1,4 @@
+import { codexProviderDefaults } from "../../../shared/codex-provider";
 import { defaultLlmProviders, defaultTranscriptionProviders } from "../../../shared/defaults";
 import type {
   LlmProviderConfig,
@@ -265,6 +266,7 @@ export function llmProviderTypeLabel(type: LlmProviderType): string {
     openai: "OpenAI",
     anthropic: "Anthropic",
     google: "Google Gemini",
+    codex: "Codex",
     custom_openai_compatible: "OpenAI-compatible"
   };
   return labels[type];
@@ -343,6 +345,10 @@ function normalizeTranscriptionProviderDraft(provider: TranscriptionProviderConf
 }
 
 function normalizeLlmProviderDraft(provider: LlmProviderConfig): LlmProviderConfig {
+  if (provider.type === "codex") {
+    return { ...codexProviderDefaults };
+  }
+
   const isOpenAiCompatible = provider.type === "custom_openai_compatible";
   const supportsApiKey = llmProviderTypeSupportsApiKey(provider.type);
   return {
@@ -357,7 +363,7 @@ function normalizeLlmProviderDraft(provider: LlmProviderConfig): LlmProviderConf
 }
 
 function llmProviderTypeSupportsApiKey(type: LlmProviderType): boolean {
-  return type !== "ollama";
+  return type !== "ollama" && type !== "codex";
 }
 
 function normalizeModelIds(models: Array<string | undefined>): string[] {

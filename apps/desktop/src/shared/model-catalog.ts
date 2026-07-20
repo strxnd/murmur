@@ -1,3 +1,4 @@
+import { codexModel, codexProviderDefaults } from "./codex-provider";
 import type { ModelCatalogItem } from "./types";
 
 const whisperBaseUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
@@ -35,6 +36,21 @@ export const modelCatalog: ModelCatalogItem[] = [
       llmProviderType: "openai",
       baseUrl: "https://api.openai.com/v1",
       model: "gpt-5.5"
+    }
+  },
+  {
+    id: "codex-gpt-5-6-luna",
+    name: "GPT-5.6 Luna",
+    kind: "language",
+    provider: "codex",
+    description: "Codex subscription model for dictation cleanup and rewriting.",
+    isCloud: true,
+    isOffline: false,
+    downloadStrategy: "none",
+    defaultProviderConfig: {
+      providerId: codexProviderDefaults.id,
+      llmProviderType: codexProviderDefaults.type,
+      model: codexModel
     }
   },
   {
@@ -213,6 +229,7 @@ export const modelCatalog: ModelCatalogItem[] = [
 export const modelListCatalogIds = [
   "openai-gpt-4o-transcribe",
   "openai-gpt-5-5",
+  "codex-gpt-5-6-luna",
   "anthropic-claude-sonnet-4-6",
   "google-gemini-3-5-flash",
   "whisper-tiny",

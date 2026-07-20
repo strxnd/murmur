@@ -20,4 +20,14 @@ describe("modelCatalog", () => {
         .map((model) => model.id)
     );
   });
+
+  it("exposes exactly one Codex model", () => {
+    expect(modelListCatalog.filter((model) => model.provider === "codex")).toEqual([
+      expect.objectContaining({
+        id: "codex-gpt-5-6-luna",
+        name: "GPT-5.6 Luna",
+        defaultProviderConfig: expect.objectContaining({ model: "gpt-5.6-luna" })
+      })
+    ]);
+  });
 });

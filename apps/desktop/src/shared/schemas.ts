@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { codexModel, codexProviderDefaults } from "./codex-provider";
 
 export const maxIpcTextCharacters = 200_000;
 export const maxRecordingAudioBytes = 150 * 1024 * 1024;
@@ -20,6 +21,7 @@ export const llmProviderTypeSchema = z.enum([
   "openai",
   "anthropic",
   "google",
+  "codex",
   "custom_openai_compatible"
 ]);
 export const modelKindSchema = z.enum(["voice", "language"]);
@@ -32,7 +34,8 @@ export const modelProviderSchema = z.enum([
   "openai",
   "openai_compatible",
   "anthropic",
-  "google"
+  "google",
+  "codex"
 ]);
 export const modelDownloadStrategySchema = z.enum(["direct_file", "archive", "ollama_pull", "none"]);
 export const modelDownloadStatusSchema = z.enum(["not_downloaded", "downloading", "downloaded", "error"]);
@@ -192,6 +195,20 @@ export const llmProviderConfigSchema = z
     defaultModel: optionalStringSchema,
     models: z.array(z.string()).optional(),
     enabled: z.boolean()
+  })
+  .superRefine((provider, context) => {
+    if (provider.type !== "codex") return;
+    if (provider.id !== codexProviderDefaults.id) {
+      context.addIssue({ code: "custom", path: ["id"], message: `Codex provider ID must be ${codexProviderDefaults.id}.` });
+    }
+    if (provider.defaultModel !== codexModel) {
+      context.addIssue({ code: "custom", path: ["defaultModel"], message: `Codex model must be ${codexModel}.` });
+    }
+    for (const field of ["baseUrl", "apiKeySecretId", "apiKey", "models"] as const) {
+      if (provider[field] !== undefined) {
+        context.addIssue({ code: "custom", path: [field], message: `Codex provider cannot set ${field}.` });
+      }
+    }
   });
 
 export const autoModeRuleSchema = z
@@ -431,6 +448,17 @@ export const capabilityReportSchema = z
   })
   .passthrough();
 
+export const codexProviderRuntimeSchema = z.object({
+  status: z.enum(["checking", "unavailable", "signed_out", "signing_in", "connected", "error"]),
+  message: z.string(),
+  accountLabel: optionalStringSchema,
+  modelAvailable: z.boolean()
+});
+
+export const providerRuntimeSnapshotSchema = z.object({
+  codex: codexProviderRuntimeSchema
+});
+
 export const appStateSnapshotSchema = z
   .object({
     settings: appSettingsSchema,
@@ -443,6 +471,7 @@ export const appStateSnapshotSchema = z
     modelLibrary: modelLibrarySnapshotSchema,
     releaseNotes: z.array(releaseNoteSchema),
     sttSetup: sttSetupSnapshotSchema,
+    providerRuntime: providerRuntimeSnapshotSchema,
     session: dictationSessionSchema,
     capabilities: capabilityReportSchema
   })

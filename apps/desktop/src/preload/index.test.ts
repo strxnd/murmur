@@ -12,10 +12,18 @@ describe("preload API", () => {
 
     await harness.api.updateSettings({ theme: "light" });
     await harness.api.setOnboardingDictationScope(true);
+    await harness.api.refreshCodex();
+    await harness.api.startCodexLogin();
+    await harness.api.cancelCodexLogin();
+    await harness.api.logoutCodex();
     harness.api.publishRecordingLevel({ sessionId: "session-1", level: 0.5 });
 
     expect(harness.invoke).toHaveBeenCalledWith("settings:update", { theme: "light" });
     expect(harness.invoke).toHaveBeenCalledWith("onboarding:dictation-scope", { active: true });
+    expect(harness.invoke).toHaveBeenCalledWith("codex:refresh");
+    expect(harness.invoke).toHaveBeenCalledWith("codex:login-start");
+    expect(harness.invoke).toHaveBeenCalledWith("codex:login-cancel");
+    expect(harness.invoke).toHaveBeenCalledWith("codex:logout");
     expect(harness.send).toHaveBeenCalledWith("recording:level", { sessionId: "session-1", level: 0.5 });
   });
 

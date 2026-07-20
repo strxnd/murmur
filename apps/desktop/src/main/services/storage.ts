@@ -10,6 +10,7 @@ import {
   defaultSettings,
   defaultTranscriptionProviders
 } from "../../shared/defaults";
+import { codexProviderDefaults } from "../../shared/codex-provider";
 import { modelCatalog } from "../../shared/model-catalog";
 import type {
   ActivationMode,
@@ -467,6 +468,7 @@ export class StorageService {
 
   private migrateProviderSecrets(): void {
     const config = this.readConfig();
+    this.deleteLegacyCodexProviderSecrets(config.llmProviders);
     const modes = this.normalizeModes(config.modes);
     const nextConfig: PersistedConfigState = {
       settings: this.normalizeSettings(config.settings, modes),
@@ -484,12 +486,27 @@ export class StorageService {
     }
   }
 
+  private deleteLegacyCodexProviderSecrets(providers: Array<Partial<LlmProviderConfig>> | undefined): void {
+    for (const provider of providers ?? []) {
+      if (provider.type !== "codex") continue;
+      this.providerSecrets.delete(provider.apiKeySecretId);
+      if (isNonEmptyString(provider.id)) {
+        this.providerSecrets.delete(secretIdForProvider("llm", provider.id));
+      }
+    }
+  }
+
   private redactTranscriptionProviderSecrets(providers: TranscriptionProviderConfig[]): TranscriptionProviderConfig[] {
     return providers.map((provider) => this.redactProviderSecret("stt", provider));
   }
 
   private redactLlmProviderSecrets(providers: LlmProviderConfig[]): LlmProviderConfig[] {
-    return providers.map((provider) => this.redactProviderSecret("llm", provider));
+    return providers.map((provider) => {
+      if (provider.type !== "codex") return this.redactProviderSecret("llm", provider);
+      this.providerSecrets.delete(provider.apiKeySecretId);
+      this.providerSecrets.delete(secretIdForProvider("llm", provider.id));
+      return provider;
+    });
   }
 
   private redactProviderSecret<T extends TranscriptionProviderConfig | LlmProviderConfig>(kind: ProviderSecretKind, provider: T): T {
@@ -707,15 +724,16 @@ export class StorageService {
     const defaultIds = new Set(defaultLlmProviders.map((provider) => provider.id));
     const usableProviders = providers.filter((provider) => !isRemovedLlmProvider(provider));
     const byId = new Map(usableProviders.filter((provider) => isNonEmptyString(provider.id)).map((provider) => [provider.id!, provider]));
+    const legacyCodexProvider = usableProviders.find((provider) => provider.type === "codex");
     const normalizedDefaults = defaultLlmProviders.map((defaultProvider) => {
-      const existing = byId.get(defaultProvider.id);
+      const existing = byId.get(defaultProvider.id) ?? (defaultProvider.type === "codex" ? legacyCodexProvider : undefined);
       if (defaultProvider.id === "lmstudio" && existing && isLegacyDisabledLmStudioProvider(existing)) {
         return clone(defaultProvider);
       }
       return normalizeLlmProvider(defaultProvider, existing);
     });
     const customProviders = usableProviders
-      .filter((provider) => isNonEmptyString(provider.id) && !defaultIds.has(provider.id))
+      .filter((provider) => isNonEmptyString(provider.id) && !defaultIds.has(provider.id) && provider.type !== "codex")
       .map((provider) => normalizeLlmProvider(undefined, provider));
 
     return [...normalizedDefaults, ...customProviders];
@@ -982,6 +1000,9 @@ function normalizeLlmProvider(
     ? (source.type as LlmProviderType)
     : (defaultProvider?.type ?? "custom_openai_compatible");
   const isOpenAiCompatible = type === "custom_openai_compatible";
+  if (type === "codex") {
+    return { ...codexProviderDefaults };
+  }
 
   return {
     id: isNonEmptyString(source.id) ? source.id : (defaultProvider?.id ?? "custom-llm"),
