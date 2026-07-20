@@ -1,3 +1,4 @@
+import { codexProviderDefaults } from "../../../shared/codex-provider";
 import { defaultLlmProviders, defaultTranscriptionProviders } from "../../../shared/defaults";
 import type {
   LlmProviderConfig,
@@ -345,14 +346,7 @@ function normalizeTranscriptionProviderDraft(provider: TranscriptionProviderConf
 
 function normalizeLlmProviderDraft(provider: LlmProviderConfig): LlmProviderConfig {
   if (provider.type === "codex") {
-    return {
-      id: "codex",
-      type: "codex",
-      name: "Codex",
-      isCloud: true,
-      defaultModel: "gpt-5.6-luna",
-      enabled: true
-    };
+    return { ...codexProviderDefaults };
   }
 
   const isOpenAiCompatible = provider.type === "custom_openai_compatible";

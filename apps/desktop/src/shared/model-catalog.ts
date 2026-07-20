@@ -1,3 +1,4 @@
+import { codexModel, codexProviderDefaults } from "./codex-provider";
 import type { ModelCatalogItem } from "./types";
 
 const whisperBaseUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
@@ -47,9 +48,9 @@ export const modelCatalog: ModelCatalogItem[] = [
     isOffline: false,
     downloadStrategy: "none",
     defaultProviderConfig: {
-      providerId: "codex",
-      llmProviderType: "codex",
-      model: "gpt-5.6-luna"
+      providerId: codexProviderDefaults.id,
+      llmProviderType: codexProviderDefaults.type,
+      model: codexModel
     }
   },
   {

@@ -8,6 +8,7 @@ import type {
   ModePreset,
   TranscriptionProviderConfig
 } from "./types";
+import { codexProviderDefaults } from "./codex-provider";
 import { defaultReleaseNotes } from "./release-notes";
 import { modelCatalog } from "./model-catalog";
 
@@ -228,14 +229,7 @@ export const defaultLlmProviders: LlmProviderConfig[] = [
     defaultModel: "gemini-2.5-flash",
     enabled: false
   },
-  {
-    id: "codex",
-    type: "codex",
-    name: "Codex",
-    isCloud: true,
-    defaultModel: "gpt-5.6-luna",
-    enabled: true
-  }
+  { ...codexProviderDefaults }
 ];
 
 export const defaultAutoModeRules: AutoModeRule[] = [];

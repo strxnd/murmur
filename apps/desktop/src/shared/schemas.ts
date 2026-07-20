@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { codexModel, codexProviderDefaults } from "./codex-provider";
 
 export const maxIpcTextCharacters = 200_000;
 export const maxRecordingAudioBytes = 150 * 1024 * 1024;
@@ -197,11 +198,11 @@ export const llmProviderConfigSchema = z
   })
   .superRefine((provider, context) => {
     if (provider.type !== "codex") return;
-    if (provider.id !== "codex") {
-      context.addIssue({ code: "custom", path: ["id"], message: "Codex provider ID must be codex." });
+    if (provider.id !== codexProviderDefaults.id) {
+      context.addIssue({ code: "custom", path: ["id"], message: `Codex provider ID must be ${codexProviderDefaults.id}.` });
     }
-    if (provider.defaultModel !== "gpt-5.6-luna") {
-      context.addIssue({ code: "custom", path: ["defaultModel"], message: "Codex model must be gpt-5.6-luna." });
+    if (provider.defaultModel !== codexModel) {
+      context.addIssue({ code: "custom", path: ["defaultModel"], message: `Codex model must be ${codexModel}.` });
     }
     for (const field of ["baseUrl", "apiKeySecretId", "apiKey", "models"] as const) {
       if (provider[field] !== undefined) {

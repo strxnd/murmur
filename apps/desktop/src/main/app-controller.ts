@@ -222,7 +222,7 @@ export class AppController {
     await this.context.initialize();
     await this.paste.initialize();
     this.registerIpc();
-    await this.codex.refreshStatus();
+    void this.codex.refreshStatus();
     this.createTray();
     this.createWindows();
     this.applySettings(this.storage.getState().settings);

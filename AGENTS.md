@@ -34,7 +34,7 @@ npm --prefix apps/desktop run test -- src/main/services/storage.test.ts -t "writ
 
 There is no formatter command or formatter configuration. `mise run build` is the minimum repository verification before handing off changes, including documentation-only changes. CI additionally runs runtime manifest checks and `npm audit`.
 
-Packaging requires prepared current-platform STT runtimes:
+Packaging requires current-platform STT runtimes to be prepared:
 
 ```sh
 mise run runtimes:prepare

@@ -1,9 +1,8 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { codexModel } from "../../shared/codex-provider";
 import type { CodexProviderRuntime, ProcessedResult } from "../../shared/types";
 import { ProviderSecretStore, type ProviderSecretCodec } from "./provider-secrets";
-
-const codexModel = "gpt-5.6-luna";
 const codexClientId = "app_EMoamEEZ73f0CkXaXp7hrann";
 const codexIssuer = "https://auth.openai.com";
 const codexTokenUrl = `${codexIssuer}/oauth/token`;

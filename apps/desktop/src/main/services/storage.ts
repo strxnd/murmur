@@ -10,6 +10,7 @@ import {
   defaultSettings,
   defaultTranscriptionProviders
 } from "../../shared/defaults";
+import { codexProviderDefaults } from "../../shared/codex-provider";
 import { modelCatalog } from "../../shared/model-catalog";
 import type {
   ActivationMode,
@@ -1000,14 +1001,7 @@ function normalizeLlmProvider(
     : (defaultProvider?.type ?? "custom_openai_compatible");
   const isOpenAiCompatible = type === "custom_openai_compatible";
   if (type === "codex") {
-    return {
-      id: "codex",
-      type: "codex",
-      name: "Codex",
-      isCloud: true,
-      defaultModel: "gpt-5.6-luna",
-      enabled: true
-    };
+    return { ...codexProviderDefaults };
   }
 
   return {

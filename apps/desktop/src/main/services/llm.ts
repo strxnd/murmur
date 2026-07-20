@@ -1,3 +1,4 @@
+import { codexModel } from "../../shared/codex-provider";
 import type { LlmProviderConfig, ProcessedResult } from "../../shared/types";
 import { fetchWithTimeout, joinUrl, parseJsonOrText, readResponseText } from "./http";
 import { llmProviderAuthHeaders } from "./provider-auth";
@@ -27,7 +28,7 @@ export class LlmService {
 
     if (provider.type === "codex") {
       if (!this.codex) throw new Error("Codex OAuth is unavailable.");
-      return this.codex.processCleanup({ prompt: options.prompt, model: provider.defaultModel || "gpt-5.6-luna" });
+      return this.codex.processCleanup({ prompt: options.prompt, model: provider.defaultModel || codexModel });
     }
     if (provider.type === "ollama") return this.processOllama(options);
     if (provider.type === "anthropic") return this.processAnthropic(options);
