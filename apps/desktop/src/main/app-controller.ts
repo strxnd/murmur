@@ -127,6 +127,7 @@ export class AppController {
   private rendererSource: RendererSource;
   private stt: TranscriptionService;
   private codex: CodexOAuthService;
+  private initialCodexRefresh: Promise<unknown> = Promise.resolve();
   private llm: LlmService;
   private modelLibrary: ModelLibraryService;
   private sttSetup: SttSetupService;
@@ -222,7 +223,7 @@ export class AppController {
     await this.context.initialize();
     await this.paste.initialize();
     this.registerIpc();
-    void this.codex.refreshStatus();
+    this.initialCodexRefresh = this.codex.refreshStatus();
     this.createTray();
     this.createWindows();
     this.applySettings(this.storage.getState().settings);
@@ -1312,7 +1313,12 @@ export class AppController {
       });
 
       let processedText = transcription.text;
-      const selectedLlmProvider = mode.aiEnabled ? this.selectLlmProvider(persisted) : undefined;
+      const selectedLlmProvider = mode.aiEnabled
+        ? await selectLlmProviderAfterInitialRefresh(
+            this.initialCodexRefresh,
+            () => this.selectLlmProvider(persisted)
+          )
+        : undefined;
       let llmProvider = selectedLlmProvider ? this.storage.resolveLlmProviderSecret(selectedLlmProvider) : undefined;
       let llmModel: string | undefined;
       let llmFailureMessage: string | undefined;
@@ -1436,7 +1442,12 @@ export class AppController {
     if (!item) return this.getSnapshot();
 
     const mode = state.modes.find((candidate) => candidate.id === state.settings.activeModeId) ?? state.modes[0];
-    const selectedProvider = this.selectLlmProvider(state);
+    const selectedProvider = mode.aiEnabled
+      ? await selectLlmProviderAfterInitialRefresh(
+          this.initialCodexRefresh,
+          () => this.selectLlmProvider(state)
+        )
+      : undefined;
     if (!mode.aiEnabled || !selectedProvider) return this.getSnapshot();
     const provider = this.storage.resolveLlmProviderSecret(selectedProvider);
 
@@ -1854,6 +1865,14 @@ export class AppController {
     this.pillWindow?.webContents.send("pill-state:changed", this.getPillSnapshot(snapshot));
     this.modeSelectorWindow?.webContents.send("mode-selector-state:changed", this.getModeSelectorSnapshot(snapshot));
   }
+}
+
+export async function selectLlmProviderAfterInitialRefresh(
+  initialRefresh: Promise<unknown>,
+  selectProvider: () => LlmProviderConfig | undefined
+): Promise<LlmProviderConfig | undefined> {
+  await initialRefresh;
+  return selectProvider();
 }
 
 export function computeDurationMs(startedAt: string | undefined, stoppedAt: string): number | undefined {
