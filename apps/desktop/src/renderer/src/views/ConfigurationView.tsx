@@ -1,4 +1,3 @@
-import { Dialog } from "@base-ui/react/dialog";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { RotateCcw, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
@@ -13,6 +12,7 @@ import { ShortcutRecorder } from "../components/ShortcutRecorder";
 import { View } from "../components/View";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { Field } from "../components/ui/Field";
 import { Input } from "../components/ui/Input";
 import { Panel } from "../components/ui/Panel";
@@ -300,18 +300,21 @@ export function ConfigurationView({
           <Panel title="Clear local data">
             <div className="flex flex-col gap-3">
               <p className="m-0 text-sm text-muted-foreground">Clears persisted settings, modes, providers, vocabulary, and history.</p>
-              <Dialog.Root open={clearDataDialogOpen} onOpenChange={handleClearDataDialogOpenChange}>
-                <Dialog.Trigger render={<Button variant="danger" />}>
-                  <Trash2 size={18} /> Clear local data
-                </Dialog.Trigger>
-                <Dialog.Portal>
-                  <Dialog.Backdrop className="fixed inset-0 z-40 bg-black/50" />
-                  <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 w-[min(calc(100vw-2rem),30rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-[var(--console-dialog-shadow)] outline-none">
-                    <Dialog.Title className="m-0 text-base font-semibold text-foreground">Clear all local data?</Dialog.Title>
-                    <Dialog.Description className="m-0 mt-2 text-sm leading-6 text-muted-foreground">
+              <ConfirmDialog
+                open={clearDataDialogOpen}
+                onOpenChange={handleClearDataDialogOpenChange}
+                trigger={
+                  <Button variant="danger">
+                    <Trash2 size={18} /> Clear local data
+                  </Button>
+                }
+                title="Clear all local data?"
+                description={
+                  <>
+                    <span>
                       This will reset settings, modes, providers, vocabulary, model records, and history. This cannot be undone.
-                    </Dialog.Description>
-                    <div className="mt-4 flex flex-col gap-2">
+                    </span>
+                    <span className="mt-4 flex flex-col gap-2">
                       <label className="text-xs font-medium text-muted-foreground" htmlFor="clear-local-data-confirmation">
                         Type {clearLocalDataConfirmationPhrase} to confirm.
                       </label>
@@ -326,22 +329,26 @@ export function ConfigurationView({
                         autoComplete="off"
                       />
                       {clearDataError && (
-                        <p role="alert" className="m-0 text-xs text-danger">
+                        <span role="alert" className="text-xs text-danger">
                           {clearDataError}
-                        </p>
+                        </span>
                       )}
-                    </div>
-                    <div className="mt-5 flex justify-end gap-2">
-                      <Dialog.Close disabled={isClearingLocalData} render={<Button variant="secondary" />}>
-                        Cancel
-                      </Dialog.Close>
-                      <Button variant="danger" disabled={!canClearLocalData || isClearingLocalData} onClick={() => void confirmClearLocalData()}>
-                        <Trash2 size={18} /> {isClearingLocalData ? "Clearing..." : "Clear local data"}
-                      </Button>
-                    </div>
-                  </Dialog.Popup>
-                </Dialog.Portal>
-              </Dialog.Root>
+                    </span>
+                  </>
+                }
+                confirmLabel={
+                  <>
+                    <Trash2 size={18} /> {isClearingLocalData ? "Clearing..." : "Clear local data"}
+                  </>
+                }
+                confirmDisabled={!canClearLocalData || isClearingLocalData}
+                cancelDisabled={isClearingLocalData}
+                contentClassName="w-[min(calc(100vw-2rem),30rem)]"
+                onConfirm={(event) => {
+                  event.preventDefault();
+                  void confirmClearLocalData();
+                }}
+              />
             </div>
           </Panel>
         </section>

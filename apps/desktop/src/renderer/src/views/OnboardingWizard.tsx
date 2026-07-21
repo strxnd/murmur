@@ -1,4 +1,3 @@
-import { Dialog } from "@base-ui/react/dialog";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -21,6 +20,7 @@ import { ModelGlyph } from "../components/ModelGlyph";
 import { ShortcutRecorder } from "../components/ShortcutRecorder";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
+import { Dialog } from "../components/ui/Dialog";
 import { Field } from "../components/ui/Field";
 import { Select, type SelectItem } from "../components/ui/Select";
 import { Textarea } from "../components/ui/Textarea";
@@ -436,14 +436,15 @@ export function OnboardingWizard({
   return (
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
-        <Dialog.Backdrop className="onboarding-dialog-backdrop" />
-        <Dialog.Popup className="onboarding-dialog-popup onboarding-shell">
+        <Dialog.Overlay className="onboarding-dialog-backdrop" />
+        <Dialog.Content className="onboarding-dialog-popup onboarding-shell p-0">
           <header className="onboarding-topbar">
             <div className="onboarding-brand">
               <span className="onboarding-brand-mark" aria-hidden="true">
                 <AudioLines size={18} />
               </span>
               <Dialog.Title className="onboarding-brand-title">Murmur setup</Dialog.Title>
+              <Dialog.Description className="sr-only">{currentStepDescription}</Dialog.Description>
             </div>
             <div className="onboarding-topbar-actions">
               <Button variant="ghost" size="sm" onClick={() => void skipOnboarding()} disabled={dictationCloseBlocked}>
@@ -611,7 +612,7 @@ export function OnboardingWizard({
               </footer>
             </section>
           </div>
-        </Dialog.Popup>
+        </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
   );

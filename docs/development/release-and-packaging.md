@@ -5,7 +5,7 @@ Packaging uses Electron Vite for build output and `electron-builder` for app art
 ```mermaid
 flowchart TD
   Source["Source tree"]
-  Build["npm run build: tsc --noEmit and electron-vite build"]
+  Build["bun run build: tsc --noEmit and electron-vite build"]
   Pack["electron-builder --dir"]
   Dist["electron-builder"]
   AfterPack["scripts/after-pack.cjs"]
@@ -43,7 +43,7 @@ flowchart TD
 For local release preparation without pushing a tag or creating a GitHub release:
 
 ```sh
-mise run release:prepare
+bun run release:prepare
 ```
 
 The preparation helper verifies the release version and `docs/releases/<version>.md`, checks the git worktree, runs verification steps, prepares bundled STT runtimes, builds current-platform app artifacts, packages current-platform runtime archives, and writes `dist/SHA256SUMS.txt`. It does not edit tracked files, create release notes, commit, tag, push, or call `gh release`.
@@ -51,21 +51,21 @@ The preparation helper verifies the release version and `docs/releases/<version>
 The helper writes only ignored generated output under paths such as `apps/desktop/out/`, `dist/`, `.cache/bundled-runtimes/`, `vendor/runtimes/`, and `resources/bin/*`. For available skips and non-interactive mode:
 
 ```sh
-npm run release:prepare -- --help
+bun run release:prepare -- --help
 ```
 
 ```sh
-mise run pack
-mise run dist
+bun run pack
+bun run dist
 ```
 
 `pack` runs:
 
 ```sh
-npm run build
-npm run native-helpers:build
-npm run runtimes:manifest-check
-npm run runtimes:stage
+bun run build
+bun run native-helpers:build
+bun run runtimes:manifest-check
+bun run runtimes:stage
 electron-builder --dir
 ```
 
@@ -88,7 +88,7 @@ The `build` block in `package.json` sets:
 - extra resources `resources/bin/linux-fast-paste` and `resources/bin/murmur-macos-helper` under `bin/`
 - extra resource `.cache/bundled-runtimes/runtimes` to `runtimes`
 
-`pack` and `dist` require prepared runtimes for the target platform. Run `mise run runtimes:prepare` first; staging fails before `electron-builder` if either runtime executable is missing.
+`pack` and `dist` require prepared runtimes for the target platform. Run `bun run runtimes:prepare` first; staging fails before `electron-builder` if either runtime executable is missing.
 
 Building the `rpm` target also requires the host system to provide `rpmbuild`.
 
@@ -98,7 +98,7 @@ Pushing a SemVer app version tag creates a draft GitHub Release. The workflow li
 
 Before pushing a release tag:
 
-1. Update `package.json` to the release version.
+1. Update `apps/desktop/package.json` to the release version.
 2. Add meaningful release notes at `docs/releases/<version>.md`.
 3. Commit the version and release notes.
 4. Push the matching tag, for example:
@@ -108,7 +108,7 @@ git tag 0.1.0
 git push origin 0.1.0
 ```
 
-The workflow verifies that the tag matches `package.json`, requires the release notes file, runs lint/tests/audit, checks configured runtime release URL reachability, prepares bundled STT runtimes, builds Linux `AppImage`, `deb`, and `rpm` plus macOS `dmg` and `zip` artifacts on pinned Intel and Apple Silicon runners, generates `SHA256SUMS.txt`, verifies the checksums, and creates a draft release with those files attached.
+The workflow verifies that the tag matches `apps/desktop/package.json`, requires the release notes file, runs root lint and tests across both workspaces, runs `bun audit --audit-level=moderate`, checks configured runtime release URL reachability, prepares bundled STT runtimes, builds Linux `AppImage`, `deb`, and `rpm` plus macOS `dmg` and `zip` artifacts on pinned Intel and Apple Silicon runners, generates `SHA256SUMS.txt`, verifies the checksums, and creates a draft release with those files attached.
 
 ## Checksums and Signing
 
@@ -117,7 +117,7 @@ The workflow verifies that the tag matches `package.json`, requires the release 
 For every release, publish an explicit SHA-256 manifest next to the package artifacts:
 
 ```sh
-mise run dist
+bun run dist
 node scripts/generate-linux-release-checksums.mjs
 ```
 
@@ -160,10 +160,10 @@ Runtime binaries are prepared manually with the runtime scripts before packaging
 For the current platform, run:
 
 ```sh
-mise run runtimes:prepare
-mise run runtimes:doctor
-mise run runtimes:stage
-mise run runtimes:package
+bun run runtimes:prepare
+bun run runtimes:doctor
+bun run runtimes:stage
+bun run runtimes:package
 ```
 
 `runtimes:stage` copies CPU runtime files from `vendor/runtimes/<platform-key>/` into `.cache/bundled-runtimes/runtimes/<platform-key>/` for inclusion under `<process.resourcesPath>/runtimes/` in packaged apps. Accelerated runtime variants are optional assets published on runtime-only GitHub releases, separate from app releases, and are downloaded into the user cache only when their catalog URL, size, and SHA-256 are configured.

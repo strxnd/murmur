@@ -5,7 +5,6 @@ Open-source system-wide AI dictation.
 ## Repository layout
 
 - [`apps/desktop`](apps/desktop): Electron desktop app.
-- [`apps/marketing`](apps/marketing): Public marketing website workspace.
 - [`docs`](docs): Project documentation.
 - [`scripts`](scripts): Repository build, runtime, and release tooling.
 

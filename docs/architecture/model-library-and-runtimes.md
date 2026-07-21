@@ -50,7 +50,7 @@ Packaged apps include CPU `whisper.cpp` and `sherpa-onnx` runtimes under `proces
 
 ## Runtime Install Flow
 
-In development, prepare runtimes with `mise run runtimes:prepare`. If a future catalog entry includes a runtime archive URL, `SttRuntimeService.downloadRuntime()` can download that pinned archive, stream progress, verify SHA-256, extract to a staging directory, find the expected executable, chmod executables, write `runtime.json`, and atomically replace the final cache directory.
+In development, prepare runtimes with `bun run runtimes:prepare`. If a future catalog entry includes a runtime archive URL, `SttRuntimeService.downloadRuntime()` can download that pinned archive, stream progress, verify SHA-256, extract to a staging directory, find the expected executable, chmod executables, write `runtime.json`, and atomically replace the final cache directory.
 
 Before replacing a runtime, the controller stops any running runtime process for that runtime id.
 

@@ -31,7 +31,7 @@ for (const runtime of Object.values(sttRuntimeCatalog)) {
   const executable = runtime.executableCandidates.map((candidate) => join(sourceDir, ...candidate.split("/"))).find((candidate) => existsSync(candidate));
 
   if (!executable) {
-    throw new Error(`Missing ${runtime.id} for ${platformKey}. Run mise run runtimes:prepare before packaging.`);
+    throw new Error(`Missing ${runtime.id} for ${platformKey}. Run bun run runtimes:prepare before packaging.`);
   }
 
   cpSync(sourceDir, targetDir, {
@@ -44,8 +44,8 @@ for (const runtime of Object.values(sttRuntimeCatalog)) {
 
 function readTarget(args, env) {
   return {
-    platform: optionValue(args, "--platform") || optionValue(args, "-p") || env.npm_config_platform || platformFromEnvFlags(env) || "current",
-    arch: optionValue(args, "--arch") || optionValue(args, "-a") || env.npm_config_arch || archFromEnvFlags(env)
+    platform: optionValue(args, "--platform") || optionValue(args, "-p") || env.MURMUR_RUNTIME_PLATFORM || "current",
+    arch: optionValue(args, "--arch") || optionValue(args, "-a") || env.MURMUR_RUNTIME_ARCH
   };
 }
 
@@ -80,18 +80,6 @@ function optionValue(args, name) {
   const value = args[index + 1];
   if (!value || value.startsWith("-")) throw new Error(`${name} needs a value.`);
   return value;
-}
-
-function platformFromEnvFlags(env) {
-  if (env.npm_config_linux === "true" || env.npm_config_linux === "") return "linux";
-  if (env.npm_config_macos === "true" || env.npm_config_darwin === "true" || env.npm_config_mac === "true") return "darwin";
-  return undefined;
-}
-
-function archFromEnvFlags(env) {
-  if (env.npm_config_x64 === "true" || env.npm_config_x64 === "") return "x64";
-  if (env.npm_config_arm64 === "true" || env.npm_config_arm64 === "") return "arm64";
-  return undefined;
 }
 
 function normalizeArch(value) {

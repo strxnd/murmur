@@ -208,7 +208,7 @@ describe("SttRuntimeService", () => {
 
     expect(availability.status).toBe("missing");
     expect(availability.message).toContain("MURMUR_WHISPER_CPP_SERVER");
-    expect(availability.message).toContain("mise run runtimes:prepare");
+    expect(availability.message).toContain("bun run runtimes:prepare");
     expect(availability.message).toContain("vendor/runtimes/linux-x64/whisper.cpp");
 
     const state = service.getInstallState("whisper.cpp");

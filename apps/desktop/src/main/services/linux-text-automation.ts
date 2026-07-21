@@ -265,7 +265,7 @@ export class LinuxTextAutomationService implements TextAutomationBackend {
 
   private computeSetupHints(): string[] {
     const hints: string[] = [];
-    if (!this.helperPath) hints.push("Run npm run linux-helper:build to build the optional native Linux keyboard helper.");
+    if (!this.helperPath) hints.push("Run bun run linux-helper:build to build the optional native Linux keyboard helper.");
     if (this.commands.ydotool) hints.push("ydotool requires ydotoold and access to /dev/uinput before it can emit keys.");
     if (!this.commands.wtype) hints.push("Install wtype for wlroots compositors such as Sway and Hyprland.");
     if (!this.commands.xdotool) hints.push("Install xdotool for X11 and XWayland targets.");

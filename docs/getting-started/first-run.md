@@ -4,7 +4,7 @@ On startup, Murmur creates a main window, tray icon, and hidden recording pill w
 
 ## Basic Flow
 
-1. Start the app with `mise run dev` or a packaged build.
+1. Start the app with `bun run dev` or a packaged build.
 2. Complete the first-time setup wizard:
    - **Microphone**: choose an input device and allow capture.
    - **STT Model**: pick and set up a downloadable local voice model backed by whisper.cpp or Sherpa ONNX.

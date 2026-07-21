@@ -39,7 +39,7 @@ async function main() {
   await checkGitStatus(initialGitStatus);
 
   const runDist = await chooseStep({
-    label: "Build current-platform app artifacts with npm run dist",
+    label: "Build current-platform app artifacts with bun run dist",
     skip: options.skipDist
   });
   const runRuntimePackage = await chooseStep({
@@ -143,17 +143,17 @@ function readOptions(args) {
 }
 
 function printHelp() {
-  console.log(`Usage: npm run release:prepare -- [options]
+  console.log(`Usage: bun run release:prepare -- [options]
 
 Prepares Murmur release artifacts without committing, tagging, pushing, or creating
 GitHub releases.
 
 Default preparation:
-  - validate package.json version and docs/releases/<version>.md
+  - validate apps/desktop/package.json version and docs/releases/<version>.md
   - warn on dirty git state
-  - run lint, tests, npm audit, and runtime manifest checks
+  - run lint, tests, bun audit, and runtime manifest checks
   - prepare and verify current-platform STT runtimes
-  - build app artifacts with npm run dist
+  - build app artifacts with bun run dist
   - package current-platform runtime archives into dist/runtimes
   - generate and verify dist/SHA256SUMS.txt
 
@@ -162,12 +162,12 @@ Options:
   --allow-dirty                     allow a dirty git worktree in non-interactive mode
   --allow-missing-release-notes     allow missing docs/releases/<version>.md
   --dry-run                         print the selected plan without running commands
-  --skip-audit                      skip npm audit --omit=dev --audit-level=moderate
+  --skip-audit                      skip bun audit --audit-level=moderate
   --skip-checksums                  skip checksum generation and verification
-  --skip-dist                       skip npm run dist
+  --skip-dist                       skip bun run dist
   --skip-release-url-check          skip runtime release URL reachability checks
   --skip-runtime-package            skip dist/runtimes archive packaging
-  --skip-tests                      skip npm run test
+  --skip-tests                      skip bun run test
   -h, --help                        show this help
 
 This script may write ignored generated output under apps/desktop/out/, dist/, .cache/,
@@ -242,32 +242,32 @@ async function chooseStep({ label, skip, enabled = true }) {
 
 function buildSteps({ runDist, runRuntimePackage, runChecksums }) {
   const steps = [
-    commandStep("Typecheck", "npm", ["run", "lint"])
+    commandStep("Typecheck", "bun", ["run", "lint"])
   ];
 
   if (!options.skipTests) {
-    steps.push(commandStep("Test", "npm", ["run", "test"]));
+    steps.push(commandStep("Test", "bun", ["run", "test"]));
   }
 
   if (!options.skipAudit) {
-    steps.push(commandStep("Audit production dependencies", "npm", ["audit", "--omit=dev", "--audit-level=moderate"]));
+    steps.push(commandStep("Audit dependencies", "bun", ["audit", "--audit-level=moderate"]));
   }
 
-  steps.push(commandStep("Check runtime catalog metadata", "npm", ["run", "runtimes:manifest-check"]));
+  steps.push(commandStep("Check runtime catalog metadata", "bun", ["run", "runtimes:manifest-check"]));
 
   if (!options.skipReleaseUrlCheck) {
-    steps.push(commandStep("Check runtime release URLs", "npm", ["run", "runtimes:manifest-check:release"]));
+    steps.push(commandStep("Check runtime release URLs", "bun", ["run", "runtimes:manifest-check:release"]));
   }
 
-  steps.push(commandStep("Prepare current-platform STT runtimes", "npm", ["run", "runtimes:prepare"]));
-  steps.push(commandStep("Verify current-platform STT runtimes", "npm", ["run", "runtimes:doctor"]));
+  steps.push(commandStep("Prepare current-platform STT runtimes", "bun", ["run", "runtimes:prepare"]));
+  steps.push(commandStep("Verify current-platform STT runtimes", "bun", ["run", "runtimes:doctor"]));
 
   if (runDist) {
-    steps.push(commandStep("Build current-platform app artifacts", "npm", ["run", "dist"]));
+    steps.push(commandStep("Build current-platform app artifacts", "bun", ["run", "dist"]));
   }
 
   if (runRuntimePackage) {
-    steps.push(commandStep("Package current-platform STT runtime archives", "npm", ["run", "runtimes:package"]));
+    steps.push(commandStep("Package current-platform STT runtime archives", "bun", ["run", "runtimes:package"]));
   }
 
   if (runChecksums) {
@@ -292,7 +292,7 @@ function printPlan(steps) {
 }
 
 async function checkHostTools({ runDist, runRuntimePackage, runChecksums }) {
-  const required = ["git", "npm", "node"];
+  const required = ["git", "bun", "node"];
   if (runRuntimePackage) required.push("tar", "gzip");
   if (runChecksums) required.push("sha256sum");
 
@@ -301,7 +301,7 @@ async function checkHostTools({ runDist, runRuntimePackage, runChecksums }) {
   }
 
   if (runDist && !(await commandExists("rpmbuild"))) {
-    if (options.yes || !(await confirm("rpmbuild was not found. npm run dist is expected to fail for rpm output. Continue anyway?", false))) {
+    if (options.yes || !(await confirm("rpmbuild was not found. bun run dist is expected to fail for rpm output. Continue anyway?", false))) {
       throw new Error("Install rpm/rpmbuild before building release artifacts.");
     }
   }
