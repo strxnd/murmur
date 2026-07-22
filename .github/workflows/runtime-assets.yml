@@ -12,6 +12,9 @@ on:
         required: true
         default: all
 
+permissions:
+  contents: read
+
 jobs:
   package-runtime-assets:
     name: Package runtime assets
@@ -36,10 +39,16 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Prepare runtimes
-        run: bun run runtimes:prepare -- --platform "${{ inputs.platform }}" --accelerator "${{ inputs.accelerator }}"
+        env:
+          RUNTIME_PLATFORM: ${{ inputs.platform }}
+          RUNTIME_ACCELERATOR: ${{ inputs.accelerator }}
+        run: bun run runtimes:prepare -- --platform "$RUNTIME_PLATFORM" --accelerator "$RUNTIME_ACCELERATOR"
 
       - name: Package runtimes
-        run: bun run runtimes:package -- --platform "${{ inputs.platform }}" --accelerator "${{ inputs.accelerator }}"
+        env:
+          RUNTIME_PLATFORM: ${{ inputs.platform }}
+          RUNTIME_ACCELERATOR: ${{ inputs.accelerator }}
+        run: bun run runtimes:package -- --platform "$RUNTIME_PLATFORM" --accelerator "$RUNTIME_ACCELERATOR"
 
       - name: Check runtime manifest
         run: bun run runtimes:manifest-check

@@ -1258,6 +1258,16 @@ pre {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .murmur-dialog-overlay,
+  .murmur-dialog-content,
+  .configuration-unsaved-prompt {
+    animation: none !important;
+  }
+
+  .murmur-dialog-content {
+    transform: translate(-50%, -50%) !important;
+  }
+
   .recording-wave__bar {
     transition-duration: 1ms !important;
   }
