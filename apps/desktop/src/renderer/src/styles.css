@@ -1103,6 +1103,61 @@ pre {
   transform: translateY(0.25rem) scale(0.98);
 }
 
+.murmur-dialog-overlay[data-state="open"] {
+  animation: murmur-dialog-overlay-in 150ms ease-out;
+}
+
+.murmur-dialog-overlay[data-state="closed"] {
+  animation: murmur-dialog-overlay-out 120ms ease-in;
+}
+
+.murmur-dialog-content {
+  transform: translate(-50%, -50%);
+  will-change: opacity, transform;
+}
+
+.murmur-dialog-content[data-state="open"] {
+  animation: murmur-dialog-content-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.murmur-dialog-content[data-state="closed"] {
+  animation: murmur-dialog-content-out 120ms ease-in;
+}
+
+@keyframes murmur-dialog-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes murmur-dialog-overlay-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes murmur-dialog-content-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 0.5rem)) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes murmur-dialog-content-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 0.375rem)) scale(0.98);
+  }
+}
+
 .mode-dialog-backdrop,
 .onboarding-dialog-backdrop {
   transition: opacity 150ms ease;
@@ -1203,6 +1258,16 @@ pre {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .murmur-dialog-overlay,
+  .murmur-dialog-content,
+  .configuration-unsaved-prompt {
+    animation: none !important;
+  }
+
+  .murmur-dialog-content {
+    transform: translate(-50%, -50%) !important;
+  }
+
   .recording-wave__bar {
     transition-duration: 1ms !important;
   }

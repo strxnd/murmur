@@ -18,7 +18,7 @@ const artifacts = (await findArtifacts(distDir))
 
 if (artifacts.length === 0) {
   console.error(`No release artifacts found in ${toDisplayPath(distDir)}.`);
-  console.error("Run `mise run dist` first, then generate checksums from the populated dist/ directory.");
+  console.error("Run `bun run dist` first, then generate checksums from the populated dist/ directory.");
   process.exitCode = 1;
 } else {
   const lines = [];

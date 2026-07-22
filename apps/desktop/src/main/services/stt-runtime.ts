@@ -209,7 +209,7 @@ export class SttRuntimeService {
         message: this.downloadsEnabled && canDownloadRuntime
           ? `${label} runtime binary was not found for ${platformKey}. Set ${this.envVar(definition, accelerator)}, install it from the setup flow, or install it under vendor/runtimes/${platformKey}/${this.runtimeDirName(definition, platformKey, accelerator)}.`
           : this.downloadsEnabled
-            ? `${label} runtime binary was not found for ${platformKey}. Set ${this.envVar(definition, accelerator)} or run mise run runtimes:prepare to install it under vendor/runtimes/${platformKey}/${this.runtimeDirName(definition, platformKey, accelerator)}.`
+            ? `${label} runtime binary was not found for ${platformKey}. Set ${this.envVar(definition, accelerator)} or run bun run runtimes:prepare to install it under vendor/runtimes/${platformKey}/${this.runtimeDirName(definition, platformKey, accelerator)}.`
             : this.missingBundledRuntimeMessage(definition, platformKey, accelerator)
       };
     }
@@ -300,7 +300,7 @@ export class SttRuntimeService {
 
     return this.state(id, accelerator, "not_installed", {
       message: this.downloadsEnabled
-        ? `${sttRuntimeVariantLabel(definition, accelerator)} runtime is not installed. Run mise run runtimes:prepare or set ${this.envVar(definition, accelerator)} to a compatible binary.`
+        ? `${sttRuntimeVariantLabel(definition, accelerator)} runtime is not installed. Run bun run runtimes:prepare or set ${this.envVar(definition, accelerator)} to a compatible binary.`
         : this.missingBundledRuntimeMessage(definition, platformKey, accelerator),
       canDownload: this.downloadsEnabled && canDownloadRuntime,
       canRepair: false

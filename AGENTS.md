@@ -2,52 +2,54 @@
 
 ## Repository Overview
 
-Murmur is an early-stage, cross-platform AI dictation desktop app for Linux and macOS. The repository is an npm workspace, but `apps/desktop` is currently the only implemented application; `apps/marketing` has no source or build pipeline yet.
+Murmur is an early-stage, cross-platform AI dictation desktop app for Linux and macOS. The Bun workspace contains the Electron application under `apps/desktop`.
 
-Use npm package scripts as the command source of truth. Mise pins the toolchain and wraps the root scripts, which delegate to `apps/desktop`.
+Use Bun package scripts as the command source of truth. Mise only installs and pins Bun, Node, and CMake; it does not define repository tasks. Bun is the package manager and workspace script runner, while the pinned Node runtime remains required for Electron, Electron Vite, native tooling, and repository scripts that intentionally run with `node`.
 
 ## Commands
 
 ```sh
-mise install             # Install pinned Node 25.9.0 and CMake 3.31.12
-mise run install         # npm ci
-mise run dev             # Start Electron through Electron Vite
-mise run build           # Typecheck and build apps/desktop/out
-mise run preview         # Preview the production build
-mise run lint            # Typecheck only (tsc --noEmit; no separate linter)
-mise run test            # Run desktop and repository-script Vitest suites
-mise run clean           # Remove normal generated build/package output
-mise run clean:all       # Also remove prepared runtime caches/vendor artifacts
+mise install                   # Install pinned Bun 1.3.14, Node 25.9.0, and CMake 3.31.12
+bun install --frozen-lockfile  # Install dependencies from bun.lock
+bun run dev                    # Start the Electron desktop app through Electron Vite
+bun run build                  # Typecheck and build production output
+bun run preview                # Preview the production desktop build
+bun run lint                   # Typecheck the desktop workspace
+bun run test                   # Run desktop and repository-script Vitest suites
+bun run clean                  # Remove normal generated build/package output
+bun run clean:all              # Also remove prepared runtime caches/vendor artifacts
 ```
 
 Run a single desktop test file from the repository root:
 
 ```sh
-npm --prefix apps/desktop run test -- src/main/services/storage.test.ts
+bun run --cwd apps/desktop test -- src/main/services/storage.test.ts
 ```
 
 Run one named test:
 
 ```sh
-npm --prefix apps/desktop run test -- src/main/services/storage.test.ts -t "writes config state to the config dir"
+bun run --cwd apps/desktop test -- src/main/services/storage.test.ts -t "writes config state to the config dir"
 ```
 
-There is no formatter command or formatter configuration. `mise run build` is the minimum repository verification before handing off changes, including documentation-only changes. CI additionally runs runtime manifest checks and `npm audit`.
+There is no formatter command or formatter configuration. `bun run build` is the minimum repository verification before handing off changes, including documentation-only changes. CI additionally runs runtime manifest checks and `bun audit --audit-level=moderate`.
 
 Packaging requires current-platform STT runtimes to be prepared:
 
 ```sh
-mise run runtimes:prepare
-mise run runtimes:doctor
-mise run pack             # Unpacked Electron app
-mise run dist             # Distributable artifacts in dist/
+bun run runtimes:prepare
+bun run runtimes:doctor
+bun run pack             # Unpacked Electron app
+bun run dist             # Distributable artifacts in dist/
 ```
 
 ## Architecture
 
 ### Process boundaries
 
-Electron Vite builds a main process, preload, and one React renderer bundle. `src/main/index.ts` handles the Linux Wayland/XWayland entrypoint behavior; `src/main/app-main.ts` handles platform checks, single-instance startup, and shutdown. `AppController` in `src/main/app-controller.ts` is the composition root: it creates services, registers IPC and hotkeys, manages the tray, and owns the main, recording-pill, and mode-selector windows. All windows use the same renderer bundle and select their UI using query parameters.
+Electron Vite builds a main process, preload, and one React renderer bundle.
+
+`src/main/index.ts` handles the Linux Wayland/XWayland entrypoint behavior; `src/main/app-main.ts` handles platform checks, single-instance startup, and shutdown. `AppController` in `src/main/app-controller.ts` is the composition root: it creates services, registers IPC and hotkeys, manages the tray, and owns the main, recording-pill, and mode-selector windows. All windows use the same renderer bundle and select their UI using query parameters.
 
 The renderer is sandboxed: it must not import Electron directly. Keep context isolation enabled and Node integration disabled. `src/preload/index.ts` exposes the narrow `window.murmur` API, and `src/renderer/src/lib/murmur-client.ts` wraps that bridge and validates responses. Main-process IPC handlers also validate payloads and reject senders outside owned windows and trusted renderer URLs.
 

@@ -45,8 +45,10 @@ describe("renderer security policy", () => {
     });
 
     expect(isTrustedRendererUrl(devSource, "http://localhost:5173/?pill=1")).toBe(true);
+    expect(isTrustedRendererUrl(devSource, "http://localhost:5173/#/history")).toBe(true);
     expect(isTrustedRendererUrl(devSource, "http://localhost.evil.test:5173")).toBe(false);
     expect(isTrustedRendererUrl(fileSource, `${pathToFileURL(rendererFilePath).toString()}?mode-selector=1`)).toBe(true);
+    expect(isTrustedRendererUrl(fileSource, `${pathToFileURL(rendererFilePath).toString()}#/models`)).toBe(true);
     expect(isTrustedRendererUrl(fileSource, pathToFileURL(join(process.cwd(), "other.html")).toString())).toBe(false);
   });
 });

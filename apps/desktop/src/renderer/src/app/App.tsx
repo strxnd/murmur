@@ -1,3 +1,4 @@
+import { RouterProvider } from "@tanstack/react-router";
 import { AlertTriangle, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type JSX } from "react";
 import { createPortal } from "react-dom";
@@ -5,7 +6,7 @@ import type { AppSettings, ModeSelectorStateSnapshot, PillStateSnapshot } from "
 import { useMurmurStore, type ActionError } from "../state/murmur-store";
 import { useRecordingBridge } from "../hooks/useRecordingBridge";
 import { murmurClient } from "../lib/murmur-client";
-import { AppShell } from "./AppShell";
+import { getMainRouter } from "./main-router";
 import { ModeSelectorOverlay } from "./ModeSelectorOverlay";
 import { RecordingPill } from "./RecordingPill";
 
@@ -52,7 +53,7 @@ function MainApp(): JSX.Element {
 
   return (
     <>
-      <AppShell state={snapshot} />
+      <RouterProvider router={getMainRouter()} />
       <ActionErrorBanner error={actionError} onDismiss={clearActionError} />
     </>
   );

@@ -1,4 +1,3 @@
-import { Dialog } from "@base-ui/react/dialog";
 import {
   Check,
   ChevronRight,
@@ -32,6 +31,8 @@ import { ModelGlyph } from "../components/ModelGlyph";
 import { View } from "../components/View";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { Dialog } from "../components/ui/Dialog";
 import { EmptyState } from "../components/ui/EmptyState";
 import { Field } from "../components/ui/Field";
 import { IconButton } from "../components/ui/IconButton";
@@ -362,26 +363,17 @@ function ModelDetails({
                 <Download size={18} /> {status === "error" ? "Retry" : "Download"}
               </Button>
             )}
-            <Dialog.Root>
-              <Dialog.Trigger disabled={!canDelete} render={<Button />}>
-                <Trash2 size={18} /> Delete
-              </Dialog.Trigger>
-              <Dialog.Portal>
-                <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/50" />
-                <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-[var(--console-dialog-shadow)] outline-none">
-                  <Dialog.Title className="m-0 text-base font-semibold text-foreground">Delete downloaded model?</Dialog.Title>
-                  <Dialog.Description className="m-0 mt-2 text-sm leading-6 text-muted-foreground">
-                    This will remove the local download for {item.name}. The model can be downloaded again later.
-                  </Dialog.Description>
-                  <div className="mt-5 flex justify-end gap-2">
-                    <Dialog.Close render={<Button variant="secondary" />}>Cancel</Dialog.Close>
-                    <Dialog.Close onClick={() => void onDelete()} render={<Button variant="danger" />}>
-                      Delete model
-                    </Dialog.Close>
-                  </div>
-                </Dialog.Popup>
-              </Dialog.Portal>
-            </Dialog.Root>
+            <ConfirmDialog
+              trigger={
+                <Button disabled={!canDelete}>
+                  <Trash2 size={18} /> Delete
+                </Button>
+              }
+              title="Delete downloaded model?"
+              description={<>This will remove the local download for {item.name}. The model can be downloaded again later.</>}
+              confirmLabel="Delete model"
+              onConfirm={onDelete}
+            />
           </>
         )}
         {canActivate && (
@@ -394,8 +386,10 @@ function ModelDetails({
         )}
         {item.downloadStrategy === "none" && !canActivate && !item.discovery && setupTarget && (
           <Dialog.Root open={providerSetupOpen} onOpenChange={setProviderSetupOpen}>
-            <Dialog.Trigger render={<Button variant="primary" />}>
-              <KeyRound size={18} /> Set up provider
+            <Dialog.Trigger asChild>
+              <Button variant="primary">
+                <KeyRound size={18} /> Set up provider
+              </Button>
             </Dialog.Trigger>
             <ProviderSetupDialog
               state={state}
@@ -506,8 +500,8 @@ function ProviderSetupDialog({
 
   return (
     <Dialog.Portal>
-      <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/50" />
-      <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] w-[min(calc(100vw-2rem),30rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-[var(--console-dialog-shadow)] outline-none">
+      <Dialog.Overlay />
+      <Dialog.Content className="w-[min(calc(100vw-2rem),30rem)] rounded-md bg-surface shadow-[var(--console-dialog-shadow)]">
         <form
           className="flex flex-col gap-4"
           onSubmit={(event) => {
@@ -522,8 +516,10 @@ function ProviderSetupDialog({
                 Validate credentials for {item.name}, then save and activate the model.
               </Dialog.Description>
             </div>
-            <Dialog.Close render={<IconButton title="Close" disabled={isSubmitting} />}>
-              <X size={18} />
+            <Dialog.Close asChild>
+              <IconButton title="Close" disabled={isSubmitting}>
+                <X size={18} />
+              </IconButton>
             </Dialog.Close>
           </header>
 
@@ -560,13 +556,15 @@ function ProviderSetupDialog({
           )}
 
           <div className="flex justify-end gap-2">
-            <Dialog.Close render={<Button variant="secondary" disabled={isSubmitting} />}>Cancel</Dialog.Close>
+            <Dialog.Close asChild>
+              <Button variant="secondary" disabled={isSubmitting}>Cancel</Button>
+            </Dialog.Close>
             <Button variant="primary" type="submit" disabled={!canSubmit}>
               <Check size={18} /> {isSubmitting ? "Validating..." : "Validate and activate"}
             </Button>
           </div>
         </form>
-      </Dialog.Popup>
+      </Dialog.Content>
     </Dialog.Portal>
   );
 }

@@ -15,7 +15,7 @@ Paste automation writes output to the clipboard first, then sends a paste shortc
 
 On Linux, install or enable one of the supported automation backends:
 
-- Build the native helper with `mise run linux-helper:build`.
+- Build the native helper with `bun run linux-helper:build`.
 - Install `wtype` for wlroots Wayland compositors.
 - Install `xdotool` for X11 or XWayland targets.
 - Use `ydotool` only when `ydotoold` and `/dev/uinput` access are configured.
@@ -30,8 +30,8 @@ Selected-text capture uses clipboard restore plus text automation. It is skipped
 For development, run:
 
 ```sh
-mise run runtimes:prepare
-mise run runtimes:doctor
+bun run runtimes:prepare
+bun run runtimes:doctor
 ```
 
 For managed installs, use the in-app runtime setup flow or repair action. Runtime lookup and environment overrides are documented in [environment variables](../reference/environment-variables.md).

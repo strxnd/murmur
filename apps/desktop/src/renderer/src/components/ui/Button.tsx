@@ -1,11 +1,10 @@
-import { Button as BaseButton } from "@base-ui/react/button";
-import { forwardRef, type ComponentPropsWithoutRef, type ElementRef } from "react";
+import { forwardRef, type ButtonHTMLAttributes } from "react";
 import { cn } from "../../lib/cn";
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 type ButtonSize = "sm" | "md" | "icon";
 
-interface ButtonProps extends ComponentPropsWithoutRef<typeof BaseButton> {
+interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
   size?: ButtonSize;
 }
@@ -23,9 +22,9 @@ const sizes: Record<ButtonSize, string> = {
   icon: "h-[38px] w-[38px] p-0"
 };
 
-export const Button = forwardRef<ElementRef<typeof BaseButton>, ButtonProps>(
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = "secondary", size = "md", type = "button", ...props }, ref) => (
-    <BaseButton
+    <button
       ref={ref}
       type={type}
       className={cn(

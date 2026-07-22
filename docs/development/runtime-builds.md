@@ -30,50 +30,59 @@ Remove the patch after the pinned upstream version includes the multipart WAV fi
 Prepare current-platform runtimes:
 
 ```sh
-mise run runtimes:prepare
+bun run runtimes:prepare
 ```
 
 Prepare optional whisper.cpp CUDA variants on compatible Linux hosts:
 
 ```sh
-npm run runtimes:prepare -- --accelerator cuda
+bun run runtimes:prepare -- --accelerator cuda
 ```
 
 Check current-platform runtime readiness:
 
 ```sh
-mise run runtimes:doctor
-npm run runtimes:doctor -- --accelerator cuda
+bun run runtimes:doctor
+bun run runtimes:doctor -- --accelerator cuda
 ```
 
 Package after runtimes are present:
 
 ```sh
-mise run runtimes:stage
-mise run runtimes:package
-mise run runtimes:manifest-check
-mise run runtimes:manifest-check:release
+bun run runtimes:stage
+bun run runtimes:package
+bun run runtimes:manifest-check
+bun run runtimes:manifest-check:release
 ```
 
 `runtimes:stage` copies exactly one prepared platform from `vendor/runtimes/<platform-key>/` into `.cache/bundled-runtimes/runtimes/<platform-key>/` for `electron-builder` to place under `<process.resourcesPath>/runtimes/`.
 Only CPU runtimes are staged into packaged app resources. Accelerated variants are optional installs and may download in packaged builds only when their Murmur release URL, size, and SHA-256 are configured.
 Set `MURMUR_RUNTIME_VENDOR_ROOT` or `MURMUR_RUNTIME_STAGING_ROOT` to override those source and staging roots when testing the staging script.
 
-For explicit-target packaging, pass the requested target:
+For explicit-target staging, pass either a complete platform key or separate platform and architecture flags:
 
 ```sh
-npm run runtimes:stage -- --platform linux-x64
+bun run runtimes:stage -- --platform linux-x64
+bun run runtimes:stage -- --platform linux --arch x64
 ```
+
+The stable environment-variable form is useful for automation that cannot append arguments:
+
+```sh
+MURMUR_RUNTIME_PLATFORM=darwin MURMUR_RUNTIME_ARCH=arm64 bun run runtimes:stage
+```
+
+Explicit `--platform` and `--arch` arguments take precedence over `MURMUR_RUNTIME_PLATFORM` and `MURMUR_RUNTIME_ARCH`. Package-manager-specific environment aliases are not supported.
 
 `runtimes:package` writes local packaging archives to `dist/runtimes/` and prints size and SHA-256 values. Those values must match `src/shared/stt-runtime-catalog.ts` for `runtimes:manifest-check` to pass.
 
 To package an optional accelerated runtime after preparing it:
 
 ```sh
-npm run runtimes:package -- --accelerator cuda
+bun run runtimes:package -- --accelerator cuda
 ```
 
-Murmur app releases should publish only the Electron app artifacts from `mise run dist`. Optional accelerated runtime archives referenced by `src/shared/stt-runtime-catalog.ts` live on separate runtime-only releases, such as `stt-runtimes-0.1.0`. Runtime release versions, runtime bundle versions, and upstream runtime versions are SemVer values without a leading `v`; external source tags may still include their upstream prefix.
+Murmur app releases should publish only the Electron app artifacts from `bun run dist`. Optional accelerated runtime archives referenced by `src/shared/stt-runtime-catalog.ts` live on separate runtime-only releases, such as `stt-runtimes-0.1.0`. Runtime release versions, runtime bundle versions, and upstream runtime versions are SemVer values without a leading `v`; external source tags may still include their upstream prefix.
 
 To publish prepared accelerated runtime archives:
 
@@ -151,11 +160,11 @@ Use single-channel 16-bit PCM WAV input for bundled runtime smoke tests.
 
 Missing executable:
 
-- Run `mise run runtimes:prepare`.
-- Confirm `mise run runtimes:doctor` reports both runtimes available.
+- Run `bun run runtimes:prepare`.
+- Confirm `bun run runtimes:doctor` reports both runtimes available.
 - Check that the executable is under `vendor/runtimes/<platform-key>/<runtime>/`.
-- For app packaging, run `mise run runtimes:stage` and confirm both runtimes exist under `.cache/bundled-runtimes/runtimes/<platform-key>/`.
-- Confirm `mise run runtimes:manifest-check` passes before packaging app artifacts.
+- For app packaging, run `bun run runtimes:stage` and confirm both runtimes exist under `.cache/bundled-runtimes/runtimes/<platform-key>/`.
+- Confirm `bun run runtimes:manifest-check` passes before packaging app artifacts.
 
 Unsupported platform:
 

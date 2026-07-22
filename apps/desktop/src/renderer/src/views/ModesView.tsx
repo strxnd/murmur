@@ -1,4 +1,3 @@
-import { Dialog } from "@base-ui/react/dialog";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Check,
@@ -24,6 +23,7 @@ import { View } from "../components/View";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Checkbox } from "../components/ui/Checkbox";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { Field } from "../components/ui/Field";
 import { IconButton } from "../components/ui/IconButton";
 import { Input } from "../components/ui/Input";
@@ -407,26 +407,19 @@ function ModeEditor({
                 <Check size={16} /> Make active
               </Button>
               {onDelete && (
-                <Dialog.Root>
-                  <Dialog.Trigger render={<IconButton title="Delete mode" tone="danger" />}>
-                    <Trash2 size={18} />
-                  </Dialog.Trigger>
-                  <Dialog.Portal>
-                    <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/50" />
-                    <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-[var(--console-dialog-shadow)] outline-none">
-                      <Dialog.Title className="m-0 text-base font-semibold text-foreground">Delete mode?</Dialog.Title>
-                      <Dialog.Description className="m-0 mt-2 text-sm leading-6 text-muted-foreground">
-                        This will remove {mode.name || "this mode"} from your modes. Save changes to persist the deletion.
-                      </Dialog.Description>
-                      <div className="mt-5 flex justify-end gap-2">
-                        <Dialog.Close render={<Button variant="secondary" />}>Cancel</Dialog.Close>
-                        <Dialog.Close onClick={onDelete} render={<Button variant="danger" />}>
-                          Delete mode
-                        </Dialog.Close>
-                      </div>
-                    </Dialog.Popup>
-                  </Dialog.Portal>
-                </Dialog.Root>
+                <ConfirmDialog
+                  trigger={
+                    <IconButton title="Delete mode" tone="danger">
+                      <Trash2 size={18} />
+                    </IconButton>
+                  }
+                  title="Delete mode?"
+                  description={
+                    <>This will remove {mode.name || "this mode"} from your modes. Save changes to persist the deletion.</>
+                  }
+                  confirmLabel="Delete mode"
+                  onConfirm={onDelete}
+                />
               )}
             </>
           )}

@@ -6,6 +6,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-24.04
@@ -20,25 +23,25 @@ jobs:
           cache: true
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Typecheck
-        run: mise run lint
+        run: bun run lint
 
       - name: Test
-        run: mise run test
+        run: bun run test
 
       - name: Build
-        run: mise run build
+        run: bun run build
 
       - name: Check runtime manifest
-        run: mise run runtimes:manifest-check
+        run: bun run runtimes:manifest-check
 
       - name: Check runtime release URLs
-        run: mise run runtimes:manifest-check:release
+        run: bun run runtimes:manifest-check:release
 
-      - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=moderate
+      - name: Audit dependencies
+        run: bun audit --audit-level=moderate
 
   macos-helper:
     name: Compile macOS helper (${{ matrix.runner }})
@@ -58,4 +61,4 @@ jobs:
           cache: true
 
       - name: Compile helper
-        run: mise run macos-helper:build
+        run: bun run macos-helper:build

@@ -2,6 +2,7 @@ import { Keyboard } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type JSX, type KeyboardEvent, type MouseEvent } from "react";
 import { keyboardEventToAccelerator } from "../lib/keyboard-shortcuts";
 import { cn } from "../lib/cn";
+import { useFieldControlProps } from "./ui/Field";
 
 interface ShortcutRecorderProps {
   value: string;
@@ -25,6 +26,7 @@ export function ShortcutRecorder({
   const isCaptureActive = useRef(false);
   const onCaptureStartRef = useRef(onCaptureStart);
   const onCaptureEndRef = useRef(onCaptureEnd);
+  const fieldProps = useFieldControlProps({});
 
   useEffect(() => {
     onCaptureStartRef.current = onCaptureStart;
@@ -111,6 +113,7 @@ export function ShortcutRecorder({
         "flex min-h-11 w-full min-w-0 items-center gap-3 rounded-[11px] border border-border bg-surface-raised px-3 py-2 text-left text-sm text-foreground outline-none transition-colors focus:border-foreground/70 focus:ring-2 focus:ring-foreground/20 disabled:cursor-not-allowed disabled:opacity-50",
         isRecording ? "border-foreground/70 bg-muted/40 ring-2 ring-foreground/20" : "hover:bg-muted/40"
       )}
+      {...fieldProps}
     >
       <Keyboard size={15} className="shrink-0 text-muted-foreground" />
       <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">

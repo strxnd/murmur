@@ -1,4 +1,3 @@
-import { Dialog } from "@base-ui/react/dialog";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { AlertTriangle, Cable, CheckCircle2, ChevronRight, KeyRound, MessageSquare, Mic, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState, type JSX } from "react";
@@ -18,6 +17,8 @@ import { CodexMark } from "../components/CodexMark";
 import { View } from "../components/View";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { Dialog } from "../components/ui/Dialog";
 import { Field } from "../components/ui/Field";
 import { IconButton } from "../components/ui/IconButton";
 import { Input } from "../components/ui/Input";
@@ -123,6 +124,8 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
   const [openProvider, setOpenProvider] = useState<ProviderDialogTarget | null>(null);
   const [isProviderDialogOpen, setIsProviderDialogOpen] = useState(false);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
+  const providerDialogTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const retainedProviderEntryRef = useRef<CustomProviderEntry | null>(null);
   const advancedBodyId = useId();
   const customProviderListParent = useAutoAnimateRef<HTMLDivElement>();
   const currentValues: ProvidersFormValues = {
@@ -194,7 +197,8 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
     form.reset(cloneProvidersFormValues(persistedValuesRef.current));
   }, [form]);
 
-  const addSttProvider = (): void => {
+  const addSttProvider = (trigger: HTMLButtonElement): void => {
+    providerDialogTriggerRef.current = trigger;
     const next = createCustomTranscriptionProvider(makeClientId("stt_provider"));
     setIsAdvancedOpen(true);
     form.setValue(
@@ -206,7 +210,8 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
     setIsProviderDialogOpen(true);
   };
 
-  const addLlmProvider = (): void => {
+  const addLlmProvider = (trigger: HTMLButtonElement): void => {
+    providerDialogTriggerRef.current = trigger;
     const next = createCustomLlmProvider(makeClientId("llm_provider"));
     setIsAdvancedOpen(true);
     form.setValue("llmProviders", [...form.getValues("llmProviders"), next], {
@@ -354,10 +359,16 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
     ...advancedTranscriptionProviders.map(({ provider, index }) => ({ kind: "stt" as const, provider, index })),
     ...advancedLlmProviders.map(({ provider, index }) => ({ kind: "llm" as const, provider, index }))
   ];
-  const openProviderEntry = openProvider
+  const currentOpenProviderEntry = openProvider
     ? customProviders.find((entry) => entry.kind === openProvider.kind && entry.provider.id === openProvider.id)
     : undefined;
-  const providerDialogOpen = isProviderDialogOpen && Boolean(openProviderEntry);
+  const providerDialogOpen = isProviderDialogOpen && Boolean(currentOpenProviderEntry);
+
+  useEffect(() => {
+    if (currentOpenProviderEntry) retainedProviderEntryRef.current = currentOpenProviderEntry;
+  }, [currentOpenProviderEntry]);
+
+  const renderedProviderEntry = currentOpenProviderEntry ?? retainedProviderEntryRef.current;
 
   const unsavedChangesPrompt = isPromptMounted
     ? createPortal(
@@ -444,10 +455,10 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
             </button>
             {isAdvancedOpen && customProviders.length > 0 && (
               <div className="provider-advanced-actions">
-                <Button size="sm" onClick={addSttProvider}>
+                <Button size="sm" onClick={(event) => addSttProvider(event.currentTarget)}>
                   <Plus size={15} /> Speech endpoint
                 </Button>
-                <Button size="sm" onClick={addLlmProvider}>
+                <Button size="sm" onClick={(event) => addLlmProvider(event.currentTarget)}>
                   <Plus size={15} /> Language endpoint
                 </Button>
               </div>
@@ -463,12 +474,12 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
                     <span>Add a speech service or language model server. You can test the connection before saving.</span>
                   </div>
                   <div className="provider-advanced-empty-actions">
-                    <button type="button" onClick={addSttProvider}>
+                    <button type="button" onClick={(event) => addSttProvider(event.currentTarget)}>
                       <ProviderGlyph kind="stt" />
                       <span><strong>Speech endpoint</strong><small>Transcribe recorded audio</small></span>
                       <Plus size={16} />
                     </button>
-                    <button type="button" onClick={addLlmProvider}>
+                    <button type="button" onClick={(event) => addLlmProvider(event.currentTarget)}>
                       <ProviderGlyph kind="llm" />
                       <span><strong>Language endpoint</strong><small>Rewrite and refine text</small></span>
                       <Plus size={16} />
@@ -481,8 +492,9 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
                     <CustomProviderRow
                       key={`${entry.kind}:${entry.provider.id}`}
                       entry={entry}
-                      active={openProvider?.kind === entry.kind && openProvider.id === entry.provider.id}
-                      onOpen={() => {
+                      active={providerDialogOpen && openProvider?.kind === entry.kind && openProvider.id === entry.provider.id}
+                      onOpen={(trigger) => {
+                        providerDialogTriggerRef.current = trigger;
                         setOpenProvider({ kind: entry.kind, id: entry.provider.id });
                         setIsProviderDialogOpen(true);
                       }}
@@ -494,41 +506,34 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
           )}
         </section>
       </View>
-      <Dialog.Root
-        open={providerDialogOpen}
-        onOpenChange={(open) => {
-          if (open) {
-            setIsProviderDialogOpen(true);
-          } else {
-            closeProviderPopup();
-          }
-        }}
-        onOpenChangeComplete={(open) => {
-          if (!open) setOpenProvider(null);
-        }}
-      >
+      <Dialog.Root open={providerDialogOpen} onOpenChange={setIsProviderDialogOpen}>
         <Dialog.Portal>
-          <Dialog.Backdrop className="mode-dialog-backdrop fixed inset-0 z-40 bg-black/50" />
-          <Dialog.Popup
-            className="provider-editor-dialog mode-dialog-popup fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-3rem)] overflow-y-auto border border-border bg-surface-raised text-sm text-foreground shadow-[var(--console-dialog-shadow)] outline-none"
-            style={{ width: "min(48rem, calc(100vw - 2rem))" }}
+          <Dialog.Overlay />
+          <Dialog.Content
+            className="provider-editor-dialog max-h-[calc(100vh-3rem)] w-[min(48rem,calc(100vw-2rem))] p-0 text-sm"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              if (providerDialogTriggerRef.current?.isConnected) providerDialogTriggerRef.current.focus();
+            }}
           >
-            {openProviderEntry && (
+            {renderedProviderEntry && (
               <CustomProviderEditor
-                entry={openProviderEntry}
+                entry={renderedProviderEntry}
                 form={form}
-                validation={validationByProvider[providerKey(openProviderEntry.kind, openProviderEntry.provider.id)]}
-                onValidate={() => void validateProvider(openProviderEntry.kind, openProviderEntry.index)}
-                onDismissValidation={() => clearValidation(providerKey(openProviderEntry.kind, openProviderEntry.provider.id), setValidationByProvider)}
+                validation={validationByProvider[providerKey(renderedProviderEntry.kind, renderedProviderEntry.provider.id)]}
+                onValidate={() => void validateProvider(renderedProviderEntry.kind, renderedProviderEntry.index)}
+                onDismissValidation={() =>
+                  clearValidation(providerKey(renderedProviderEntry.kind, renderedProviderEntry.provider.id), setValidationByProvider)
+                }
                 onDelete={() =>
-                  openProviderEntry.kind === "stt"
-                    ? deleteSttProvider(openProviderEntry.provider.id)
-                    : deleteLlmProvider(openProviderEntry.provider.id)
+                  renderedProviderEntry.kind === "stt"
+                    ? deleteSttProvider(renderedProviderEntry.provider.id)
+                    : deleteLlmProvider(renderedProviderEntry.provider.id)
                 }
                 onClose={closeProviderPopup}
               />
             )}
-          </Dialog.Popup>
+          </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
       {unsavedChangesPrompt}
@@ -614,24 +619,18 @@ function CodexSubscriptionSection({
               <Cable size={15} /> Connect
             </Button>
           ) : connected ? (
-            <Dialog.Root>
-              <Dialog.Trigger render={<Button size="sm" variant="secondary" />}>
-                <X size={15} /> Disconnect
-              </Dialog.Trigger>
-              <Dialog.Portal>
-                <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/50" />
-                <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] w-[min(calc(100vw-2rem),30rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-[var(--console-dialog-shadow)] outline-none">
-                  <Dialog.Title className="m-0 text-base font-semibold text-foreground">Disconnect Codex?</Dialog.Title>
-                  <Dialog.Description className="m-0 mt-2 text-sm leading-6 text-muted-foreground">
-                    This removes Murmur's Codex credentials. It does not sign you out of Codex CLI, VS Code, or other applications.
-                  </Dialog.Description>
-                  <div className="mt-5 flex justify-end gap-2">
-                    <Dialog.Close render={<Button variant="secondary" />}>Cancel</Dialog.Close>
-                    <Dialog.Close onClick={onDisconnect} render={<Button variant="danger" />}>Disconnect</Dialog.Close>
-                  </div>
-                </Dialog.Popup>
-              </Dialog.Portal>
-            </Dialog.Root>
+            <ConfirmDialog
+              trigger={
+                <Button size="sm" variant="secondary">
+                  <X size={15} /> Disconnect
+                </Button>
+              }
+              title="Disconnect Codex?"
+              description="This removes Murmur's Codex credentials. It does not sign you out of Codex CLI, VS Code, or other applications."
+              confirmLabel="Disconnect"
+              contentClassName="w-[min(calc(100vw-2rem),30rem)]"
+              onConfirm={onDisconnect}
+            />
           ) : null}
           {runtime.status !== "signing_in" && (
             <Button size="sm" onClick={onRefresh} disabled={runtime.status === "checking"}>
@@ -788,7 +787,15 @@ function CloudCredentialRow({
   );
 }
 
-function CustomProviderRow({ entry, active, onOpen }: { entry: CustomProviderEntry; active: boolean; onOpen: () => void }): JSX.Element {
+function CustomProviderRow({
+  entry,
+  active,
+  onOpen
+}: {
+  entry: CustomProviderEntry;
+  active: boolean;
+  onOpen: (trigger: HTMLButtonElement) => void;
+}): JSX.Element {
   const provider = entry.provider;
 
   return (
@@ -800,7 +807,7 @@ function CustomProviderRow({ entry, active, onOpen }: { entry: CustomProviderEnt
       )}
       aria-haspopup="dialog"
       aria-expanded={active}
-      onClick={onOpen}
+      onClick={(event) => onOpen(event.currentTarget)}
     >
       <ProviderGlyph kind={entry.kind} active={active} />
       <span className="flex min-w-0 items-center gap-2">
@@ -846,34 +853,27 @@ function CustomProviderEditor({
         <div className="flex min-w-0 items-center gap-3">
           <ProviderGlyph kind={entry.kind} active />
           <div className="min-w-0">
-            <Dialog.Title className="m-0 truncate text-base font-semibold text-foreground">{providerDisplayName(entry)}</Dialog.Title>
-            <p className="m-0 truncate text-xs text-muted-foreground">{providerKindDetail(entry.kind)}</p>
+            <Dialog.Title className="truncate">{providerDisplayName(entry)}</Dialog.Title>
+            <Dialog.Description className="mt-0 truncate text-xs">{providerKindDetail(entry.kind)}</Dialog.Description>
           </div>
         </div>
         <div className="provider-editor-header-actions">
           <Button size="sm" onClick={onValidate} disabled={validation?.status === "validating"}>
             <CheckCircle2 size={15} /> {validateButtonLabel}
           </Button>
-          <Dialog.Root>
-            <Dialog.Trigger render={<IconButton title="Delete provider" tone="danger" />}>
-              <Trash2 size={18} />
-            </Dialog.Trigger>
-            <Dialog.Portal>
-              <Dialog.Backdrop className="fixed inset-0 z-[70] bg-black/50" />
-              <Dialog.Popup className="fixed left-1/2 top-1/2 z-[80] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-[var(--console-dialog-shadow)] outline-none">
-                <Dialog.Title className="m-0 text-base font-semibold text-foreground">Delete provider?</Dialog.Title>
-                <Dialog.Description className="m-0 mt-2 text-sm leading-6 text-muted-foreground">
-                  This will remove {providerDisplayName(entry)} from custom providers. Save changes to persist the deletion.
-                </Dialog.Description>
-                <div className="mt-5 flex justify-end gap-2">
-                  <Dialog.Close render={<Button variant="secondary" />}>Cancel</Dialog.Close>
-                  <Dialog.Close onClick={onDelete} render={<Button variant="danger" />}>
-                    Delete provider
-                  </Dialog.Close>
-                </div>
-              </Dialog.Popup>
-            </Dialog.Portal>
-          </Dialog.Root>
+          <ConfirmDialog
+            trigger={
+              <IconButton title="Delete provider" tone="danger">
+                <Trash2 size={18} />
+              </IconButton>
+            }
+            title="Delete provider?"
+            description={<>This will remove {providerDisplayName(entry)} from custom providers. Save changes to persist the deletion.</>}
+            confirmLabel="Delete provider"
+            overlayClassName="z-[90]"
+            contentClassName="z-[100]"
+            onConfirm={onDelete}
+          />
           <IconButton title="Close" onClick={onClose}>
             <X size={18} />
           </IconButton>
