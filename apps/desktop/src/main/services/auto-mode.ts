@@ -2,8 +2,8 @@ import type { AutoModeRule, ContextSnapshot, ModeConfig } from "../../shared/typ
 
 export function resolveModeByContext(
   context: ContextSnapshot,
-  modes: ModeConfig[],
-  rules: AutoModeRule[],
+  modes: readonly ModeConfig[],
+  rules: readonly AutoModeRule[],
   fallbackModeId: string
 ): ModeConfig {
   const sorted = rules

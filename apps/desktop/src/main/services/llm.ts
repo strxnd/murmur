@@ -6,12 +6,13 @@ import { llmProviderAuthHeaders } from "./provider-auth";
 interface LlmOptions {
   provider: LlmProviderConfig;
   prompt: string;
+  signal?: AbortSignal;
 }
 
 interface CodexLlmClient {
   getStatus(): { status: string; message: string; modelAvailable: boolean };
   refreshStatus(): Promise<{ status: string; message: string; modelAvailable: boolean }>;
-  processCleanup(options: { prompt: string; model: string }): Promise<ProcessedResult>;
+  processCleanup(options: { prompt: string; model: string; signal?: AbortSignal }): Promise<ProcessedResult>;
 }
 
 const llmTimeoutMs = 120000;
@@ -28,7 +29,7 @@ export class LlmService {
 
     if (provider.type === "codex") {
       if (!this.codex) throw new Error("Codex OAuth is unavailable.");
-      return this.codex.processCleanup({ prompt: options.prompt, model: provider.defaultModel || codexModel });
+      return this.codex.processCleanup({ prompt: options.prompt, model: provider.defaultModel || codexModel, signal: options.signal });
     }
     if (provider.type === "ollama") return this.processOllama(options);
     if (provider.type === "anthropic") return this.processAnthropic(options);
@@ -73,6 +74,7 @@ export class LlmService {
       joinUrl(options.provider.baseUrl || "http://127.0.0.1:11434", "/api/chat"),
       {
         method: "POST",
+        signal: options.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: options.provider.defaultModel || "llama3.1",
@@ -83,10 +85,10 @@ export class LlmService {
       timeouts.totalTimeoutMs
     );
     if (!response.ok) {
-      const body = await readResponseText(response, { ...timeouts, label: "Ollama error" });
+      const body = await readResponseText(response, { ...timeouts, label: "Ollama error", signal: options.signal });
       throw new Error(`Ollama failed with HTTP ${response.status}: ${body}`);
     }
-    const data = await parseJsonOrText(response, { ...timeouts, label: "Ollama response" });
+    const data = await parseJsonOrText(response, { ...timeouts, label: "Ollama response", signal: options.signal });
     return { text: data?.message?.content?.trim() ?? "", providerId: options.provider.id, model: options.provider.defaultModel };
   }
 
@@ -96,6 +98,7 @@ export class LlmService {
       joinUrl(options.provider.baseUrl || "https://api.openai.com/v1", "/chat/completions"),
       {
         method: "POST",
+        signal: options.signal,
         headers: { "Content-Type": "application/json", ...llmProviderAuthHeaders(options.provider) },
         body: JSON.stringify({
           model: options.provider.defaultModel || "gpt-4.1-mini",
@@ -109,10 +112,10 @@ export class LlmService {
       timeouts.totalTimeoutMs
     );
     if (!response.ok) {
-      const body = await readResponseText(response, { ...timeouts, label: "LLM error" });
+      const body = await readResponseText(response, { ...timeouts, label: "LLM error", signal: options.signal });
       throw new Error(`LLM failed with HTTP ${response.status}: ${body}`);
     }
-    const data = await parseJsonOrText(response, { ...timeouts, label: "LLM response" });
+    const data = await parseJsonOrText(response, { ...timeouts, label: "LLM response", signal: options.signal });
     return {
       text: data?.choices?.[0]?.message?.content?.trim() ?? "",
       providerId: options.provider.id,
@@ -126,6 +129,7 @@ export class LlmService {
       joinUrl(options.provider.baseUrl || "https://api.anthropic.com", "/v1/messages"),
       {
         method: "POST",
+        signal: options.signal,
         headers: {
           "Content-Type": "application/json",
           "anthropic-version": "2023-06-01",
@@ -141,10 +145,10 @@ export class LlmService {
       timeouts.totalTimeoutMs
     );
     if (!response.ok) {
-      const body = await readResponseText(response, { ...timeouts, label: "Anthropic error" });
+      const body = await readResponseText(response, { ...timeouts, label: "Anthropic error", signal: options.signal });
       throw new Error(`Anthropic failed with HTTP ${response.status}: ${body}`);
     }
-    const data = await parseJsonOrText(response, { ...timeouts, label: "Anthropic response" });
+    const data = await parseJsonOrText(response, { ...timeouts, label: "Anthropic response", signal: options.signal });
     return {
       text: data?.content?.map((part: any) => part.text).join("").trim() ?? "",
       providerId: options.provider.id,
@@ -160,6 +164,7 @@ export class LlmService {
       endpoint,
       {
         method: "POST",
+        signal: options.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: options.prompt }] }],
@@ -169,10 +174,10 @@ export class LlmService {
       timeouts.totalTimeoutMs
     );
     if (!response.ok) {
-      const body = await readResponseText(response, { ...timeouts, label: "Google LLM error" });
+      const body = await readResponseText(response, { ...timeouts, label: "Google LLM error", signal: options.signal });
       throw new Error(`Google LLM failed with HTTP ${response.status}: ${body}`);
     }
-    const data = await parseJsonOrText(response, { ...timeouts, label: "Google LLM response" });
+    const data = await parseJsonOrText(response, { ...timeouts, label: "Google LLM response", signal: options.signal });
     const text = data?.candidates?.[0]?.content?.parts?.map((part: any) => part.text).join("").trim() ?? "";
     return { text, providerId: options.provider.id, model };
   }

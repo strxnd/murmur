@@ -3,6 +3,7 @@ export interface ResponseBodyReadOptions {
   idleTimeoutMs?: number;
   label?: string;
   maxBytes?: number;
+  signal?: AbortSignal;
 }
 
 const defaultBodyTimeoutMs = 15000;
@@ -84,7 +85,12 @@ export async function readResponseBody(
         throw new Error(`${label} response body timed out after ${totalTimeoutMs}ms.`);
       }
 
-      const result = await readChunkWithTimeout(reader, Math.min(idleTimeoutMs, remainingMs), `${label} response body stalled for ${idleTimeoutMs}ms.`);
+      const result = await readChunkWithTimeout(
+        reader,
+        Math.min(idleTimeoutMs, remainingMs),
+        `${label} response body stalled for ${idleTimeoutMs}ms.`,
+        options.signal
+      );
       if (result.done) break;
       if (!result.value) continue;
 
@@ -105,19 +111,28 @@ export async function readResponseBody(
 async function readChunkWithTimeout(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   timeoutMs: number,
-  message: string
+  message: string,
+  signal?: AbortSignal
 ): Promise<ReadableStreamReadResult<Uint8Array>> {
   let timeout: ReturnType<typeof setTimeout> | null = null;
+  let onAbort: (() => void) | null = null;
   try {
+    if (signal?.aborted) throw abortError();
+    const abortPromise = new Promise<ReadableStreamReadResult<Uint8Array>>((_resolve, reject) => {
+      onAbort = () => reject(abortError());
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
     return await Promise.race([
       reader.read(),
       new Promise<ReadableStreamReadResult<Uint8Array>>((_resolve, reject) => {
         timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
         unrefTimer(timeout);
-      })
+      }),
+      abortPromise
     ]);
   } finally {
     if (timeout) clearTimeout(timeout);
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
   }
 }
 

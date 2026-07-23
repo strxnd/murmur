@@ -162,8 +162,11 @@ export class CodexOAuthService {
     return this.setSignedOut();
   }
 
-  processCleanup(options: { prompt: string; model: string }): Promise<ProcessedResult> {
-    const run = this.turnQueue.then(() => this.runCleanup(options));
+  processCleanup(options: { prompt: string; model: string; signal?: AbortSignal }): Promise<ProcessedResult> {
+    const run = this.turnQueue.then(() => {
+      throwIfAborted(options.signal);
+      return this.runCleanup(options);
+    });
     this.turnQueue = run.then(
       () => undefined,
       () => undefined
@@ -277,10 +280,17 @@ export class CodexOAuthService {
     throw new Error("Codex sign-in timed out. Start the connection again.");
   }
 
-  private async runCleanup(options: { prompt: string; model: string }): Promise<ProcessedResult> {
+  private async runCleanup(options: { prompt: string; model: string; signal?: AbortSignal }): Promise<ProcessedResult> {
     if (options.model !== codexModel) throw new Error(`Codex only supports ${codexModel} in Murmur.`);
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.responseTimeoutMs);
+    let timedOut = false;
+    const onAbort = (): void => controller.abort();
+    if (options.signal?.aborted) controller.abort();
+    else options.signal?.addEventListener("abort", onAbort, { once: true });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.responseTimeoutMs);
     try {
       let tokens = await this.requireTokens(controller.signal);
       let response = await this.requestCleanup(options.prompt, tokens, controller.signal);
@@ -301,10 +311,12 @@ export class CodexOAuthService {
       return { text, providerId: "codex", model: codexModel };
     } catch (error) {
       if (this.handleTerminalAuthError(error)) throw error;
-      if (controller.signal.aborted) throw new Error("Codex request timed out.");
+      if (options.signal?.aborted) throw abortError();
+      if (timedOut) throw new Error("Codex request timed out.");
       throw error;
     } finally {
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
       controller.abort();
     }
   }
