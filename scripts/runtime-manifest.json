@@ -24,14 +24,14 @@
         },
         "darwin-arm64": {
           "cpu": {
-            "name": "sherpa-onnx-v1.13.2-osx-arm64-shared-no-tts.tar.bz2",
-            "sha256": "d880aaa79d36b784168a0398b278813d57ba8e135f468894b8f134b664e2e225"
+            "name": "sherpa-onnx-v1.13.2-osx-arm64-static-no-tts.tar.bz2",
+            "sha256": "037fa6d0619334502e16f47e12e642d5be43d1189df61188931e0ea2c728f5cd"
           }
         },
         "darwin-x64": {
           "cpu": {
-            "name": "sherpa-onnx-v1.13.2-osx-x64-shared-no-tts.tar.bz2",
-            "sha256": "d1819cce38390d5b51ff38cb15a1b32e47c6ffe15882926211054b1f95e01357"
+            "name": "sherpa-onnx-v1.13.2-osx-x64-static-no-tts.tar.bz2",
+            "sha256": "1cf9a3061e9393e511f5a0a44f44aa0426c94673f60dff7ddf3e69ea668ee80f"
           }
         }
       }

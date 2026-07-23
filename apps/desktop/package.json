@@ -84,7 +84,8 @@
         "from": "../../.cache/bundled-runtimes/runtimes",
         "to": "runtimes",
         "filter": [
-          "**/*"
+          "**/*",
+          "!.murmur-runtime-staging"
         ]
       }
     ]

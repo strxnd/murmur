@@ -2,6 +2,15 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 module.exports = async function afterPack(context) {
+  if (context.electronPlatformName === "darwin") {
+    const { inspectMacOSDeploymentTargets, macosDeploymentTarget } = await import("./macos-deployment-target.mjs");
+    const bundleTarget = context.packager.platformSpecificBuildOptions.minimumSystemVersion;
+    if (bundleTarget !== macosDeploymentTarget) {
+      throw new Error(`macOS bundle target ${bundleTarget} does not match native target ${macosDeploymentTarget}.`);
+    }
+    await inspectMacOSDeploymentTargets([context.appOutDir], { maxVersion: bundleTarget });
+    return;
+  }
   if (context.electronPlatformName !== "linux") return;
 
   const appDir = context.appOutDir;

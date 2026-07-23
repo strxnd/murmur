@@ -20,6 +20,11 @@ import { basename, dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import {
+  cmakeMacOSCompatibilityArgs,
+  inspectMacOSDeploymentTargets,
+  macosDeploymentTarget
+} from "./macos-deployment-target.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
@@ -130,9 +135,18 @@ async function prepareSherpaOnnx(platformKey, accelerator) {
 
     const dest = join(vendorRoot, platformKey, runtimeDirForVariant("sherpa-onnx", accelerator));
     rmSync(dest, { recursive: true, force: true });
-    mkdirSync(dirname(dest), { recursive: true });
-    cpSync(sourceRoot, dest, { recursive: true });
+    if (platformKey.startsWith("darwin-") && asset.name.includes("-static-no-tts")) {
+      const targetBinary = join(dest, "bin", "sherpa-onnx-offline");
+      mkdirSync(dirname(targetBinary), { recursive: true });
+      copyFileSync(offlineBinary, targetBinary);
+    } else {
+      mkdirSync(dirname(dest), { recursive: true });
+      cpSync(sourceRoot, dest, { recursive: true });
+    }
     chmodExecutables(dest, platformKey);
+    if (platformKey.startsWith("darwin-")) {
+      await inspectMacOSDeploymentTargets([dest]);
+    }
     console.log(`Installed Sherpa ONNX to ${relative(dest)}`);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -158,10 +172,15 @@ async function prepareWhisperCpp(platformKey, accelerator) {
       "-DWHISPER_BUILD_EXAMPLES=ON",
       "-DWHISPER_BUILD_SERVER=ON",
       "-DWHISPER_COMMON_FFMPEG=OFF",
-      "-DGGML_NATIVE=OFF"
+      "-DGGML_NATIVE=OFF",
+      ...cmakeMacOSCompatibilityArgs(platformKey)
     ];
     if (accelerator === "cuda") cmakeArgs.push("-DGGML_CUDA=ON");
-    await run("cmake", cmakeArgs);
+    await run("cmake", cmakeArgs, {
+      env: platformKey.startsWith("darwin-")
+        ? { ...process.env, MACOSX_DEPLOYMENT_TARGET: macosDeploymentTarget }
+        : process.env
+    });
     await run("cmake", ["--build", buildDir, "--config", "Release", "--target", "whisper-server"]);
 
     const binaryName = "whisper-server";
@@ -174,6 +193,9 @@ async function prepareWhisperCpp(platformKey, accelerator) {
     copyFileSync(binary, join(dest, binaryName));
     copySharedLibraries(buildDir, dest, platformKey);
     chmodExecutables(dest, platformKey);
+    if (platformKey.startsWith("darwin-")) {
+      await inspectMacOSDeploymentTargets([dest]);
+    }
     console.log(`Installed whisper.cpp to ${relative(dest)}`);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

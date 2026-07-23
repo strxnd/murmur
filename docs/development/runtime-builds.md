@@ -56,8 +56,8 @@ bun run runtimes:manifest-check:release
 ```
 
 `runtimes:stage` copies exactly one prepared platform from `vendor/runtimes/<platform-key>/` into `.cache/bundled-runtimes/runtimes/<platform-key>/` for `electron-builder` to place under `<process.resourcesPath>/runtimes/`.
-Only CPU runtimes are staged into packaged app resources. Accelerated variants are optional installs and may download in packaged builds only when their Murmur release URL, size, and SHA-256 are configured.
-Set `MURMUR_RUNTIME_VENDOR_ROOT` or `MURMUR_RUNTIME_STAGING_ROOT` to override those source and staging roots when testing the staging script.
+Only CPU runtimes are staged into packaged app resources. Accelerated variants are optional installs and may download in packaged builds only when their Murmur release URL, size, and SHA-256 are configured. macOS preparation builds whisper.cpp for macOS 13.0 and uses the static Sherpa ONNX archive so its newer shared ONNX Runtime library is not embedded; preparation, staging, and the final app bundle all reject Mach-O files whose minimum version exceeds 13.0.
+Set `MURMUR_RUNTIME_VENDOR_ROOT` or `MURMUR_RUNTIME_STAGING_ROOT` to override those source and staging roots when testing the staging script. A custom staging root must be a `runtimes` leaf. Before first use, create its parent marker with `printf 'murmur-runtime-staging-v1\n' > <parent>/.murmur-runtime-staging-parent`; an existing staging leaf is deleted only when it contains the matching `.murmur-runtime-staging` marker.
 
 For explicit-target staging, pass either a complete platform key or separate platform and architecture flags:
 
