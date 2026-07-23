@@ -407,7 +407,7 @@ describe("StorageService", () => {
     if (!provider?.apiKeySecretId) throw new Error("Missing OpenAI credential reference.");
 
     const now = 246813579;
-    const tempPath = join(paths.configDir, `.murmur-config.json.${process.pid}.${now}.tmp`);
+    const tempPath = join(paths.configDir, `.murmur-config.json.provider-transaction.next.${process.pid}.${now}.tmp`);
     mkdirSync(tempPath);
     vi.spyOn(Date, "now").mockReturnValue(now);
 
@@ -428,6 +428,92 @@ describe("StorageService", () => {
 
     expect(new ProviderSecretStore(paths.providerSecretsPath).get(provider.apiKeySecretId)).toBe("sk-first");
     expect(jsonStorage(paths).resolveLlmProviderSecret(provider).apiKey).toBe("sk-first");
+  });
+
+  it("recovers a credential replacement interrupted after the provider config commit", () => {
+    const paths = testPaths();
+    const storage = jsonStorage(paths);
+    storage.setLlmProviders(
+      storage.getState().llmProviders.map((provider) =>
+        provider.id === "openai-llm" ? { ...provider, enabled: true, apiKey: "sk-first", apiKeyIntent: "replace" } : provider
+      )
+    );
+    const provider = storage.getState().llmProviders.find((candidate) => candidate.id === "openai-llm");
+    if (!provider?.apiKeySecretId) throw new Error("Missing OpenAI credential reference.");
+
+    const now = 112233445;
+    const secretTempPath = join(paths.configDir, `.murmur-provider-secrets.json.${process.pid}.${now}.tmp`);
+    mkdirSync(secretTempPath);
+    vi.spyOn(Date, "now").mockReturnValue(now);
+
+    try {
+      expect(() =>
+        storage.setLlmProviders(
+          storage.getState().llmProviders.map((candidate) =>
+            candidate.id === "openai-llm"
+              ? { ...candidate, apiKey: "sk-second", apiKeyIntent: "replace" }
+              : candidate
+          )
+        )
+      ).toThrow("Provider configuration transaction is pending recovery");
+    } finally {
+      vi.restoreAllMocks();
+    }
+
+    expect(existsSync(`${paths.configPath}.provider-transaction`)).toBe(true);
+    expect(modeOf(`${paths.configPath}.provider-transaction`)).toBe(0o600);
+    expect(modeOf(`${paths.configPath}.provider-transaction.next`)).toBe(0o600);
+    expect(modeOf(`${paths.providerSecretsPath}.provider-transaction.next`)).toBe(0o600);
+    expect(new ProviderSecretStore(paths.providerSecretsPath).get(provider.apiKeySecretId)).toBe("sk-first");
+    rmSync(secretTempPath, { recursive: true, force: true });
+
+    const recovered = jsonStorage(paths);
+    const recoveredProvider = recovered.getState().llmProviders.find((candidate) => candidate.id === "openai-llm");
+    expect(recoveredProvider ? recovered.resolveLlmProviderSecret(recoveredProvider).apiKey : undefined).toBe("sk-second");
+    expect(existsSync(`${paths.configPath}.provider-transaction`)).toBe(false);
+    expect(existsSync(`${paths.configPath}.provider-transaction.next`)).toBe(false);
+    expect(existsSync(`${paths.providerSecretsPath}.provider-transaction.next`)).toBe(false);
+  });
+
+  it("recovers a credential removal interrupted after the provider config commit", () => {
+    const paths = testPaths();
+    const storage = jsonStorage(paths);
+    storage.setLlmProviders(
+      storage.getState().llmProviders.map((provider) =>
+        provider.id === "openai-llm" ? { ...provider, enabled: true, apiKey: "sk-remove", apiKeyIntent: "replace" } : provider
+      )
+    );
+    const provider = storage.getState().llmProviders.find((candidate) => candidate.id === "openai-llm");
+    if (!provider?.apiKeySecretId) throw new Error("Missing OpenAI credential reference.");
+
+    const now = 556677889;
+    const secretTempPath = join(paths.configDir, `.murmur-provider-secrets.json.${process.pid}.${now}.tmp`);
+    mkdirSync(secretTempPath);
+    vi.spyOn(Date, "now").mockReturnValue(now);
+
+    try {
+      expect(() =>
+        storage.setLlmProviders(
+          storage.getState().llmProviders.map((candidate) =>
+            candidate.id === "openai-llm" ? { ...candidate, apiKeyIntent: "remove" } : candidate
+          )
+        )
+      ).toThrow("Provider configuration transaction is pending recovery");
+    } finally {
+      vi.restoreAllMocks();
+    }
+
+    expect(existsSync(`${paths.configPath}.provider-transaction`)).toBe(true);
+    expect(new ProviderSecretStore(paths.providerSecretsPath).get(provider.apiKeySecretId)).toBe("sk-remove");
+    rmSync(secretTempPath, { recursive: true, force: true });
+
+    const recovered = jsonStorage(paths);
+    const recoveredProvider = recovered.getState().llmProviders.find((candidate) => candidate.id === "openai-llm");
+    expect(recoveredProvider?.apiKeySecretId).toBeUndefined();
+    expect(new ProviderSecretStore(paths.providerSecretsPath).get(provider.apiKeySecretId)).toBeUndefined();
+    expect(existsSync(`${paths.configPath}.provider-transaction`)).toBe(false);
+    expect(existsSync(`${paths.configPath}.provider-transaction.next`)).toBe(false);
+    expect(existsSync(`${paths.providerSecretsPath}.provider-transaction.next`)).toBe(false);
   });
 
   it("derives stored-credential readiness from the authoritative secret store", () => {
@@ -504,7 +590,10 @@ describe("StorageService", () => {
       })
     );
     const now = 975318642;
-    const secretTempPath = join(paths.configDir, `.murmur-provider-secrets.json.${process.pid}.${now}.tmp`);
+    const secretTempPath = join(
+      paths.configDir,
+      `.murmur-provider-secrets.json.provider-transaction.next.${process.pid}.${now}.tmp`
+    );
     mkdirSync(secretTempPath);
     vi.spyOn(Date, "now").mockReturnValue(now);
 

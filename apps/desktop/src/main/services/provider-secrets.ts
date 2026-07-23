@@ -42,15 +42,18 @@ const emptySecrets: ProviderSecretsFile = {
 
 export class ProviderSecretStore {
   private readonly backupPath: string;
+  private readonly pendingPath: string;
 
   constructor(
     private readonly path: string,
     private readonly codec?: ProviderSecretCodec
   ) {
     this.backupPath = `${path}.bak`;
+    this.pendingPath = `${path}.provider-transaction.next`;
     ensureOwnerOnlyDirectory(dirname(this.path));
     if (existsSync(this.path)) ensureOwnerOnlyFile(this.path);
     if (existsSync(this.backupPath)) ensureOwnerOnlyFile(this.backupPath);
+    if (existsSync(this.pendingPath)) ensureOwnerOnlyFile(this.pendingPath);
     if (existsSync(this.path) || existsSync(this.backupPath)) this.read();
     this.upgradePlainRecords();
   }
@@ -77,7 +80,54 @@ export class ProviderSecretStore {
   }
 
   apply(mutations: ProviderSecretMutation[], prune?: { kind: ProviderSecretKind; activeSecretIds: Set<string> }): void {
-    const secrets = this.read();
+    const { secrets, changed } = this.applyToSnapshot(this.read(), mutations, prune);
+    if (changed) this.write(secrets);
+  }
+
+  prepareApply(
+    mutations: ProviderSecretMutation[],
+    prune?: { kind: ProviderSecretKind; activeSecretIds: Set<string> }
+  ): void {
+    const { secrets } = this.applyToSnapshot(this.read(), mutations, prune);
+    writeJsonAtomic(this.pendingPath, secrets);
+  }
+
+  commitPrepared(): void {
+    if (!existsSync(this.pendingPath)) throw new Error("Provider credential transaction is missing its prepared secret state.");
+    this.write(this.readFile(this.pendingPath));
+  }
+
+  hasPrepared(): boolean {
+    return existsSync(this.pendingPath);
+  }
+
+  discardPrepared(): void {
+    removeDurable(this.pendingPath);
+  }
+
+  pruneKind(kind: ProviderSecretKind, activeSecretIds: Set<string>): void {
+    this.apply([], { kind, activeSecretIds });
+  }
+
+  protectionStatus(): ProviderSecretProtectionStatus {
+    if (this.codec?.isAvailable()) this.upgradePlainRecords();
+    const records = Object.values(this.read().records);
+    if (this.codec?.isAvailable()) return "encrypted";
+    if (records.some((record) => record.encoding === "plain")) return "plaintext";
+    return records.length > 0 ? "unavailable" : "plaintext";
+  }
+
+  clear(): void {
+    rmSync(this.path, { force: true });
+    rmSync(this.backupPath, { force: true });
+    rmSync(this.pendingPath, { force: true });
+  }
+
+  private applyToSnapshot(
+    secrets: ProviderSecretsFile,
+    mutations: ProviderSecretMutation[],
+    prune?: { kind: ProviderSecretKind; activeSecretIds: Set<string> }
+  ): { secrets: ProviderSecretsFile; changed: boolean } {
     let changed = false;
 
     for (const mutation of mutations) {
@@ -102,24 +152,7 @@ export class ProviderSecretStore {
       }
     }
 
-    if (changed) this.write(secrets);
-  }
-
-  pruneKind(kind: ProviderSecretKind, activeSecretIds: Set<string>): void {
-    this.apply([], { kind, activeSecretIds });
-  }
-
-  protectionStatus(): ProviderSecretProtectionStatus {
-    if (this.codec?.isAvailable()) this.upgradePlainRecords();
-    const records = Object.values(this.read().records);
-    if (this.codec?.isAvailable()) return "encrypted";
-    if (records.some((record) => record.encoding === "plain")) return "plaintext";
-    return records.length > 0 ? "unavailable" : "plaintext";
-  }
-
-  clear(): void {
-    rmSync(this.path, { force: true });
-    rmSync(this.backupPath, { force: true });
+    return { secrets, changed };
   }
 
   private upgradePlainRecords(): void {
@@ -275,6 +308,12 @@ function writeJsonAtomic(path: string, value: ProviderSecretsFile): void {
     rmSync(tempPath, { force: true });
     throw error;
   }
+}
+
+function removeDurable(path: string): void {
+  if (!existsSync(path)) return;
+  rmSync(path);
+  fsyncDirectory(dirname(path));
 }
 
 function fsyncDirectory(path: string): void {

@@ -56,6 +56,10 @@ interface PersistedState extends PersistedConfigState {
   history: DictationHistoryItem[];
 }
 
+interface ProviderMutationJournal {
+  version: 1;
+}
+
 type LegacyModeConfig = Partial<ModeConfig> & {
   kind?: "built_in" | "custom" | "default";
   presetId?: string;
@@ -149,6 +153,7 @@ export class StorageService {
     ensureOwnerOnlyDirectory(paths.cacheDir);
     ensureOwnerOnlyDirectory(paths.tempDir);
     ensureOwnerOnlyDirectory(paths.audioDir);
+    this.recoverProviderMutation();
     this.open();
     this.migrateProviderSecrets();
   }
@@ -158,10 +163,12 @@ export class StorageService {
   }
 
   getProviderSecretProtectionStatus(): ProviderSecretProtectionStatus {
+    this.recoverProviderMutationIfNeeded();
     return this.providerSecrets.protectionStatus();
   }
 
   getState(): PersistedState {
+    this.recoverProviderMutationIfNeeded();
     const state = this.normalizeState(this.readState());
     const retention = this.applyTextRetention(state);
     if (retention.removed.length > 0) {
@@ -213,21 +220,23 @@ export class StorageService {
       previousState.transcriptionProviders
     );
     const nextState = { ...previousState, transcriptionProviders: prepared.providers as TranscriptionProviderConfig[] };
-    return this.commitProviderMutation(previousState, nextState, "stt", prepared.mutations);
+    return this.commitProviderMutation(nextState, "stt", prepared.mutations);
   }
 
   setLlmProviders(providers: LlmProviderConfig[]): PersistedState {
     const previousState = this.getState();
     const prepared = this.prepareProviderSecrets("llm", this.normalizeLlmProviders(providers), previousState.llmProviders);
     const nextState = { ...previousState, llmProviders: prepared.providers as LlmProviderConfig[] };
-    return this.commitProviderMutation(previousState, nextState, "llm", prepared.mutations);
+    return this.commitProviderMutation(nextState, "llm", prepared.mutations);
   }
 
   resolveTranscriptionProviderSecret(provider: TranscriptionProviderConfig): TranscriptionProviderConfig {
+    this.recoverProviderMutationIfNeeded();
     return this.resolveProviderSecret("stt", provider);
   }
 
   resolveLlmProviderSecret(provider: LlmProviderConfig): LlmProviderConfig {
+    this.recoverProviderMutationIfNeeded();
     return this.resolveProviderSecret("llm", provider);
   }
 
@@ -496,19 +505,11 @@ export class StorageService {
       releaseNotes: this.normalizeReleaseNotes(config.releaseNotes)
     };
 
-    this.writeConfig(nextConfig);
-    try {
-      this.providerSecrets.apply([...preparedStt.mutations, ...preparedLlm.mutations, ...legacyCodexMutations]);
-    } catch (error) {
-      try {
-        writeJsonAtomic(this.paths.configPath, config);
-        ensureOwnerOnlyFile(this.paths.configPath);
-      } catch {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Provider secret migration failed and the legacy configuration could not be restored: ${message}`);
-      }
-      throw error;
-    }
+    this.commitProviderConfigMutation(nextConfig, [
+      ...preparedStt.mutations,
+      ...preparedLlm.mutations,
+      ...legacyCodexMutations
+    ]);
   }
 
   private legacyCodexSecretMutations(providers: Array<Partial<LlmProviderConfig>> | undefined): ProviderSecretMutation[] {
@@ -590,30 +591,92 @@ export class StorageService {
   }
 
   private commitProviderMutation(
-    previousState: PersistedState,
     nextState: PersistedState,
     kind: ProviderSecretKind,
     mutations: ProviderSecretMutation[]
   ): PersistedState {
-    const committedState = this.writeState(nextState);
-    const providers = kind === "stt" ? committedState.transcriptionProviders : committedState.llmProviders;
+    const providers = kind === "stt" ? nextState.transcriptionProviders : nextState.llmProviders;
     const activeSecretIds = new Set(
       providers.flatMap((provider) => (provider.apiKeySecretId ? [provider.apiKeySecretId] : []))
     );
+    this.commitProviderConfigMutation(toConfigState(nextState), mutations, { kind, activeSecretIds });
+    return this.normalizeState(nextState);
+  }
 
+  private commitProviderConfigMutation(
+    nextConfig: PersistedConfigState,
+    mutations: ProviderSecretMutation[],
+    prune?: { kind: ProviderSecretKind; activeSecretIds: Set<string> }
+  ): void {
+    this.providerSecrets.prepareApply(mutations, prune);
     try {
-      this.providerSecrets.apply(mutations, { kind, activeSecretIds });
+      writeJsonAtomic(this.providerMutationConfigPath(), nextConfig);
+      writeJsonAtomic(this.providerMutationJournalPath(), { version: 1 } satisfies ProviderMutationJournal);
     } catch (error) {
-      try {
-        this.writeState(previousState);
-      } catch {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Provider credentials could not be saved and provider configuration rollback failed: ${message}`);
-      }
+      this.discardProviderMutation();
       throw error;
     }
 
-    return this.normalizeState(committedState);
+    try {
+      this.applyPreparedProviderMutation();
+    } catch (error) {
+      try {
+        this.recoverProviderMutation();
+      } catch {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Provider configuration transaction is pending recovery: ${message}`);
+      }
+    }
+  }
+
+  private recoverProviderMutationIfNeeded(): void {
+    if (existsSync(this.providerMutationJournalPath())) this.recoverProviderMutation();
+  }
+
+  private recoverProviderMutation(): void {
+    if (!existsSync(this.providerMutationJournalPath())) {
+      this.discardProviderMutation();
+      return;
+    }
+
+    const journal = readJsonStrict(this.providerMutationJournalPath(), "Provider configuration transaction");
+    if (!isProviderMutationJournal(journal)) {
+      throw new Error(`Provider configuration transaction is malformed: ${this.providerMutationJournalPath()}`);
+    }
+    if (!existsSync(this.providerMutationConfigPath()) || !this.providerSecrets.hasPrepared()) {
+      throw new Error("Provider configuration transaction is missing prepared state.");
+    }
+
+    this.applyPreparedProviderMutation();
+  }
+
+  private applyPreparedProviderMutation(): void {
+    const config = readJsonStrict(this.providerMutationConfigPath(), "Provider configuration transaction state");
+    if (!isPersistedConfigState(config)) {
+      throw new Error(`Provider configuration transaction state is malformed: ${this.providerMutationConfigPath()}`);
+    }
+
+    this.writeConfig(config);
+    this.providerSecrets.commitPrepared();
+    removeDurable(this.providerMutationJournalPath());
+    try {
+      this.discardProviderMutation();
+    } catch {
+      // The commit marker is durably gone, so leftover prepared files are harmless and cleaned on restart.
+    }
+  }
+
+  private discardProviderMutation(): void {
+    removeDurable(this.providerMutationConfigPath());
+    this.providerSecrets.discardPrepared();
+  }
+
+  private providerMutationJournalPath(): string {
+    return `${this.paths.configPath}.provider-transaction`;
+  }
+
+  private providerMutationConfigPath(): string {
+    return `${this.paths.configPath}.provider-transaction.next`;
   }
 
   private resolveProviderSecret<T extends TranscriptionProviderConfig | LlmProviderConfig>(kind: ProviderSecretKind, provider: T): T {
@@ -929,6 +992,33 @@ function retainHistoryItems(
   return { retained, removed };
 }
 
+function readJsonStrict(path: string, label: string): unknown {
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as unknown;
+  } catch {
+    throw new Error(`${label} is malformed: ${path}`);
+  }
+}
+
+function isProviderMutationJournal(value: unknown): value is ProviderMutationJournal {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value) && (value as ProviderMutationJournal).version === 1);
+}
+
+function isPersistedConfigState(value: unknown): value is PersistedConfigState {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<PersistedConfigState>;
+  return (
+    Boolean(candidate.settings && typeof candidate.settings === "object" && !Array.isArray(candidate.settings)) &&
+    Array.isArray(candidate.modes) &&
+    Array.isArray(candidate.transcriptionProviders) &&
+    Array.isArray(candidate.llmProviders) &&
+    Array.isArray(candidate.autoModeRules) &&
+    Array.isArray(candidate.vocabulary) &&
+    Boolean(candidate.modelLibrary && typeof candidate.modelLibrary === "object" && !Array.isArray(candidate.modelLibrary)) &&
+    Array.isArray(candidate.releaseNotes)
+  );
+}
+
 function writeJsonAtomic(path: string, value: unknown): void {
   const dir = dirname(path);
   const tempPath = join(dir, `.${basename(path)}.${process.pid}.${Date.now()}.tmp`);
@@ -954,6 +1044,12 @@ function writeJsonAtomic(path: string, value: unknown): void {
     rmSync(tempPath, { force: true });
     throw error;
   }
+}
+
+function removeDurable(path: string): void {
+  if (!existsSync(path)) return;
+  rmSync(path);
+  fsyncDirectory(dirname(path));
 }
 
 function fsyncDirectory(path: string): void {
