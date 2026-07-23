@@ -20,6 +20,9 @@ import { basename, dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import macosDeployment from "./macos-deployment-target.cjs";
+
+const { cmakeDeploymentTargetArgs } = macosDeployment;
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
@@ -168,7 +171,8 @@ async function prepareWhisperCpp(platformKey, accelerator) {
       "-DWHISPER_BUILD_EXAMPLES=ON",
       "-DWHISPER_BUILD_SERVER=ON",
       "-DWHISPER_COMMON_FFMPEG=OFF",
-      "-DGGML_NATIVE=OFF"
+      "-DGGML_NATIVE=OFF",
+      ...cmakeDeploymentTargetArgs(platformKey)
     ];
     if (accelerator === "cuda") cmakeArgs.push("-DGGML_CUDA=ON");
     await run("cmake", cmakeArgs);
