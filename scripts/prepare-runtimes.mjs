@@ -197,10 +197,13 @@ export async function checkoutPinnedGitSource(runtime, sourceDir) {
   if (!/^[a-f0-9]{40}$/.test(runtime.tree ?? "")) {
     throw new Error(`whisper.cpp tree must be a full lowercase Git SHA: ${runtime.tree ?? "missing"}`);
   }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(runtime.gitTag ?? "")) {
+    throw new Error(`whisper.cpp gitTag must be a simple tag name: ${runtime.gitTag ?? "missing"}`);
+  }
 
   await run("git", ["init", "--quiet", sourceDir]);
   await run("git", ["-C", sourceDir, "remote", "add", "origin", runtime.repository]);
-  await run("git", ["-C", sourceDir, "fetch", "--depth", "1", "origin", runtime.commit]);
+  await run("git", ["-C", sourceDir, "fetch", "--depth", "1", "origin", `refs/tags/${runtime.gitTag}`]);
   await run("git", ["-C", sourceDir, "-c", "advice.detachedHead=false", "checkout", "--detach", "FETCH_HEAD"]);
 
   const actualCommit = await capture("git", ["-C", sourceDir, "rev-parse", "HEAD"]);

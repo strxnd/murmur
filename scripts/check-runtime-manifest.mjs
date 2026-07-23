@@ -41,10 +41,11 @@ async function main() {
   }
 
   if (releaseMode) {
-    const results = await Promise.all(releaseAssets.map(({ asset, label }) => checkReleaseAsset(asset, label)));
-    if (results.some((result) => !result)) {
-      process.exitCode = 1;
-      return;
+    for (const { asset, label } of releaseAssets) {
+      if (!(await checkReleaseAsset(asset, label))) {
+        process.exitCode = 1;
+        return;
+      }
     }
     console.log(`STT runtime catalog release bytes match size and SHA-256 for ${releaseAssets.length} configured asset(s).`);
     return;
@@ -94,7 +95,9 @@ export function validateManifestCoordination(manifest, catalog) {
       if (!/^[a-f0-9]{40}$/.test(sourceRuntime.tree ?? "")) {
         errors.push("whisper.cpp source tree must be a full lowercase 40-character Git SHA");
       }
-      if (!sourceRuntime.gitTag) errors.push("whisper.cpp descriptive gitTag is missing");
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(sourceRuntime.gitTag ?? "")) {
+        errors.push("whisper.cpp descriptive gitTag must be a simple tag name");
+      }
     } else if (runtimeId === "sherpa-onnx") {
       if (sourceRuntime.releaseTag !== `v${sourceRuntime.version}`) {
         errors.push(`sherpa-onnx releaseTag must be v${sourceRuntime.version}`);
@@ -175,7 +178,7 @@ export function validateManifestCoordination(manifest, catalog) {
 
 export async function checkReleaseAsset(asset, label, options = {}) {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const timeoutMs = options.timeoutMs ?? 300000;
+  const timeoutMs = options.timeoutMs ?? 900000;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {

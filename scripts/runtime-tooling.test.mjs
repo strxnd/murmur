@@ -34,7 +34,28 @@ afterEach(async () => {
 });
 
 describe("runtime source provenance", () => {
-  it("checks out the pinned commit and tree even when the descriptive tag moves", async () => {
+  it("checks out a supported tag only when it resolves to the pinned commit and tree", async () => {
+    const root = tempRoot();
+    const repository = join(root, "upstream");
+    mkdirSync(repository);
+    git(repository, ["init", "--quiet"]);
+    git(repository, ["config", "user.name", "Runtime Test"]);
+    git(repository, ["config", "user.email", "runtime-test@example.com"]);
+    writeFileSync(join(repository, "source.txt"), "pinned\n");
+    git(repository, ["add", "source.txt"]);
+    git(repository, ["commit", "--quiet", "-m", "pinned source"]);
+    git(repository, ["tag", "v1.8.6"]);
+    const commit = git(repository, ["rev-parse", "HEAD"]);
+    const tree = git(repository, ["rev-parse", "HEAD^{tree}"]);
+
+    const checkout = join(root, "checkout");
+    await checkoutPinnedGitSource({ repository, gitTag: "v1.8.6", commit, tree }, checkout);
+
+    expect(git(checkout, ["rev-parse", "HEAD"])).toBe(commit);
+    expect(readFileSync(join(checkout, "source.txt"), "utf8")).toBe("pinned\n");
+  });
+
+  it("rejects a moved tag instead of building different source bytes", async () => {
     const root = tempRoot();
     const repository = join(root, "upstream");
     mkdirSync(repository);
@@ -46,16 +67,14 @@ describe("runtime source provenance", () => {
     git(repository, ["commit", "--quiet", "-m", "pinned source"]);
     const commit = git(repository, ["rev-parse", "HEAD"]);
     const tree = git(repository, ["rev-parse", "HEAD^{tree}"]);
-
     writeFileSync(join(repository, "source.txt"), "moved tag\n");
     git(repository, ["commit", "--quiet", "-am", "move tag target"]);
     git(repository, ["tag", "v1.8.6"]);
 
-    const checkout = join(root, "checkout");
-    await checkoutPinnedGitSource({ repository, gitTag: "v1.8.6", commit, tree }, checkout);
-
-    expect(git(checkout, ["rev-parse", "HEAD"])).toBe(commit);
-    expect(readFileSync(join(checkout, "source.txt"), "utf8")).toBe("pinned\n");
+    await expect(checkoutPinnedGitSource(
+      { repository, gitTag: "v1.8.6", commit, tree },
+      join(root, "checkout")
+    )).rejects.toThrow("commit mismatch");
   });
 
   it("rejects source bytes whose Git tree differs from the pin", async () => {
@@ -68,10 +87,12 @@ describe("runtime source provenance", () => {
     writeFileSync(join(repository, "source.txt"), "source\n");
     git(repository, ["add", "source.txt"]);
     git(repository, ["commit", "--quiet", "-m", "source"]);
+    git(repository, ["tag", "v1.8.6"]);
     const commit = git(repository, ["rev-parse", "HEAD"]);
 
     await expect(checkoutPinnedGitSource({
       repository,
+      gitTag: "v1.8.6",
       commit,
       tree: "0000000000000000000000000000000000000000"
     }, join(root, "checkout"))).rejects.toThrow("tree mismatch");
