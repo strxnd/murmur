@@ -186,7 +186,18 @@ function createControllerHarness(options: {
   };
   const paste = {
     copyText: vi.fn(async () => ({ pasted: false, message: "Automatic paste was skipped; output left on the clipboard." })),
-    insertText: vi.fn(async () => ({ pasted: true, message: "" })),
+    insertText: vi.fn(
+      async (
+        _text: string,
+        _signal?: AbortSignal,
+        beforePaste?: () => Promise<{ allowed: boolean; message?: string }>
+      ) => {
+        const guardResult = await beforePaste?.();
+        return guardResult && !guardResult.allowed
+          ? { pasted: false, message: guardResult.message ?? "", clipboardRetained: true }
+          : { pasted: true, message: "", clipboardRetained: false };
+      }
+    ),
     getDiagnostics: vi.fn(() => [])
   };
   const codex = {
@@ -372,6 +383,30 @@ describe("AppController dictation ownership", () => {
     expect(harness.paste.copyText).toHaveBeenCalledWith("raw transcript", expect.any(AbortSignal));
     expect(harness.paste.insertText).not.toHaveBeenCalled();
     expect(harness.storage.addHistory).toHaveBeenCalledOnce();
+    expect(harness.controller.session.status).toBe("complete");
+    expect(harness.controller.session.error).toContain("original app or window is no longer active");
+  });
+
+  it("copies output without pasting when focus changes during the delivery-critical section", async () => {
+    const harness = createControllerHarness({ aiEnabled: false });
+    const sessionId = await startAndStop(harness.controller);
+    harness.paste.insertText.mockImplementationOnce(async (_text, _signal, beforePaste) => {
+      harness.setCurrentContext({
+        ...capturedContext,
+        appId: "dev.other.app",
+        appName: "Other App",
+        windowTitle: "Other Window"
+      });
+      const guardResult = await beforePaste?.();
+      return guardResult && !guardResult.allowed
+        ? { pasted: false, message: guardResult.message ?? "", clipboardRetained: true }
+        : { pasted: true, message: "", clipboardRetained: false };
+    });
+
+    await harness.controller.completeRecording({ sessionId, audio: new ArrayBuffer(1), mimeType: "audio/wav" });
+
+    expect(harness.paste.insertText).toHaveBeenCalledOnce();
+    expect(harness.paste.copyText).not.toHaveBeenCalled();
     expect(harness.controller.session.status).toBe("complete");
     expect(harness.controller.session.error).toContain("original app or window is no longer active");
   });

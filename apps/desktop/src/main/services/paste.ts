@@ -17,6 +17,13 @@ export interface PasteResult {
   clipboardRetained?: boolean;
 }
 
+export interface PasteDispatchGuardResult {
+  allowed: boolean;
+  message?: string;
+}
+
+export type PasteDispatchGuard = () => Promise<PasteDispatchGuardResult>;
+
 export class PasteService {
   constructor(
     private readonly textAutomation: TextAutomationService,
@@ -54,7 +61,7 @@ export class PasteService {
     };
   }
 
-  async insertText(text: string, signal?: AbortSignal): Promise<PasteResult> {
+  async insertText(text: string, signal?: AbortSignal, beforePaste?: PasteDispatchGuard): Promise<PasteResult> {
     return this.textAutomation.runExclusive(async () => {
       throwIfAborted(signal);
       const previousClipboard = captureClipboardSnapshot();
@@ -71,6 +78,16 @@ export class PasteService {
 
         await abortableDelay(this.clipboardSettleDelayMs, signal);
         throwIfAborted(signal);
+
+        const guardResult = await beforePaste?.();
+        throwIfAborted(signal);
+        if (guardResult && !guardResult.allowed) {
+          return {
+            pasted: false,
+            message: guardResult.message ?? "Automatic paste was skipped; output left on the clipboard.",
+            clipboardRetained: true
+          };
+        }
 
         pasteDispatchStarted = true;
         const result = await this.textAutomation.pasteClipboard();

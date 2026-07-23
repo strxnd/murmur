@@ -1461,14 +1461,15 @@ export class AppController {
     this.broadcastState();
     this.hidePill();
 
+    const targetMismatchMessage =
+      "The original app or window is no longer active; output was copied without automatic paste.";
     const currentTarget = await this.context.capture({ selectedText: false, signal: operation.controller.signal });
     this.dictationOwner.assertCurrent(operation);
     if (!isSameOutputTarget(originalTarget, currentTarget)) {
       const result = await this.paste.copyText(text, operation.controller.signal);
       this.dictationOwner.assertCurrent(operation);
-      const message = "The original app or window is no longer active; output was copied without automatic paste.";
-      this.notifyPasteFallback(message);
-      return { ...result, message };
+      this.notifyPasteFallback(targetMismatchMessage);
+      return { ...result, message: targetMismatchMessage };
     }
 
     const automation = this.ensureAutomationReadyForUserAction("automatic paste");
@@ -1479,7 +1480,13 @@ export class AppController {
       return { ...result, message: automation.message };
     }
 
-    const pasteResult = await this.paste.insertText(text, operation.controller.signal);
+    const pasteResult = await this.paste.insertText(text, operation.controller.signal, async () => {
+      const latestTarget = await this.context.capture({ selectedText: false, signal: operation.controller.signal });
+      this.dictationOwner.assertCurrent(operation);
+      return isSameOutputTarget(originalTarget, latestTarget)
+        ? { allowed: true }
+        : { allowed: false, message: targetMismatchMessage };
+    });
     this.dictationOwner.assertCurrent(operation);
     if (!pasteResult.pasted || pasteResult.clipboardRetained) {
       this.notifyPasteFallback(pasteResult.message);

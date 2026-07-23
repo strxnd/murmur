@@ -252,6 +252,27 @@ describe("PasteService", () => {
     expect(clipboardHarness.get().text).toBe("new user clipboard");
   });
 
+  it("revalidates delivery after clipboard setup and immediately before paste dispatch", async () => {
+    const backend = new FakeBackend();
+    const service = new PasteService(new TextAutomationService(backend), 0, fakeLinuxClipboard(), 0);
+    clipboardHarness.set({ text: "previous" });
+    const beforePaste = vi.fn(async () => {
+      expect(clipboardHarness.get().text).toBe("processed output");
+      return { allowed: false, message: "The original target is no longer active." };
+    });
+
+    const result = await service.insertText("processed output", undefined, beforePaste);
+
+    expect(beforePaste).toHaveBeenCalledOnce();
+    expect(backend.pasteCalls).toBe(0);
+    expect(result).toEqual({
+      pasted: false,
+      message: "The original target is no longer active.",
+      clipboardRetained: true
+    });
+    expect(clipboardHarness.get().text).toBe("processed output");
+  });
+
   it("leaves output on the clipboard when automation fails", async () => {
     const backend = new FakeBackend();
     backend.result = {
