@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
+import { shouldForceXWayland } from "./linux-display-backend";
 
 if (!forceXWaylandForLinuxWayland()) {
   require("./app-main.cjs");
 }
 
 function forceXWaylandForLinuxWayland(): boolean {
-  if (process.platform !== "linux" || !isWaylandSession() || hasOzonePlatformX11(process.argv) || process.env.MURMUR_XWAYLAND_RELAUNCHED === "1") {
+  if (!shouldForceXWayland(process.platform, process.argv, process.env)) {
     return false;
   }
 
@@ -24,12 +25,4 @@ function forceXWaylandForLinuxWayland(): boolean {
   process.once("SIGINT", stopChild);
   process.once("SIGTERM", stopChild);
   return true;
-}
-
-function isWaylandSession(): boolean {
-  return process.env.XDG_SESSION_TYPE === "wayland" || Boolean(process.env.WAYLAND_DISPLAY);
-}
-
-function hasOzonePlatformX11(args: readonly string[]): boolean {
-  return args.some((arg, index) => arg === "--ozone-platform=x11" || (arg === "--ozone-platform" && args[index + 1] === "x11"));
 }

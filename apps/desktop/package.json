@@ -7,7 +7,7 @@
     "email": "kumaraarav@kumaraarav.dev"
   },
   "license": "GPL-3.0",
-  "desktopName": "murmur",
+  "desktopName": "dev.kumaraarav.murmur",
   "main": "out/main/index.cjs",
   "private": true,
   "engines": {

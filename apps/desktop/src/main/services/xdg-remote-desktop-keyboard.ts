@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import * as dbusNative from "@homebridge/dbus-native";
 import type { BusConnection, MessageBus } from "@homebridge/dbus-native";
+import { murmurAppId } from "../../shared/app-identity";
 import type { AutomationResult, ShortcutAutomationBackend, TextAutomationCapability, TextAutomationShortcut } from "./text-automation";
 
 const portalDestination = "org.freedesktop.portal.Desktop";
@@ -14,7 +15,6 @@ const dbusDestination = "org.freedesktop.DBus";
 const dbusPath = "/org/freedesktop/DBus";
 const dbusInterface = "org.freedesktop.DBus";
 const keyboardDeviceType = 1;
-const appId = "dev.murmur.app";
 const keyStateReleased = 0;
 const keyStatePressed = 1;
 const leftControlKeycode = 29;
@@ -373,7 +373,7 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
         interfaceName: hostRegistryInterface,
         member: "Register",
         signature: "sa{sv}",
-        body: [appId, []],
+        body: [murmurAppId, []],
         timeoutMs: probeTimeoutMs
       });
       this.hostAppRegistered = true;
@@ -383,7 +383,7 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
         this.hostAppRegistered = true;
         return;
       }
-      this.addDiagnostic(`XDG Desktop Portal app registration failed for ${appId}: ${message}.`);
+      this.addDiagnostic(`XDG Desktop Portal app registration failed for ${murmurAppId}: ${message}.`);
     }
   }
 
