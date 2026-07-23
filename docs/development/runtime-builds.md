@@ -57,7 +57,7 @@ bun run runtimes:manifest-check:release
 
 `runtimes:stage` copies exactly one prepared platform from `vendor/runtimes/<platform-key>/` into `.cache/bundled-runtimes/runtimes/<platform-key>/` for `electron-builder` to place under `<process.resourcesPath>/runtimes/`.
 Only CPU runtimes are staged into packaged app resources. Accelerated variants are optional installs and may download in packaged builds only when their Murmur release URL, size, and SHA-256 are configured.
-Set `MURMUR_RUNTIME_VENDOR_ROOT` or `MURMUR_RUNTIME_STAGING_ROOT` to override those source and staging roots when testing the staging script. A staging override must resolve to a `runtimes` leaf beneath a parent containing the `.murmur-runtime-staging` marker created by the script for its default cache location. The script rejects symbolic-link, unmarked, protected, and source-overlapping destinations, and it validates every runtime source before replacing existing staged files.
+Set `MURMUR_RUNTIME_VENDOR_ROOT` or `MURMUR_RUNTIME_STAGING_ROOT` to override those source and staging roots when testing the staging script. A staging override must resolve to a `runtimes` leaf beneath a parent containing a valid `.murmur-runtime-staging-parent` marker. The script maintains a separate `.murmur-runtime-staging` marker inside the leaf, rejects symbolic-link, unmarked, protected, and source-overlapping destinations, and validates every runtime source before replacing existing staged files. The internal leaf marker is excluded from packaged resources.
 
 For explicit-target staging, pass either a complete platform key or separate platform and architecture flags:
 

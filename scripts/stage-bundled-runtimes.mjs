@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 import {
+  chmodSync,
   cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync
@@ -20,7 +24,8 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = realpathSync(resolve(scriptDir, ".."));
 const defaultVendorRoot = join(repoRoot, "vendor", "runtimes");
 const defaultStagingRoot = join(repoRoot, ".cache", "bundled-runtimes", "runtimes");
-const stagingMarkerName = ".murmur-runtime-staging";
+const stagingParentMarkerName = ".murmur-runtime-staging-parent";
+const stagingLeafMarkerName = ".murmur-runtime-staging";
 const stagingMarkerContents = "murmur-runtime-staging-v1\n";
 const requestedVendorRoot = process.env.MURMUR_RUNTIME_VENDOR_ROOT || defaultVendorRoot;
 const requestedStagingRoot = process.env.MURMUR_RUNTIME_STAGING_ROOT || defaultStagingRoot;
@@ -34,12 +39,10 @@ const target = readTarget(process.argv.slice(2), process.env);
 const platformKey = resolvePlatformKey(target);
 const staging = validateStagingRoot(requestedStagingRoot);
 const sources = validateRuntimeSources(requestedVendorRoot, staging.root, platformKey);
-
-prepareStagingRoot(staging);
-rmSync(staging.root, { recursive: true, force: true });
+const freshStagingRoot = resetStagingRoot(staging);
 
 for (const source of sources) {
-  const targetDir = join(staging.root, platformKey, source.runtimeDir);
+  const targetDir = join(freshStagingRoot, platformKey, source.runtimeDir);
   cpSync(source.sourceDir, targetDir, {
     recursive: true,
     dereference: false,
@@ -65,23 +68,31 @@ function validateStagingRoot(input) {
     throw new Error(`Unsafe runtime staging parent: ${parent}`);
   }
 
-  const markerPath = join(parent, stagingMarkerName);
-  const markerEntry = lstatIfExists(markerPath);
   const requestedDefault = requestedRoot === defaultStagingRoot;
   if (requestedDefault && !isPathWithin(repoRoot, root)) {
     throw new Error(`Default runtime staging root escapes the repository: ${root}`);
   }
   const isDefault = requestedDefault && root === canonicalizePath(defaultStagingRoot);
+  const parentMarkerPath = join(parent, stagingParentMarkerName);
+  const parentMarkerEntry = lstatIfExists(parentMarkerPath);
 
-  if (markerEntry) {
-    if (!markerEntry.isFile() || markerEntry.isSymbolicLink() || readFileSync(markerPath, "utf8") !== stagingMarkerContents) {
-      throw new Error(`Invalid runtime staging marker: ${markerPath}`);
-    }
-  } else if (!isDefault || rootEntry) {
-    throw new Error(`Refusing unmarked runtime staging root: ${root}`);
+  if (parentMarkerEntry) {
+    validateMarker(parentMarkerPath, parentMarkerEntry, "runtime staging parent");
+  } else if (!isDefault) {
+    throw new Error(`Refusing unmarked runtime staging parent: ${parent}`);
   }
 
-  return { root, parent, markerPath, needsMarker: !markerEntry };
+  if (rootEntry && readdirSync(root).length > 0) {
+    const leafMarkerPath = join(root, stagingLeafMarkerName);
+    const leafMarkerEntry = lstatIfExists(leafMarkerPath);
+    if (leafMarkerEntry) {
+      validateMarker(leafMarkerPath, leafMarkerEntry, "runtime staging leaf");
+    } else if (!isDefault) {
+      throw new Error(`Refusing unmarked runtime staging leaf: ${root}`);
+    }
+  }
+
+  return { root, parent, parentMarkerPath, needsParentMarker: !parentMarkerEntry };
 }
 
 function validateRuntimeSources(input, stagingRoot, platformKey) {
@@ -120,10 +131,31 @@ function validateRuntimeSources(input, stagingRoot, platformKey) {
   return sources;
 }
 
-function prepareStagingRoot(staging) {
-  mkdirSync(staging.parent, { recursive: true });
-  if (staging.needsMarker) {
-    writeFileSync(staging.markerPath, stagingMarkerContents, { encoding: "utf8", flag: "wx", mode: 0o600 });
+function resetStagingRoot(staging) {
+  mkdirSync(staging.parent, { recursive: true, mode: 0o700 });
+  if (staging.needsParentMarker) {
+    writeFileSync(staging.parentMarkerPath, stagingMarkerContents, { encoding: "utf8", flag: "wx", mode: 0o600 });
+  }
+
+  const replacementRoot = mkdtempSync(join(staging.parent, ".murmur-runtime-staging-"));
+  try {
+    chmodSync(replacementRoot, 0o700);
+    writeFileSync(join(replacementRoot, stagingLeafMarkerName), stagingMarkerContents, { mode: 0o600 });
+    rmSync(staging.root, { recursive: true, force: true });
+    renameSync(replacementRoot, staging.root);
+  } catch (error) {
+    rmSync(replacementRoot, { recursive: true, force: true });
+    throw error;
+  }
+
+  const freshRoot = realpathSync(staging.root);
+  if (freshRoot !== staging.root) throw new Error(`Runtime staging root changed during reset: ${staging.root}`);
+  return freshRoot;
+}
+
+function validateMarker(path, entry, label) {
+  if (!entry.isFile() || entry.isSymbolicLink() || readFileSync(path, "utf8") !== stagingMarkerContents) {
+    throw new Error(`Invalid ${label} marker: ${path}`);
   }
 }
 
