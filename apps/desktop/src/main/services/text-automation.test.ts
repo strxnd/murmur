@@ -229,6 +229,26 @@ describe("TextAutomationService", () => {
     expect(backend.calls).toEqual(["paste:start", "paste:end", "copy:start", "copy:end"]);
   });
 
+  it("drops a queued exclusive operation when its owner is cancelled", async () => {
+    const backend = new FakeBackend();
+    const service = new TextAutomationService(backend);
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const first = service.runExclusive(() => firstBlocked);
+    const controller = new AbortController();
+    const staleOperation = vi.fn(async () => undefined);
+    const second = service.runExclusive(staleOperation, controller.signal);
+
+    controller.abort();
+    releaseFirst();
+    await first;
+
+    await expect(second).rejects.toMatchObject({ name: "AbortError" });
+    expect(staleOperation).not.toHaveBeenCalled();
+  });
+
   it("serializes clipboard-scoped operations against direct automation calls", async () => {
     const backend = new FakeBackend();
     const service = new TextAutomationService(backend);

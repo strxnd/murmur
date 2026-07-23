@@ -1445,7 +1445,7 @@ export class AppController {
     this.session = { ...this.session, status: "pasting" };
     this.broadcastState();
     this.hidePill();
-    const pasteResult = await this.paste.insertText(text);
+    const pasteResult = await this.paste.insertText(text, operation.controller.signal);
     this.dictationOwner.assertCurrent(operation);
     if (!pasteResult.pasted) {
       this.notifyPasteFallback(pasteResult.message);

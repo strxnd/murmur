@@ -85,6 +85,34 @@ describe("PasteService", () => {
     expect(clipboardHarness.get().text).toBe("processed output");
   });
 
+  it("does not dispatch paste after the owning dictation is cancelled", async () => {
+    const backend = new FakeBackend();
+    let releaseWrite!: () => void;
+    let markWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    const writeBlocked = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const service = new PasteService(new TextAutomationService(backend), 0, {
+      async writeTextForPaste(text: string): Promise<void> {
+        markWriteStarted();
+        await writeBlocked;
+        clipboardHarness.api.writeText(text);
+      }
+    });
+    const controller = new AbortController();
+
+    const result = service.insertText("stale output", controller.signal);
+    await writeStarted;
+    controller.abort();
+    releaseWrite();
+
+    await expect(result).rejects.toMatchObject({ name: "AbortError" });
+    expect(backend.pasteCalls).toBe(0);
+  });
+
   it("leaves output on the clipboard after successful automation", async () => {
     const image = clipboardHarness.image();
     const backend = new FakeBackend();
