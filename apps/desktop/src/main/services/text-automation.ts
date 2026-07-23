@@ -90,8 +90,8 @@ export class TextAutomationService {
     return this.enqueue(() => this.backend.readSelectedText!());
   }
 
-  runExclusive<T>(operation: () => Promise<T>): Promise<T> {
-    return this.enqueue(() => this.exclusiveContext.run(true, operation));
+  runExclusive<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    return this.enqueue(() => this.exclusiveContext.run(true, operation), signal);
   }
 
   getCapability(): TextAutomationCapability {
@@ -106,14 +106,22 @@ export class TextAutomationService {
     return this.backend.getDiagnostics();
   }
 
-  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
-    const run = this.operationQueue.then(operation, operation);
+  private enqueue<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const runOperation = (): Promise<T> => {
+      if (signal?.aborted) return Promise.reject(abortError());
+      return operation();
+    };
+    const run = this.operationQueue.then(runOperation, runOperation);
     this.operationQueue = run.then(
       () => undefined,
       () => undefined
     );
     return run;
   }
+}
+
+function abortError(): Error {
+  return new DOMException("The operation was aborted.", "AbortError");
 }
 
 export function createTextAutomationBackend(platform: NodeJS.Platform = process.platform): TextAutomationBackend {

@@ -23,6 +23,7 @@ interface TranscribeOptions {
   language?: string | "auto";
   vocabularyPrompt?: string;
   onDelta?: (delta: string) => void;
+  signal?: AbortSignal;
 }
 
 interface RuntimeProcessResult {
@@ -164,7 +165,7 @@ export class TranscriptionService {
 
     const modelPath = this.requiredModelPath(options.provider.defaultModel, "Bundled whisper.cpp");
     return this.withRuntimeFallback("whisper.cpp", async (runtime) => {
-      const baseUrl = await this.ensureWhisperServer(modelPath, runtime);
+      const baseUrl = await this.ensureWhisperServer(modelPath, runtime, options.signal);
       const result = await this.transcribeWhisperCpp({
         ...options,
         provider: {
@@ -186,13 +187,13 @@ export class TranscriptionService {
     if (options.vocabularyPrompt) form.append("prompt", options.vocabularyPrompt);
 
     const timeouts = transcriptionHttpTimeouts();
-    const response = await fetchWithTimeout(endpoint, { method: "POST", body: form }, timeouts.totalTimeoutMs);
+    const response = await fetchWithTimeout(endpoint, { method: "POST", body: form, signal: options.signal }, timeouts.totalTimeoutMs);
     if (!response.ok) {
-      const body = await readResponseText(response, { ...timeouts, label: "whisper.cpp error" });
+      const body = await readResponseText(response, { ...timeouts, label: "whisper.cpp error", signal: options.signal });
       throw new Error(`whisper.cpp transcription failed with HTTP ${response.status}: ${body}`);
     }
 
-    const data = await parseJsonOrText(response, { ...timeouts, label: "whisper.cpp transcription" });
+    const data = await parseJsonOrText(response, { ...timeouts, label: "whisper.cpp transcription", signal: options.signal });
     return {
       text: extractTextFromTranscriptionResponse(data),
       providerId: options.provider.id,
@@ -215,7 +216,8 @@ export class TranscriptionService {
           runtime.binaryPath,
           buildSherpaArgs(modelPath, audioPath, undefined, runtime.accelerator),
           transcriptionTimeoutMs,
-          runtime
+          runtime,
+          options.signal
         );
         this.lastRuntimeDiagnostics = runtimeDiagnostics(runtime.label, result.stdout, result.stderr);
         const text = extractSherpaText(result.stdout) || extractSherpaText(result.stderr);
@@ -228,6 +230,7 @@ export class TranscriptionService {
         };
       });
     } catch (error) {
+      if (isAbortError(error)) throw error;
       this.lastRuntimeDiagnostics = [`Sherpa ONNX error: ${tail(error instanceof Error ? error.message : String(error))}`];
       throw new Error("Sherpa ONNX transcription failed. Check runtime diagnostics for details.");
     } finally {
@@ -255,18 +258,19 @@ export class TranscriptionService {
       {
         method: "POST",
         headers: this.authHeaders(options.provider),
-        body: form
+        body: form,
+        signal: options.signal
       },
       timeouts.totalTimeoutMs
     );
 
     if (!response.ok) {
-      const body = await readResponseText(response, { ...timeouts, label: "STT error" });
+      const body = await readResponseText(response, { ...timeouts, label: "STT error", signal: options.signal });
       throw new Error(`STT failed with HTTP ${response.status}: ${body}`);
     }
 
     if (streamingMode === "completed_audio_sse" && response.body) {
-      const text = await this.readSseTranscript(response, options.onDelta, timeouts);
+      const text = await this.readSseTranscript(response, options.onDelta, timeouts, options.signal);
       return {
         text,
         providerId: options.provider.id,
@@ -275,7 +279,7 @@ export class TranscriptionService {
       };
     }
 
-    const data = await parseJsonOrText(response, { ...timeouts, label: "STT transcription" });
+    const data = await parseJsonOrText(response, { ...timeouts, label: "STT transcription", signal: options.signal });
     return {
       text: extractTextFromTranscriptionResponse(data),
       providerId: options.provider.id,
@@ -292,6 +296,7 @@ export class TranscriptionService {
     try {
       return await attempt(primary);
     } catch (error) {
+      if (isAbortError(error)) throw error;
       const primaryMessage = errorMessage(error);
       if (primary.accelerator === "cpu") {
         throw error;
@@ -315,7 +320,7 @@ export class TranscriptionService {
     }
   }
 
-  private async ensureWhisperServer(modelPath: string, runtime: ResolvedSttRuntime): Promise<string> {
+  private async ensureWhisperServer(modelPath: string, runtime: ResolvedSttRuntime, signal?: AbortSignal): Promise<string> {
     const key = [runtime.variantKey, runtime.source, runtime.rootDir, runtime.version, modelPath].join("|");
     const existing = this.whisperServer;
     if (existing?.key === key && existing.process.exitCode === null && !existing.process.killed) {
@@ -324,7 +329,9 @@ export class TranscriptionService {
     }
 
     this.stopWhisperServer();
+    throwIfAborted(signal);
     const port = await findOpenPort();
+    throwIfAborted(signal);
     const baseUrl = `http://127.0.0.1:${port}`;
     const args = buildWhisperServerArgs(port, modelPath, undefined, runtime.accelerator, runtime.env.MURMUR_STT_GPU_DEVICE);
     const child = spawn(runtime.binaryPath, args, { stdio: ["pipe", "pipe", "pipe"], env: runtime.env, cwd: runtime.cwd });
@@ -344,10 +351,20 @@ export class TranscriptionService {
     });
 
     this.whisperServer = { key, runtimeId: "whisper.cpp", accelerator: runtime.accelerator, baseUrl, process: child };
-    await waitForHttp(baseUrl, child, () => {
-      this.lastRuntimeDiagnostics = runtimeDiagnostics(runtime.label, stdout.text(), stderr.text());
-      return [stdout.text(), stderr.text()].filter(Boolean).join("\n");
-    });
+    try {
+      await waitForHttp(
+        baseUrl,
+        child,
+        () => {
+          this.lastRuntimeDiagnostics = runtimeDiagnostics(runtime.label, stdout.text(), stderr.text());
+          return [stdout.text(), stderr.text()].filter(Boolean).join("\n");
+        },
+        signal
+      );
+    } catch (error) {
+      if (isAbortError(error) && this.whisperServer?.process === child) this.stopWhisperServer();
+      throw error;
+    }
     this.scheduleWhisperServerIdleShutdown();
     return baseUrl;
   }
@@ -401,7 +418,8 @@ export class TranscriptionService {
   private async readSseTranscript(
     response: Response,
     onDelta: ((delta: string) => void) | undefined,
-    timeouts: { totalTimeoutMs: number; idleTimeoutMs: number }
+    timeouts: { totalTimeoutMs: number; idleTimeoutMs: number },
+    signal?: AbortSignal
   ): Promise<string> {
     const decoder = new TextDecoder();
     let buffer = "";
@@ -447,7 +465,7 @@ export class TranscriptionService {
         buffer += decoder.decode(chunk, { stream: true });
         consumeEvents();
       },
-      { ...timeouts, label: "STT SSE" }
+      { ...timeouts, label: "STT SSE", signal }
     );
     buffer += decoder.decode();
     consumeEvents(true);
@@ -560,16 +578,36 @@ function runProcess(
   command: string,
   args: string[],
   timeoutMs: number,
-  runtime?: Pick<ResolvedSttRuntime, "env" | "cwd">
+  runtime?: Pick<ResolvedSttRuntime, "env" | "cwd">,
+  signal?: AbortSignal
 ): Promise<RuntimeProcessResult> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError());
+      return;
+    }
+
     const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env: runtime?.env, cwd: runtime?.cwd });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const finish = (error?: Error, result?: RuntimeProcessResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", onAbort);
+      if (error) reject(error);
+      else resolve(result!);
+    };
+    const onAbort = (): void => {
+      child.kill();
+      finish(abortError());
+    };
     const timeout = setTimeout(() => {
       child.kill();
-      reject(new Error(`${command} timed out after ${timeoutMs}ms.`));
+      finish(new Error(`${command} timed out after ${timeoutMs}ms.`));
     }, timeoutMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
@@ -577,17 +615,13 @@ function runProcess(
     child.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
     });
-    child.on("error", (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
+    child.on("error", (error) => finish(error));
     child.on("close", (code) => {
-      clearTimeout(timeout);
       if (code === 0) {
-        resolve({ stdout, stderr });
+        finish(undefined, { stdout, stderr });
         return;
       }
-      reject(new Error(`${command} failed with exit code ${code}: ${stderr.trim() || stdout.trim()}`));
+      finish(new Error(`${command} failed with exit code ${code}: ${stderr.trim() || stdout.trim()}`));
     });
   });
 }
@@ -636,19 +670,26 @@ function findOpenPort(): Promise<number> {
   });
 }
 
-async function waitForHttp(baseUrl: string, child: ChildProcessWithoutNullStreams, output: () => string): Promise<void> {
+async function waitForHttp(
+  baseUrl: string,
+  child: ChildProcessWithoutNullStreams,
+  output: () => string,
+  signal?: AbortSignal
+): Promise<void> {
   const startedAt = Date.now();
   const timeoutMs = runtimeReadyTimeoutMs();
   while (Date.now() - startedAt < timeoutMs) {
+    throwIfAborted(signal);
     if (child.exitCode !== null) {
       output();
       throw new Error("whisper-server exited before becoming ready. Check runtime diagnostics for details.");
     }
     try {
-      await fetchWithTimeout(baseUrl, {}, 500);
+      await fetchWithTimeout(baseUrl, { signal }, 500);
       return;
-    } catch {
-      await delay(150);
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      await delay(150, signal);
     }
   }
 
@@ -657,10 +698,34 @@ async function waitForHttp(baseUrl: string, child: ChildProcessWithoutNullStream
   throw new Error(`whisper-server did not become ready within ${timeoutMs}ms. Check runtime diagnostics for details.`);
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError());
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(abortError());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError();
+}
+
+function abortError(): Error {
+  return new DOMException("The operation was aborted.", "AbortError");
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function runtimeReadyTimeoutMs(): number {

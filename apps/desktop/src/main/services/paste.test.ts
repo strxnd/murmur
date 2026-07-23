@@ -47,6 +47,8 @@ vi.mock("../electron-api", () => ({ clipboard: clipboardHarness.api }));
 
 class FakeBackend implements TextAutomationBackend {
   pasteCalls = 0;
+  pasteStarted?: () => void;
+  pasteBlocked?: Promise<void>;
   result: AutomationResult = { success: true, status: "success", message: "sent", diagnostics: [] };
   capability: TextAutomationCapability = {
     backend: "xdg_remote_desktop_keyboard",
@@ -65,6 +67,8 @@ class FakeBackend implements TextAutomationBackend {
   }
   async pasteClipboard(): Promise<AutomationResult> {
     this.pasteCalls += 1;
+    this.pasteStarted?.();
+    await this.pasteBlocked;
     return this.result;
   }
   async copySelection(): Promise<AutomationResult> {
@@ -82,6 +86,65 @@ describe("PasteService", () => {
 
     expect(result).toEqual({ pasted: true, message: "Paste shortcut sent; output left on clipboard." });
     expect(backend.pasteCalls).toBe(1);
+    expect(clipboardHarness.get().text).toBe("processed output");
+  });
+
+  it("does not dispatch paste after the owning dictation is cancelled", async () => {
+    const backend = new FakeBackend();
+    clipboardHarness.set({ text: "previous", html: "<b>previous</b>", rtf: "{\\rtf1 previous}" });
+    let releaseWrite!: () => void;
+    let markWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    const writeBlocked = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const service = new PasteService(new TextAutomationService(backend), 0, {
+      async writeTextForPaste(text: string): Promise<void> {
+        markWriteStarted();
+        await writeBlocked;
+        clipboardHarness.api.writeText(text);
+      }
+    });
+    const controller = new AbortController();
+
+    const result = service.insertText("stale output", controller.signal);
+    await writeStarted;
+    controller.abort();
+    releaseWrite();
+
+    await expect(result).rejects.toMatchObject({ name: "AbortError" });
+    expect(backend.pasteCalls).toBe(0);
+    expect(clipboardHarness.get()).toMatchObject({
+      text: "previous",
+      html: "<b>previous</b>",
+      rtf: "{\\rtf1 previous}"
+    });
+  });
+
+  it("keeps dictation text on the clipboard when cancellation arrives during paste dispatch", async () => {
+    const backend = new FakeBackend();
+    let releasePaste!: () => void;
+    let markPasteStarted!: () => void;
+    backend.pasteBlocked = new Promise<void>((resolve) => {
+      releasePaste = resolve;
+    });
+    const pasteStarted = new Promise<void>((resolve) => {
+      markPasteStarted = resolve;
+    });
+    backend.pasteStarted = markPasteStarted;
+    const service = new PasteService(new TextAutomationService(backend), 0, fakeLinuxClipboard());
+    clipboardHarness.set({ text: "previous", html: "<b>previous</b>", rtf: "{\\rtf1 previous}" });
+    const controller = new AbortController();
+
+    const result = service.insertText("processed output", controller.signal);
+    await pasteStarted;
+    controller.abort();
+
+    expect(clipboardHarness.get().text).toBe("processed output");
+    releasePaste();
+    await expect(result).resolves.toEqual({ pasted: true, message: "Paste shortcut sent; output left on clipboard." });
     expect(clipboardHarness.get().text).toBe("processed output");
   });
 

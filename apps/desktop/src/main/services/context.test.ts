@@ -50,6 +50,8 @@ afterEach(() => {
 
 class FakeBackend implements TextAutomationBackend {
   copyCalls = 0;
+  copyStarted?: () => void;
+  copyBlocked?: Promise<void>;
   onCopy: (() => void) | undefined;
   result: AutomationResult = { success: true, status: "success", message: "sent", diagnostics: [] };
   selectedTextCalls = 0;
@@ -79,6 +81,8 @@ class FakeBackend implements TextAutomationBackend {
   }
   async copySelection(): Promise<AutomationResult> {
     this.copyCalls += 1;
+    this.copyStarted?.();
+    await this.copyBlocked;
     this.onCopy?.();
     return this.result;
   }
@@ -101,6 +105,62 @@ describe("ContextService", () => {
     expect(snapshot.selectedText).toBe("selected text");
     expect(backend.copyCalls).toBe(1);
     expect(clipboardHarness.get()).toEqual({ text: "previous", html: "<b>previous</b>", rtf: "{\\rtf1 previous}", image });
+  });
+
+  it("drops selected-text capture while it is queued after cancellation", async () => {
+    const backend = new FakeBackend();
+    const automation = new TextAutomationService(backend);
+    let releaseQueue!: () => void;
+    let markQueueOccupied!: () => void;
+    const queueOccupied = new Promise<void>((resolve) => {
+      markQueueOccupied = resolve;
+    });
+    const queueBlocked = new Promise<void>((resolve) => {
+      releaseQueue = resolve;
+    });
+    const blocker = automation.runExclusive(async () => {
+      markQueueOccupied();
+      await queueBlocked;
+    });
+    await queueOccupied;
+    const context = new ContextService(automation, 500, 100, fakePrimarySelection());
+    clipboardHarness.set({ text: "previous" });
+    const controller = new AbortController();
+
+    const capture = context.capture({ signal: controller.signal });
+    await Promise.resolve();
+    controller.abort();
+    releaseQueue();
+    await blocker;
+
+    await expect(capture).rejects.toMatchObject({ name: "AbortError" });
+    expect(backend.copyCalls).toBe(0);
+    expect(clipboardHarness.get().text).toBe("previous");
+  });
+
+  it("aborts an in-flight selected-text capture before clipboard polling", async () => {
+    const backend = new FakeBackend();
+    let releaseCopy!: () => void;
+    let markCopyStarted!: () => void;
+    backend.copyBlocked = new Promise<void>((resolve) => {
+      releaseCopy = resolve;
+    });
+    const copyStarted = new Promise<void>((resolve) => {
+      markCopyStarted = resolve;
+    });
+    backend.copyStarted = markCopyStarted;
+    const context = new ContextService(new TextAutomationService(backend), 5_000, 1_000, fakePrimarySelection());
+    clipboardHarness.set({ text: "previous", html: "<b>previous</b>" });
+    const controller = new AbortController();
+
+    const capture = context.capture({ signal: controller.signal });
+    await copyStarted;
+    controller.abort();
+    releaseCopy();
+
+    await expect(capture).rejects.toMatchObject({ name: "AbortError" });
+    expect(backend.copyCalls).toBe(1);
+    expect(clipboardHarness.get()).toMatchObject({ text: "previous", html: "<b>previous</b>" });
   });
 
   it("returns no selected text when copy leaves the sentinel unchanged", async () => {

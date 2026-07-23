@@ -24,17 +24,57 @@ export class LinuxClipboardService {
     this.platform = dependencies.platform ?? process.platform;
   }
 
-  async writeTextForPaste(text: string): Promise<void> {
-    clipboard.writeText(text);
-    if (this.platform !== "linux") return;
+  async writeTextForPaste(text: string, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw abortError();
+    const previousText = clipboard.readText();
+    const previousPrimary =
+      this.platform === "linux" ? (await this.readPrimaryText()) ?? "" : this.readElectronPrimarySelection() ?? "";
+    if (signal?.aborted) throw abortError();
+    let restoreStandard = false;
+    let restorePrimary = false;
+    const restoreElectronClipboard = (): void => {
+      if (clipboard.readText() === text) {
+        restoreStandard = true;
+        clipboard.writeText(previousText);
+      }
+      if (this.readElectronPrimarySelection() === text) {
+        restorePrimary = true;
+        this.writeElectronPrimarySelection(previousPrimary);
+      }
+    };
+    const onAbort = (): void => restoreElectronClipboard();
+    signal?.addEventListener("abort", onAbort, { once: true });
 
-    this.writeElectronPrimarySelection(text);
-    await Promise.all([
-      this.writeWlClipboard(text).catch(() => undefined),
-      this.writeWlPrimarySelection(text).catch(() => undefined),
-      this.writeXClipboard(text).catch(() => undefined),
-      this.writeXPrimarySelection(text).catch(() => undefined)
-    ]);
+    try {
+      clipboard.writeText(text);
+      if (this.platform !== "linux") {
+        if (signal?.aborted) throw abortError();
+        return;
+      }
+
+      this.writeElectronPrimarySelection(text);
+      await Promise.all([
+        this.writeWlClipboard(text).catch(() => undefined),
+        this.writeWlPrimarySelection(text).catch(() => undefined),
+        this.writeXClipboard(text).catch(() => undefined),
+        this.writeXPrimarySelection(text).catch(() => undefined)
+      ]);
+      if (!signal?.aborted) return;
+
+      restoreElectronClipboard();
+      if (!restorePrimary && (await this.readExternalPrimaryText().catch(() => undefined)) === text) {
+        restorePrimary = true;
+      }
+      await Promise.all([
+        restoreStandard ? this.writeWlClipboard(previousText).catch(() => undefined) : Promise.resolve(),
+        restorePrimary ? this.writeWlPrimarySelection(previousPrimary).catch(() => undefined) : Promise.resolve(),
+        restoreStandard ? this.writeXClipboard(previousText).catch(() => undefined) : Promise.resolve(),
+        restorePrimary ? this.writeXPrimarySelection(previousPrimary).catch(() => undefined) : Promise.resolve()
+      ]);
+      throw abortError();
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+    }
   }
 
   async readPrimaryText(): Promise<string | undefined> {
@@ -42,7 +82,10 @@ export class LinuxClipboardService {
 
     const electronSelection = this.readElectronPrimarySelection();
     if (electronSelection) return electronSelection;
+    return this.readExternalPrimaryText();
+  }
 
+  private async readExternalPrimaryText(): Promise<string | undefined> {
     const readers = [
       () => this.readWlPrimarySelection(),
       () => this.readXclipPrimarySelection(),
@@ -126,4 +169,8 @@ export class LinuxClipboardService {
     this.toolAvailability[tool] = available;
     return available;
   }
+}
+
+function abortError(): Error {
+  return new DOMException("The operation was aborted.", "AbortError");
 }

@@ -1,6 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
 import { codexProviderDefaults } from "../shared/codex-provider";
 import {
+  defaultAutoModeRules,
+  defaultModelLibrary,
+  defaultModes,
+  defaultReleaseNotes,
+  defaultSession,
+  defaultSettings
+} from "../shared/defaults";
+import type {
+  AppStateSnapshot,
+  CodexProviderRuntime,
+  DictationHistoryItem,
+  DictationSession,
+  LlmProviderConfig,
+  TranscriptionProviderConfig,
+  TranscriptionResult
+} from "../shared/types";
+import {
+  AppController,
   computeDurationMs,
   countWords,
   rendererQueryFromSuffix,
@@ -8,6 +26,255 @@ import {
   shouldPersistDictationHistory,
   wrapIndex
 } from "./app-controller";
+import { DictationSessionOwner, type DictationSessionOperation } from "./services/dictation-session";
+
+vi.mock("./electron-api", () => ({
+  app: {
+    getPath: () => "/tmp/murmur-tests",
+    getVersion: () => "0.1.0",
+    isPackaged: false
+  },
+  BrowserWindow: vi.fn(),
+  clipboard: {
+    readBuffer: vi.fn(),
+    readHTML: vi.fn(() => ""),
+    readImage: vi.fn(),
+    readRTF: vi.fn(() => ""),
+    readText: vi.fn(() => ""),
+    write: vi.fn(),
+    writeBuffer: vi.fn(),
+    writeText: vi.fn()
+  },
+  dialog: {},
+  globalShortcut: {
+    isRegistered: vi.fn(() => false),
+    register: vi.fn(() => true),
+    unregister: vi.fn(),
+    unregisterAll: vi.fn()
+  },
+  ipcMain: { handle: vi.fn(), on: vi.fn(), removeHandler: vi.fn(), removeListener: vi.fn() },
+  Menu: { buildFromTemplate: vi.fn() },
+  nativeImage: { createFromDataURL: vi.fn(() => ({})) },
+  nativeTheme: { shouldUseDarkColors: true },
+  Notification: Object.assign(vi.fn(), { isSupported: vi.fn(() => false) }),
+  safeStorage: {
+    decryptString: vi.fn(),
+    encryptString: vi.fn(),
+    isEncryptionAvailable: vi.fn(() => false)
+  },
+  screen: {
+    getCursorScreenPoint: vi.fn(() => ({ x: 0, y: 0 })),
+    getDisplayNearestPoint: vi.fn(() => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }))
+  },
+  shell: { openExternal: vi.fn() },
+  systemPreferences: {},
+  Tray: vi.fn()
+}));
+
+const testSttProvider: TranscriptionProviderConfig = {
+  id: "test-stt",
+  type: "local_openai_compatible_stt",
+  name: "Test STT",
+  baseUrl: "http://127.0.0.1:8000/v1",
+  isCloud: false,
+  isLocal: true,
+  defaultModel: "test-stt-model",
+  defaultLanguage: "auto",
+  streamingMode: "none",
+  enabled: true
+};
+
+const transcriptionResult: TranscriptionResult = {
+  text: "raw transcript",
+  providerId: testSttProvider.id,
+  model: testSttProvider.defaultModel,
+  streamingMode: "none"
+};
+
+const capturedContext = {
+  appName: "Test App",
+  appId: "dev.test.app",
+  windowTitle: "Test Window",
+  capturedAt: "2026-07-23T00:00:00.000Z",
+  sourceQuality: "full" as const,
+  diagnostics: []
+};
+
+interface TestController {
+  session: DictationSession;
+  sessionOperation: DictationSessionOperation | null;
+  sessionContext: typeof capturedContext | null;
+  initialCodexRefresh: Promise<unknown>;
+  startRecording(trigger: string): Promise<AppStateSnapshot>;
+  stopRecording(notice?: string): Promise<AppStateSnapshot>;
+  cancelRecording(): Promise<AppStateSnapshot>;
+  clearLocalData(): Promise<AppStateSnapshot>;
+  completeRecording(payload: { sessionId: string; audio: ArrayBuffer; mimeType: string }): Promise<AppStateSnapshot>;
+  dispose(): void;
+}
+
+interface ControllerHarness {
+  controller: TestController;
+  state: ReturnType<typeof createPersistedState>;
+  storage: {
+    addHistory: ReturnType<typeof vi.fn>;
+    clearLocalData: ReturnType<typeof vi.fn>;
+    resolveLlmProviderSecret: ReturnType<typeof vi.fn>;
+  };
+  stt: { transcribe: ReturnType<typeof vi.fn> };
+  llm: { process: ReturnType<typeof vi.fn> };
+  paste: { insertText: ReturnType<typeof vi.fn> };
+  codex: { logout: ReturnType<typeof vi.fn> };
+  mainWindowSend: ReturnType<typeof vi.fn>;
+  setCodexStatus(status: CodexProviderRuntime): void;
+}
+
+function createPersistedState(options: { aiEnabled?: boolean; llmProviders?: LlmProviderConfig[] } = {}) {
+  const mode = {
+    ...defaultModes[0],
+    aiEnabled: options.aiEnabled ?? true,
+    examples: defaultModes[0].examples.map((example) => ({ ...example })),
+    context: { ...defaultModes[0].context }
+  };
+  return {
+    settings: { ...defaultSettings, activeModeId: mode.id, selectedTextCapture: "disabled" as const },
+    modes: [mode],
+    transcriptionProviders: [{ ...testSttProvider }],
+    llmProviders: (options.llmProviders ?? [{ ...codexProviderDefaults }]).map((provider) => ({ ...provider })),
+    autoModeRules: defaultAutoModeRules.map((rule) => ({ ...rule, match: { ...rule.match } })),
+    vocabulary: [],
+    history: [] as DictationHistoryItem[],
+    modelLibrary: {
+      catalog: [...defaultModelLibrary.catalog],
+      downloads: [...defaultModelLibrary.downloads],
+      activeModelIds: {}
+    },
+    releaseNotes: [...defaultReleaseNotes]
+  };
+}
+
+function createControllerHarness(options: {
+  aiEnabled?: boolean;
+  codexStatus?: CodexProviderRuntime;
+  initialCodexRefresh?: Promise<unknown>;
+  llmProviders?: LlmProviderConfig[];
+} = {}): ControllerHarness {
+  const state = createPersistedState(options);
+  let codexStatus: CodexProviderRuntime =
+    options.codexStatus ?? { status: "connected", message: "Connected", modelAvailable: true };
+  const mainWindowSend = vi.fn();
+  const storage = {
+    backend: "json" as const,
+    getState: vi.fn(() => state),
+    getSettings: vi.fn(() => state.settings),
+    resolveTranscriptionProviderSecret: vi.fn((provider: TranscriptionProviderConfig) => ({ ...provider })),
+    resolveLlmProviderSecret: vi.fn((provider: LlmProviderConfig) => ({ ...provider })),
+    addHistory: vi.fn((item) => state.history.push(item)),
+    clearLocalData: vi.fn(),
+    getDiagnostics: vi.fn(() => [])
+  };
+  const stt = {
+    transcribe: vi.fn(async () => transcriptionResult),
+    dispose: vi.fn()
+  };
+  const llm = {
+    process: vi.fn(async () => ({ text: "processed transcript", providerId: "codex", model: "test-llm" }))
+  };
+  const paste = {
+    insertText: vi.fn(async () => ({ pasted: true, message: "" })),
+    getDiagnostics: vi.fn(() => [])
+  };
+  const codex = {
+    getStatus: vi.fn(() => ({ ...codexStatus })),
+    logout: vi.fn(async () => ({ ...codexStatus })),
+    dispose: vi.fn()
+  };
+
+  const controller = Object.create(AppController.prototype) as TestController & Record<string, unknown>;
+  Object.assign(controller, {
+    mainWindow: { webContents: { send: mainWindowSend } },
+    pillWindow: null,
+    modeSelectorWindow: null,
+    tray: null,
+    closeToTrayNotification: null,
+    storage,
+    textAutomation: { dispose: vi.fn(), getCapability: vi.fn() },
+    context: { capture: vi.fn(async () => capturedContext), dispose: vi.fn() },
+    paste,
+    automationPermissions: {},
+    runtimeService: {},
+    accelerationProbe: {},
+    portalHotkeys: { dispose: vi.fn() },
+    nativeHotkeys: { dispose: vi.fn() },
+    macosReleaseHotkeys: { unregister: vi.fn() },
+    paths: { modelDir: "/tmp/murmur-test-models" },
+    stt,
+    codex,
+    initialCodexRefresh: options.initialCodexRefresh ?? Promise.resolve(),
+    clearingLocalData: false,
+    llm,
+    session: { ...defaultSession },
+    dictationOwner: new DictationSessionOwner(),
+    dictationStartGeneration: 0,
+    sessionOperation: null,
+    sessionContext: null,
+    pendingContextCapture: null,
+    recordingStoppedAt: null,
+    pillHideTimer: null,
+    recordingMaxDurationTimer: null,
+    recordingStopAckTimer: null,
+    pushToTalkPressed: false,
+    pushToTalkSessionId: null,
+    onboardingDictationScopeActive: false,
+    ensureAutomationReadyForUserAction: vi.fn(() => ({ ready: true })),
+    beginRecordingContextCapture: vi.fn(() => {
+      controller.sessionContext = capturedContext;
+    }),
+    showPill: vi.fn(),
+    hidePill: vi.fn(),
+    hidePillSoon: vi.fn(),
+    scheduleRecordingMaxDurationStop: vi.fn(),
+    scheduleRecordingStopAckTimeout: vi.fn(),
+    broadcastState: vi.fn(),
+    registerHotkeys: vi.fn(async () => undefined),
+    unregisterModeSelectorNavigationShortcuts: vi.fn(),
+    getSnapshot: vi.fn(() => ({ ...state, session: controller.session }) as unknown as AppStateSnapshot),
+    notifyPasteFallback: vi.fn()
+  });
+
+  return {
+    controller,
+    state,
+    storage,
+    stt,
+    llm,
+    paste,
+    codex,
+    mainWindowSend,
+    setCodexStatus(status) {
+      codexStatus = status;
+    }
+  };
+}
+
+async function startAndStop(controller: TestController): Promise<string> {
+  await controller.startRecording("test");
+  expect(controller.session.status).toBe("recording");
+  const sessionId = controller.session.id;
+  await controller.stopRecording();
+  expect(controller.session.status).toBe("transcribing");
+  return sessionId;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
 
 describe("app-controller utility contracts", () => {
   it("keeps renderer window routing suffixes as loadFile query objects", () => {
@@ -46,5 +313,187 @@ describe("app-controller utility contracts", () => {
     finishRefresh();
     await expect(selection).resolves.toEqual(codexProviderDefaults);
     expect(selectProvider).toHaveBeenCalledOnce();
+  });
+});
+
+describe("AppController dictation ownership", () => {
+  it("does not freeze an enabled but unavailable Codex provider into a recording plan", async () => {
+    const refresh = deferred<void>();
+    const harness = createControllerHarness({
+      codexStatus: { status: "checking", message: "Checking", modelAvailable: false },
+      initialCodexRefresh: refresh.promise
+    });
+
+    const start = harness.controller.startRecording("test");
+    await Promise.resolve();
+    expect(harness.controller.session.status).toBe("idle");
+
+    harness.setCodexStatus({ status: "signed_out", message: "Sign in required", modelAvailable: false });
+    refresh.resolve();
+    await start;
+
+    expect(harness.controller.session.status).toBe("recording");
+    expect(harness.controller.sessionOperation?.plan.llmProvider).toBeUndefined();
+    expect(harness.storage.resolveLlmProviderSecret).not.toHaveBeenCalled();
+  });
+
+  it("invalidates a pending provider refresh when local data is cleared", async () => {
+    const refresh = deferred<void>();
+    const harness = createControllerHarness({
+      codexStatus: { status: "checking", message: "Checking", modelAvailable: false },
+      initialCodexRefresh: refresh.promise
+    });
+
+    const start = harness.controller.startRecording("test");
+    await Promise.resolve();
+    await harness.controller.clearLocalData();
+    refresh.resolve();
+    await start;
+
+    expect(harness.storage.clearLocalData).toHaveBeenCalledOnce();
+    expect(harness.controller.session.status).toBe("idle");
+    expect(harness.controller.sessionOperation).toBeNull();
+    expect(harness.mainWindowSend).not.toHaveBeenCalledWith("recording:start", expect.anything());
+  });
+
+  it("blocks new recordings until local-data clearing finishes", async () => {
+    const harness = createControllerHarness();
+    const logout = deferred<CodexProviderRuntime>();
+    harness.codex.logout.mockReturnValueOnce(logout.promise);
+
+    const clearing = harness.controller.clearLocalData();
+    await vi.waitFor(() => expect(harness.codex.logout).toHaveBeenCalledOnce());
+    await harness.controller.startRecording("during-clear");
+
+    expect(harness.controller.session.status).toBe("idle");
+    expect(harness.mainWindowSend).not.toHaveBeenCalledWith("recording:start", expect.anything());
+
+    logout.resolve({ status: "signed_out", message: "Signed out", modelAvailable: false });
+    await clearing;
+    await harness.controller.startRecording("after-clear");
+
+    expect(harness.controller.session.status).toBe("recording");
+    expect(harness.mainWindowSend).toHaveBeenCalledWith(
+      "recording:start",
+      expect.objectContaining({ sessionId: harness.controller.session.id })
+    );
+  });
+
+  it("stops a cancelled STT continuation before LLM, paste, or history", async () => {
+    const harness = createControllerHarness();
+    const transcription = deferred<TranscriptionResult>();
+    harness.stt.transcribe.mockReturnValueOnce(transcription.promise);
+    const sessionId = await startAndStop(harness.controller);
+
+    const completion = harness.controller.completeRecording({ sessionId, audio: new ArrayBuffer(1), mimeType: "audio/wav" });
+    await vi.waitFor(() => expect(harness.stt.transcribe).toHaveBeenCalledOnce());
+    const signal = harness.stt.transcribe.mock.calls[0]?.[0]?.signal as AbortSignal;
+    await harness.controller.cancelRecording();
+    transcription.resolve(transcriptionResult);
+    await completion;
+
+    expect(signal.aborted).toBe(true);
+    expect(harness.controller.session.status).toBe("cancelled");
+    expect(harness.llm.process).not.toHaveBeenCalled();
+    expect(harness.paste.insertText).not.toHaveBeenCalled();
+    expect(harness.storage.addHistory).not.toHaveBeenCalled();
+  });
+
+  it("stops a cancelled LLM continuation before paste or history", async () => {
+    const harness = createControllerHarness();
+    const processing = deferred<{ text: string; providerId?: string; model?: string }>();
+    harness.llm.process.mockReturnValueOnce(processing.promise);
+    const sessionId = await startAndStop(harness.controller);
+
+    const completion = harness.controller.completeRecording({ sessionId, audio: new ArrayBuffer(1), mimeType: "audio/wav" });
+    await vi.waitFor(() => expect(harness.llm.process).toHaveBeenCalledOnce());
+    const signal = harness.llm.process.mock.calls[0]?.[0]?.signal as AbortSignal;
+    await harness.controller.cancelRecording();
+    processing.resolve({ text: "stale processed text", providerId: "codex", model: "test-llm" });
+    await completion;
+
+    expect(signal.aborted).toBe(true);
+    expect(harness.controller.session.status).toBe("cancelled");
+    expect(harness.paste.insertText).not.toHaveBeenCalled();
+    expect(harness.storage.addHistory).not.toHaveBeenCalled();
+  });
+
+  it("does not let cancellation during history insertion finalize the session", async () => {
+    const harness = createControllerHarness({ aiEnabled: false });
+    const sessionId = await startAndStop(harness.controller);
+    harness.storage.addHistory.mockImplementationOnce(() => {
+      void harness.controller.cancelRecording();
+    });
+
+    await harness.controller.completeRecording({ sessionId, audio: new ArrayBuffer(1), mimeType: "audio/wav" });
+
+    expect(harness.paste.insertText).toHaveBeenCalledOnce();
+    expect(harness.storage.addHistory).toHaveBeenCalledOnce();
+    expect(harness.controller.session.status).toBe("cancelled");
+  });
+
+  it("aborts an active STT continuation when local data is cleared", async () => {
+    const harness = createControllerHarness({ aiEnabled: false });
+    const transcription = deferred<TranscriptionResult>();
+    harness.stt.transcribe.mockReturnValueOnce(transcription.promise);
+    const sessionId = await startAndStop(harness.controller);
+
+    const completion = harness.controller.completeRecording({ sessionId, audio: new ArrayBuffer(1), mimeType: "audio/wav" });
+    await vi.waitFor(() => expect(harness.stt.transcribe).toHaveBeenCalledOnce());
+    const signal = harness.stt.transcribe.mock.calls[0]?.[0]?.signal as AbortSignal;
+    await harness.controller.clearLocalData();
+    transcription.resolve(transcriptionResult);
+    await completion;
+
+    expect(signal.aborted).toBe(true);
+    expect(harness.storage.clearLocalData).toHaveBeenCalledOnce();
+    expect(harness.controller.session.status).toBe("idle");
+    expect(harness.paste.insertText).not.toHaveBeenCalled();
+    expect(harness.storage.addHistory).not.toHaveBeenCalled();
+  });
+
+  it("aborts an active LLM continuation during shutdown", async () => {
+    const harness = createControllerHarness();
+    const processing = deferred<{ text: string; providerId?: string; model?: string }>();
+    harness.llm.process.mockReturnValueOnce(processing.promise);
+    const sessionId = await startAndStop(harness.controller);
+
+    const completion = harness.controller.completeRecording({ sessionId, audio: new ArrayBuffer(1), mimeType: "audio/wav" });
+    await vi.waitFor(() => expect(harness.llm.process).toHaveBeenCalledOnce());
+    const signal = harness.llm.process.mock.calls[0]?.[0]?.signal as AbortSignal;
+    harness.controller.dispose();
+    processing.resolve({ text: "stale processed text", providerId: "codex", model: "test-llm" });
+    await completion;
+
+    expect(signal.aborted).toBe(true);
+    expect(harness.paste.insertText).not.toHaveBeenCalled();
+    expect(harness.storage.addHistory).not.toHaveBeenCalled();
+  });
+
+  it("keeps a replacement recording authoritative when an old finalizer resolves", async () => {
+    const harness = createControllerHarness({ aiEnabled: false });
+    const transcription = deferred<TranscriptionResult>();
+    harness.stt.transcribe.mockReturnValueOnce(transcription.promise);
+    const oldSessionId = await startAndStop(harness.controller);
+    const oldCompletion = harness.controller.completeRecording({
+      sessionId: oldSessionId,
+      audio: new ArrayBuffer(1),
+      mimeType: "audio/wav"
+    });
+    await vi.waitFor(() => expect(harness.stt.transcribe).toHaveBeenCalledOnce());
+
+    await harness.controller.cancelRecording();
+    await harness.controller.startRecording("replacement");
+    const replacementSessionId = harness.controller.session.id;
+    expect(replacementSessionId).not.toBe(oldSessionId);
+    expect(harness.controller.session.status).toBe("recording");
+
+    transcription.resolve(transcriptionResult);
+    await oldCompletion;
+
+    expect(harness.controller.session.id).toBe(replacementSessionId);
+    expect(harness.controller.session.status).toBe("recording");
+    expect(harness.paste.insertText).not.toHaveBeenCalled();
+    expect(harness.storage.addHistory).not.toHaveBeenCalled();
   });
 });

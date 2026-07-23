@@ -22,6 +22,25 @@ describe("HTTP response body timeouts", () => {
     await expect(request).rejects.toMatchObject({ name: "AbortError" });
   });
 
+  it("honors a caller-provided abort signal while reading a response body", async () => {
+    const { url } = await startServer((response) => {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.write('{"partial":');
+    });
+    const controller = new AbortController();
+    const response = await fetchWithTimeout(url, { signal: controller.signal }, 500);
+
+    const body = readResponseText(response, {
+      totalTimeoutMs: 500,
+      idleTimeoutMs: 500,
+      label: "test",
+      signal: controller.signal
+    });
+    controller.abort();
+
+    await expect(body).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("rejects when a response body stalls after headers", async () => {
     const { url } = await startServer((response) => {
       response.writeHead(200, { "Content-Type": "application/json" });
