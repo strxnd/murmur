@@ -6,7 +6,7 @@ on:
       - "[0-9]*.[0-9]*.[0-9]*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
@@ -14,10 +14,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Install mise toolchain
-        uses: jdx/mise-action@v2
+        uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
         with:
           install: true
           cache: true
@@ -79,7 +81,9 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Install Linux packaging dependencies
         if: runner.os == 'Linux'
@@ -88,7 +92,7 @@ jobs:
           sudo apt-get install --yes build-essential cmake rpm
 
       - name: Install mise toolchain
-        uses: jdx/mise-action@v2
+        uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
         with:
           install: true
           cache: true
@@ -105,7 +109,7 @@ jobs:
         run: bun run dist
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.artifact }}
           path: |
@@ -121,12 +125,16 @@ jobs:
     name: Draft GitHub release
     needs: build
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: "*-artifacts"
           path: dist
@@ -143,15 +151,10 @@ jobs:
         run: |
           tag="${GITHUB_REF_NAME}"
           notes_file="docs/releases/${tag}.md"
-          artifacts=(
-            dist/*.AppImage
-            dist/*.deb
-            dist/*.rpm
-            dist/*.dmg
-            dist/*.zip
-            dist/latest-*.yml
-            dist/SHA256SUMS.txt
-          )
+          artifacts_file="$(mktemp)"
+          trap 'rm -f "$artifacts_file"' EXIT
+          node scripts/list-release-artifacts.mjs dist > "$artifacts_file"
+          mapfile -d '' artifacts < "$artifacts_file"
 
           gh release create "$tag" "${artifacts[@]}" \
             --draft \
