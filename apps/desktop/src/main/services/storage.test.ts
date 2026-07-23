@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultLlmProviders, defaultModes, defaultSettings } from "../../shared/defaults";
 import type { DictationHistoryItem, ModelCatalogItem } from "../../shared/types";
 import { resolveAppPaths, type AppPaths } from "./app-paths";
-import { ProviderSecretStore, secretIdForProvider } from "./provider-secrets";
+import { ProviderSecretStore, secretIdForProvider, type ProviderSecretCodec } from "./provider-secrets";
 import { StorageService } from "./storage";
 
 let tempDirs: string[] = [];
@@ -449,6 +449,49 @@ describe("StorageService", () => {
     expect(provider).toMatchObject({ enabled: true, hasStoredSecret: false });
   });
 
+  it("preserves encrypted credential references while secure storage is temporarily unavailable", () => {
+    const paths = testPaths();
+    let encryptionAvailable = true;
+    const codec: ProviderSecretCodec = {
+      encoding: "electron-safe-storage",
+      isAvailable: () => encryptionAvailable,
+      encrypt: (value) => Buffer.from(`encrypted:${value}`).toString("base64"),
+      decrypt: (value) => Buffer.from(value, "base64").toString("utf8").replace(/^encrypted:/, "")
+    };
+    const storage = jsonStorage(paths, codec);
+    storage.setLlmProviders(
+      storage.getState().llmProviders.map((provider) =>
+        provider.id === "openai-llm"
+          ? { ...provider, enabled: true, apiKey: "sk-encrypted", apiKeyIntent: "replace" }
+          : provider
+      )
+    );
+    const secretId = storage.getState().llmProviders.find((provider) => provider.id === "openai-llm")?.apiKeySecretId;
+    if (!secretId) throw new Error("Missing encrypted secret reference.");
+
+    encryptionAvailable = false;
+    const unavailableStorage = jsonStorage(paths, codec);
+    const unavailableProvider = unavailableStorage.getState().llmProviders.find((provider) => provider.id === "openai-llm");
+    expect(unavailableProvider).toMatchObject({
+      apiKeySecretId: secretId,
+      hasStoredSecret: false,
+      hasSecretRecord: true
+    });
+
+    unavailableStorage.setLlmProviders(
+      unavailableStorage.getState().llmProviders.map((provider) =>
+        provider.id === "ollama" ? { ...provider, name: "Local Ollama" } : provider
+      )
+    );
+    expect(unavailableStorage.getState().llmProviders.find((provider) => provider.id === "openai-llm")?.apiKeySecretId).toBe(secretId);
+
+    encryptionAvailable = true;
+    const recoveredStorage = jsonStorage(paths, codec);
+    const recoveredProvider = recoveredStorage.getState().llmProviders.find((provider) => provider.id === "openai-llm");
+    expect(recoveredProvider).toMatchObject({ apiKeySecretId: secretId, hasStoredSecret: true, hasSecretRecord: true });
+    expect(recoveredProvider ? recoveredStorage.resolveLlmProviderSecret(recoveredProvider).apiKey : undefined).toBe("sk-encrypted");
+  });
+
   it("migrates legacy plaintext provider API keys out of the config file", () => {
     const paths = testPaths();
     mkdirSync(paths.configDir, { recursive: true });
@@ -879,10 +922,14 @@ describe("StorageService", () => {
   });
 });
 
-function jsonStorage(paths: AppPaths): StorageService {
-  return new StorageService(paths, () => {
-    throw new Error("sqlite disabled for test");
-  });
+function jsonStorage(paths: AppPaths, providerSecretCodec?: ProviderSecretCodec): StorageService {
+  return new StorageService(
+    paths,
+    () => {
+      throw new Error("sqlite disabled for test");
+    },
+    providerSecretCodec
+  );
 }
 
 function historyItem(patch: Partial<DictationHistoryItem> = {}): DictationHistoryItem {

@@ -200,6 +200,7 @@ export interface TranscriptionProviderConfig {
   apiKey?: string;
   apiKeyIntent?: ProviderCredentialIntent;
   hasStoredSecret?: boolean;
+  hasSecretRecord?: boolean;
   isCloud: boolean;
   isLocal: boolean;
   defaultModel?: string;
@@ -217,6 +218,7 @@ export interface LlmProviderConfig {
   apiKey?: string;
   apiKeyIntent?: ProviderCredentialIntent;
   hasStoredSecret?: boolean;
+  hasSecretRecord?: boolean;
   isCloud: boolean;
   defaultModel?: string;
   models?: string[];

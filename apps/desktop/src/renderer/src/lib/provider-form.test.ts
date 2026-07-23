@@ -249,10 +249,10 @@ describe("provider form helpers", () => {
   it("detects unsaved cloud credential removal from stored secret references", () => {
     const persistedValues = {
       transcriptionProviders: defaultTranscriptionProviders.map((provider) =>
-        provider.id === "openai-stt" ? { ...provider, enabled: true, apiKeySecretId: "provider-secret:stt:test", hasStoredSecret: true, apiKeyIntent: "keep" as const } : provider
+        provider.id === "openai-stt" ? { ...provider, enabled: true, apiKeySecretId: "provider-secret:stt:test", hasStoredSecret: true, hasSecretRecord: true, apiKeyIntent: "keep" as const } : provider
       ),
       llmProviders: defaultLlmProviders.map((provider) =>
-        provider.id === "openai-llm" ? { ...provider, enabled: true, apiKeySecretId: "provider-secret:llm:test", hasStoredSecret: true, apiKeyIntent: "keep" as const } : provider
+        provider.id === "openai-llm" ? { ...provider, enabled: true, apiKeySecretId: "provider-secret:llm:test", hasStoredSecret: true, hasSecretRecord: true, apiKeyIntent: "keep" as const } : provider
       )
     };
     const values = applyCloudCredentialApiKey(persistedValues, "openai", "");
@@ -265,7 +265,7 @@ describe("provider form helpers", () => {
   it("treats stored secret references as configured credentials without exposing a key", () => {
     const values = {
       transcriptionProviders: defaultTranscriptionProviders.map((provider) =>
-        provider.id === "openai-stt" ? { ...provider, enabled: true, apiKeySecretId: "provider-secret:stt:test", hasStoredSecret: true, apiKeyIntent: "keep" as const } : provider
+        provider.id === "openai-stt" ? { ...provider, enabled: true, apiKeySecretId: "provider-secret:stt:test", hasStoredSecret: true, hasSecretRecord: true, apiKeyIntent: "keep" as const } : provider
       ),
       llmProviders: defaultLlmProviders
     };
@@ -283,6 +283,7 @@ describe("provider form helpers", () => {
       ...createCustomLlmProvider("custom-llm"),
       baseUrl: "https://old.example.test/v1",
       hasStoredSecret: true,
+      hasSecretRecord: true,
       apiKeySecretId: "provider-secret:llm:custom",
       apiKeyIntent: "keep" as const
     };

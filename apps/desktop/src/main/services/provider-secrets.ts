@@ -67,6 +67,10 @@ export class ProviderSecretStore {
     return this.decode(record);
   }
 
+  has(secretId: string | undefined): boolean {
+    return Boolean(secretId && Object.prototype.hasOwnProperty.call(this.read().records, secretId));
+  }
+
   delete(secretId: string | undefined): void {
     if (!secretId) return;
     this.apply([{ secretId }]);

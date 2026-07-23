@@ -522,7 +522,8 @@ export class StorageService {
     const secretId = provider.apiKeySecretId ?? secretIdForProvider(kind, provider.id);
     const snapshot = {
       ...provider,
-      hasStoredSecret: Boolean(this.providerSecrets.get(secretId))
+      hasStoredSecret: Boolean(this.providerSecrets.get(secretId)),
+      hasSecretRecord: this.providerSecrets.has(secretId)
     };
     delete snapshot.apiKey;
     delete snapshot.apiKeyIntent;
@@ -542,7 +543,7 @@ export class StorageService {
       const secretId = previous?.apiKeySecretId ?? provider.apiKeySecretId ?? secretIdForProvider(kind, provider.id);
       const apiKey = provider.apiKey?.trim();
       if (
-        previous?.hasStoredSecret &&
+        previous?.hasSecretRecord &&
         providerCredentialScopeChanged(previous, provider) &&
         provider.apiKeyIntent === undefined &&
         !apiKey
@@ -554,6 +555,7 @@ export class StorageService {
       delete next.apiKey;
       delete next.apiKeyIntent;
       delete next.hasStoredSecret;
+      delete next.hasSecretRecord;
 
       if (intent === "replace") {
         if (!apiKey) throw new Error(`Provider "${provider.name}" needs a non-empty API key to replace its stored credential.`);
@@ -568,8 +570,7 @@ export class StorageService {
         return next;
       }
 
-      const hasStoredSecret = Boolean(previous?.hasStoredSecret && this.providerSecrets.get(secretId));
-      if (hasStoredSecret) next.apiKeySecretId = secretId;
+      if (this.providerSecrets.has(secretId)) next.apiKeySecretId = secretId;
       else delete next.apiKeySecretId;
       return next;
     });
@@ -606,8 +607,12 @@ export class StorageService {
 
   private resolveProviderSecret<T extends TranscriptionProviderConfig | LlmProviderConfig>(kind: ProviderSecretKind, provider: T): T {
     if (provider.apiKey?.trim()) return provider;
-    const apiKey = this.providerSecrets.get(provider.apiKeySecretId ?? secretIdForProvider(kind, provider.id));
-    return apiKey ? { ...provider, apiKey, hasStoredSecret: true } : { ...provider, hasStoredSecret: false };
+    const secretId = provider.apiKeySecretId ?? secretIdForProvider(kind, provider.id);
+    const apiKey = this.providerSecrets.get(secretId);
+    const hasSecretRecord = this.providerSecrets.has(secretId);
+    return apiKey
+      ? { ...provider, apiKey, hasStoredSecret: true, hasSecretRecord }
+      : { ...provider, hasStoredSecret: false, hasSecretRecord };
   }
 
   private closeDatabase(): void {
@@ -983,6 +988,7 @@ function persistedProviderConfig<T extends TranscriptionProviderConfig | LlmProv
   delete persisted.apiKey;
   delete persisted.apiKeyIntent;
   delete persisted.hasStoredSecret;
+  delete persisted.hasSecretRecord;
   return persisted;
 }
 
@@ -1070,6 +1076,7 @@ function normalizeTranscriptionProvider(
         ? source.apiKeyIntent
         : defaultProvider?.apiKeyIntent,
     hasStoredSecret: typeof source.hasStoredSecret === "boolean" ? source.hasStoredSecret : defaultProvider?.hasStoredSecret,
+    hasSecretRecord: typeof source.hasSecretRecord === "boolean" ? source.hasSecretRecord : defaultProvider?.hasSecretRecord,
     isCloud: typeof source.isCloud === "boolean" ? source.isCloud : Boolean(defaultProvider?.isCloud),
     isLocal: typeof source.isLocal === "boolean" ? source.isLocal : !Boolean(defaultProvider?.isCloud),
     defaultModel: isNonEmptyString(source.defaultModel) ? source.defaultModel : defaultProvider?.defaultModel,
@@ -1117,6 +1124,7 @@ function normalizeLlmProvider(
         ? source.apiKeyIntent
         : defaultProvider?.apiKeyIntent,
     hasStoredSecret: typeof source.hasStoredSecret === "boolean" ? source.hasStoredSecret : defaultProvider?.hasStoredSecret,
+    hasSecretRecord: typeof source.hasSecretRecord === "boolean" ? source.hasSecretRecord : defaultProvider?.hasSecretRecord,
     isCloud: typeof source.isCloud === "boolean" ? source.isCloud : Boolean(defaultProvider?.isCloud),
     defaultModel: isOpenAiCompatible ? undefined : isNonEmptyString(source.defaultModel) ? source.defaultModel : defaultProvider?.defaultModel,
     models: isOpenAiCompatible ? normalizeProviderModelIds([source.models, source.defaultModel]) : undefined,

@@ -94,12 +94,12 @@ export function hasProvidersFormChanges(values: ProvidersFormValues, persistedVa
 
 export function hasUnconfirmedProviderCredentialIntent(values: ProvidersFormValues): boolean {
   return [...values.transcriptionProviders, ...values.llmProviders].some(
-    (provider) => provider.hasStoredSecret === true && provider.apiKeyIntent === undefined
+    (provider) => provider.hasSecretRecord === true && provider.apiKeyIntent === undefined
   );
 }
 
 export function invalidateStoredCredentialIntent<T extends TranscriptionProviderConfig | LlmProviderConfig>(provider: T): T {
-  return provider.hasStoredSecret && provider.apiKeyIntent === "keep" ? { ...provider, apiKeyIntent: undefined } : provider;
+  return provider.hasSecretRecord && provider.apiKeyIntent === "keep" ? { ...provider, apiKeyIntent: undefined } : provider;
 }
 
 export function hasCloudCredentialChanges(
@@ -142,11 +142,11 @@ export function cloudCredentialConfigured(providerId: CloudCredentialProviderId,
     firstNonEmpty(
       ...definition.sttProviderIds.flatMap((id) => {
         const provider = values.transcriptionProviders.find((candidate) => candidate.id === id);
-        return [provider?.apiKey, provider?.hasStoredSecret ? "stored" : undefined];
+        return [provider?.apiKey, provider?.hasSecretRecord ? "stored" : undefined];
       }),
       ...definition.llmProviderIds.flatMap((id) => {
         const provider = values.llmProviders.find((candidate) => candidate.id === id);
-        return [provider?.apiKey, provider?.hasStoredSecret ? "stored" : undefined];
+        return [provider?.apiKey, provider?.hasSecretRecord ? "stored" : undefined];
       })
     )
   );
@@ -265,7 +265,8 @@ export function applyLlmProviderType(provider: LlmProviderConfig, type: (typeof 
     apiKey: supportsApiKey ? (provider.apiKey ?? "") : "",
     apiKeySecretId: supportsApiKey ? provider.apiKeySecretId : undefined,
     apiKeyIntent: supportsApiKey ? provider.apiKeyIntent : "remove",
-    hasStoredSecret: supportsApiKey ? provider.hasStoredSecret : false
+    hasStoredSecret: supportsApiKey ? provider.hasStoredSecret : false,
+    hasSecretRecord: supportsApiKey ? provider.hasSecretRecord : false
   };
 }
 
@@ -362,6 +363,7 @@ function normalizeTranscriptionProviderDraft(provider: TranscriptionProviderConf
     apiKeySecretId: trimmedOptional(provider.apiKeySecretId),
     apiKeyIntent: provider.apiKeyIntent,
     hasStoredSecret: provider.hasStoredSecret,
+    hasSecretRecord: provider.hasSecretRecord,
     defaultModel: trimmedOptional(provider.defaultModel),
     defaultLanguage: trimmedOptional(provider.defaultLanguage) ?? "auto",
     isLocal: !provider.isCloud || provider.isLocal
@@ -383,6 +385,7 @@ function normalizeLlmProviderDraft(provider: LlmProviderConfig): LlmProviderConf
     apiKeySecretId: supportsApiKey ? trimmedOptional(provider.apiKeySecretId) : undefined,
     apiKeyIntent: supportsApiKey ? provider.apiKeyIntent : "remove",
     hasStoredSecret: supportsApiKey ? provider.hasStoredSecret : false,
+    hasSecretRecord: supportsApiKey ? provider.hasSecretRecord : false,
     defaultModel: isOpenAiCompatible ? undefined : trimmedOptional(provider.defaultModel),
     models: isOpenAiCompatible ? normalizeModelIds([...(provider.models ?? []), provider.defaultModel]) : undefined
   };
@@ -438,6 +441,7 @@ interface ProviderCredentialState {
   apiKey: string;
   apiKeyIntent?: TranscriptionProviderConfig["apiKeyIntent"];
   hasStoredSecret: boolean;
+  hasSecretRecord: boolean;
   enabled: boolean;
 }
 
@@ -447,6 +451,7 @@ function providerCredentialState(provider: TranscriptionProviderConfig | LlmProv
     apiKey: provider.apiKey?.trim() ?? "",
     apiKeyIntent: provider.apiKeyIntent,
     hasStoredSecret: provider.hasStoredSecret === true,
+    hasSecretRecord: provider.hasSecretRecord === true,
     enabled: provider.enabled
   };
 }
@@ -468,6 +473,7 @@ function upsertTranscriptionCredential(
     apiKeySecretId: enabled ? existing?.apiKeySecretId : undefined,
     apiKeyIntent: enabled ? "replace" : "remove",
     hasStoredSecret: enabled ? existing?.hasStoredSecret : false,
+    hasSecretRecord: enabled ? existing?.hasSecretRecord : false,
     enabled
   };
 
@@ -495,6 +501,7 @@ function upsertLlmCredential(
     apiKeySecretId: enabled ? existing?.apiKeySecretId : undefined,
     apiKeyIntent: enabled ? "replace" : "remove",
     hasStoredSecret: enabled ? existing?.hasStoredSecret : false,
+    hasSecretRecord: enabled ? existing?.hasSecretRecord : false,
     enabled
   };
 
@@ -509,19 +516,21 @@ function providerDraftFromState<T extends TranscriptionProviderConfig | LlmProvi
   return {
     ...provider,
     apiKey: "",
-    apiKeyIntent: provider.hasStoredSecret ? "keep" : "remove"
+    apiKeyIntent: provider.hasSecretRecord ? "keep" : "remove"
   };
 }
 
 function providerDraftAfterSave<T extends TranscriptionProviderConfig | LlmProviderConfig>(provider: T): T {
+  const hasSecretRecord = provider.apiKeyIntent === "replace" || (provider.apiKeyIntent === "keep" && provider.hasSecretRecord === true);
   const hasStoredSecret = provider.apiKeyIntent === "replace" || (provider.apiKeyIntent === "keep" && provider.hasStoredSecret === true);
   const saved = {
     ...provider,
     apiKey: "",
     hasStoredSecret,
-    apiKeyIntent: hasStoredSecret ? ("keep" as const) : ("remove" as const)
+    hasSecretRecord,
+    apiKeyIntent: hasSecretRecord ? ("keep" as const) : ("remove" as const)
   };
-  if (!hasStoredSecret) delete saved.apiKeySecretId;
+  if (!hasSecretRecord) delete saved.apiKeySecretId;
   return saved;
 }
 

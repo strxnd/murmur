@@ -1211,12 +1211,12 @@ function ProviderCredentialField({
     ? `transcriptionProviders.${index}.apiKeyIntent`
     : `llmProviders.${index}.apiKeyIntent`) as Path<ProvidersFormValues>;
   const intent = provider.apiKeyIntent;
-  const hasStoredSecret = provider.hasStoredSecret === true;
+  const hasSecretRecord = provider.hasSecretRecord === true;
   const intentDescription =
     intent === "replace"
       ? "The entered key will replace the stored credential."
       : intent === "remove"
-        ? hasStoredSecret
+        ? hasSecretRecord
           ? "The stored credential will be removed when you save."
           : description
         : intent === "keep"
@@ -1238,18 +1238,18 @@ function ProviderCredentialField({
               type="password"
               autoComplete="off"
               spellCheck={false}
-              placeholder={hasStoredSecret && intent !== "replace" ? "Stored key attached" : placeholder}
+              placeholder={hasSecretRecord && intent !== "replace" ? "Stored key attached" : placeholder}
               value={typeof field.value === "string" ? field.value : ""}
               onBlur={field.onBlur}
               onChange={(event) => {
                 const value = event.currentTarget.value;
                 field.onChange(value);
-                setIntent(value.trim() ? "replace" : hasStoredSecret ? undefined : "remove");
+                setIntent(value.trim() ? "replace" : hasSecretRecord ? undefined : "remove");
               }}
             />
           )}
         />
-        {hasStoredSecret && (
+        {hasSecretRecord && (
           <div className="flex flex-wrap items-center gap-2">
             <Button
               size="sm"
@@ -1285,7 +1285,7 @@ function invalidateProviderCredentialIntent(
   index: number,
   provider: TranscriptionProviderConfig | LlmProviderConfig
 ): void {
-  if (!provider.hasStoredSecret || provider.apiKeyIntent !== "keep") return;
+  if (!provider.hasSecretRecord || provider.apiKeyIntent !== "keep") return;
   const intentName = (kind === "stt"
     ? `transcriptionProviders.${index}.apiKeyIntent`
     : `llmProviders.${index}.apiKeyIntent`) as Path<ProvidersFormValues>;

@@ -68,6 +68,7 @@ export class CodexOAuthService {
   private onStatusChange?: StatusListener;
   private loginController?: AbortController;
   private loginPromise?: Promise<CodexProviderRuntime>;
+  private logoutPromise?: Promise<CodexProviderRuntime>;
   private turnQueue: Promise<void> = Promise.resolve();
   private readonly operationControllers = new Set<AbortController>();
   private readonly activeOperations = new Set<Promise<unknown>>();
@@ -108,6 +109,10 @@ export class CodexOAuthService {
   }
 
   async refreshStatus(): Promise<CodexProviderRuntime> {
+    if (this.logoutPromise) {
+      await this.logoutPromise;
+      return this.getStatus();
+    }
     if (this.disposed || this.loginPromise) return this.getStatus();
     const generation = this.authGeneration;
     const controller = new AbortController();
@@ -139,6 +144,7 @@ export class CodexOAuthService {
   }
 
   startLogin(): Promise<CodexProviderRuntime> {
+    if (this.logoutPromise) return Promise.reject(new Error("Codex logout is in progress."));
     if (this.disposed) return Promise.reject(new Error("Codex service is disposed."));
     if (this.loginPromise) return this.loginPromise;
 
@@ -172,16 +178,17 @@ export class CodexOAuthService {
     return this.getStatus();
   }
 
-  async logout(): Promise<CodexProviderRuntime> {
-    const pendingQueue = this.turnQueue;
-    this.authGeneration += 1;
-    this.abortAuthenticationOperations();
-    await Promise.allSettled([...this.activeOperations, pendingQueue]);
-    this.authStore.delete();
-    return this.setSignedOut();
+  logout(): Promise<CodexProviderRuntime> {
+    if (this.logoutPromise) return this.logoutPromise;
+    const operation = this.runLogout();
+    this.logoutPromise = operation.finally(() => {
+      this.logoutPromise = undefined;
+    });
+    return this.logoutPromise;
   }
 
   processCleanup(options: { prompt: string; model: string; signal?: AbortSignal }): Promise<ProcessedResult> {
+    if (this.logoutPromise) return Promise.reject(new Error("Codex logout is in progress."));
     const generation = this.authGeneration;
     const run = this.turnQueue.then(() => {
       this.assertAuthGeneration(generation);
@@ -202,6 +209,15 @@ export class CodexOAuthService {
     this.authGeneration += 1;
     this.abortAuthenticationOperations();
     await Promise.allSettled([...this.activeOperations, pendingQueue]);
+  }
+
+  private async runLogout(): Promise<CodexProviderRuntime> {
+    const pendingQueue = this.turnQueue;
+    this.authGeneration += 1;
+    this.abortAuthenticationOperations();
+    await Promise.allSettled([...this.activeOperations, pendingQueue]);
+    this.authStore.delete();
+    return this.setSignedOut();
   }
 
   private async runLogin(signal: AbortSignal, generation: number): Promise<CodexProviderRuntime> {

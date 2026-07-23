@@ -226,9 +226,15 @@ describe("CodexOAuthService", () => {
     const refresh = service.refreshStatus();
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     const logout = service.logout();
+    const refreshDuringLogout = service.refreshStatus();
+    await expect(service.startLogin()).rejects.toThrow("Codex logout is in progress.");
+    await expect(service.processCleanup({ prompt: "cleanup", model: "gpt-5.6-luna" })).rejects.toThrow(
+      "Codex logout is in progress."
+    );
     refreshResponse.resolve(jsonResponse({ access_token: accountToken(), refresh_token: "refresh-2", expires_in: 3600 }));
 
     await expect(logout).resolves.toMatchObject({ status: "signed_out" });
+    await expect(refreshDuringLogout).resolves.toMatchObject({ status: "signed_out" });
     await expect(refresh).resolves.toMatchObject({ modelAvailable: false });
     expect(service.getStatus()).toMatchObject({ status: "signed_out", modelAvailable: false });
     expect(store.tokens).toBeUndefined();
