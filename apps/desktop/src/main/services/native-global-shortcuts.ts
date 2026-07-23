@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { readFile, readlink, stat } from "node:fs/promises";
+import { basename } from "node:path";
 import * as dbusNative from "@homebridge/dbus-native";
 import type { ActivationMode, GlobalShortcutActionId } from "../../shared/types";
 import { DbusSessionConnection, type DbusMessage, type DbusMessageBus } from "./dbus-session-connection";
@@ -80,6 +81,7 @@ export interface NativeDesktopGlobalShortcutDependencies {
   env?: NodeJS.ProcessEnv;
   createBus?: () => NativeMessageBus;
   onRegistrationLost?: (reason: string) => void;
+  authorizeCallbackSender?: (sender: string) => Promise<boolean>;
 }
 
 export interface NativeDesktopShortcutRegistrationResult {
@@ -110,7 +112,7 @@ interface DbusExportedInterface {
 }
 
 type NativeMessageBus = DbusMessageBus & {
-  exportInterface?: (implementation: Record<string, (...args: unknown[]) => void | Error>, path: string, iface: DbusExportedInterface) => void;
+  exportInterface?: (implementation: Record<string, (...args: unknown[]) => unknown>, path: string, iface: DbusExportedInterface) => void;
   releaseName?: (name: string, callback: (error?: DbusError) => void) => void;
   requestName?: (name: string, flags: number, callback: (error?: DbusError, result?: number) => void) => void;
 };
@@ -149,18 +151,19 @@ export class NativeDesktopGlobalShortcutService {
   private hyprlandBindings = new Map<GlobalShortcutActionId, RegisteredHyprlandBinding>();
   private kdeRegistered = new Set<GlobalShortcutActionId>();
   private matchRules = new Set<string>();
-  private callbackCapability: string | null = null;
   private kdeOwner: string | null = null;
   private unregistering = false;
   private readonly platform: NodeJS.Platform | string;
   private readonly env: NodeJS.ProcessEnv;
   private readonly onRegistrationLost: (reason: string) => void;
+  private readonly authorizeCallbackSender: (sender: string) => Promise<boolean>;
   private readonly connection: DbusSessionConnection<NativeMessageBus>;
 
   constructor(dependencies: NativeDesktopGlobalShortcutDependencies = {}) {
     this.platform = dependencies.platform ?? process.platform;
     this.env = dependencies.env ?? process.env;
     this.onRegistrationLost = dependencies.onRegistrationLost ?? (() => undefined);
+    this.authorizeCallbackSender = dependencies.authorizeCallbackSender ?? ((sender) => this.isTrustedCallbackSender(sender));
     const createBus = dependencies.createBus ?? (() => dbus.sessionBus({ ReturnLongjs: false }));
     this.connection = new DbusSessionConnection(createBus, this.handleMessage, this.handleConnectionLost);
   }
@@ -238,7 +241,6 @@ export class NativeDesktopGlobalShortcutService {
       }
 
       await this.removeAllMatches();
-      this.callbackCapability = null;
     } finally {
       this.unregistering = false;
     }
@@ -309,7 +311,7 @@ export class NativeDesktopGlobalShortcutService {
         continue;
       }
 
-      const command = nativeShortcutCallbackCommand(definition.dbusMethod, this.getCallbackCapability());
+      const command = nativeShortcutCallbackCommand(definition.dbusMethod);
       await execFileOutput(
         "gsettings",
         ["set", `${gnomeCustomKeybindingSchema}:${definition.gnomePath}`, "name", action.description],
@@ -461,7 +463,7 @@ export class NativeDesktopGlobalShortcutService {
 
       await execFileOutput(
         "hyprctl",
-        ["keyword", "bind", `${binding.bindKey}, exec, ${nativeShortcutCallbackCommand(definition.dbusMethod, this.getCallbackCapability())}`],
+        ["keyword", "bind", `${binding.bindKey}, exec, ${nativeShortcutCallbackCommand(definition.dbusMethod)}`],
         commandTimeoutMs
       );
 
@@ -471,7 +473,7 @@ export class NativeDesktopGlobalShortcutService {
         try {
           await execFileOutput(
             "hyprctl",
-            ["keyword", "bindr", `${binding.bindKey}, exec, ${nativeShortcutCallbackCommand("Deactivate", this.getCallbackCapability())}`],
+            ["keyword", "bindr", `${binding.bindKey}, exec, ${nativeShortcutCallbackCommand("Deactivate")}`],
             commandTimeoutMs
           );
           releaseBindKey = binding.bindKey;
@@ -669,17 +671,17 @@ export class NativeDesktopGlobalShortcutService {
     }
     bus.exportInterface(
       {
-        Activate: (capability) => this.handleAuthenticatedCallback(capability, "activation", false),
-        Deactivate: (capability) => this.handleAuthenticatedCallback(capability, "activation", true),
-        ModeSelector: (capability) => this.handleAuthenticatedCallback(capability, "mode-selector", false)
+        Activate: (message) => this.handleAuthenticatedCallback(message, "activation", false),
+        Deactivate: (message) => this.handleAuthenticatedCallback(message, "activation", true),
+        ModeSelector: (message) => this.handleAuthenticatedCallback(message, "mode-selector", false)
       },
       dbusObjectPath,
       {
         name: dbusCallbackInterface,
         methods: {
-          Activate: ["s", ""],
-          Deactivate: ["s", ""],
-          ModeSelector: ["s", ""]
+          Activate: ["", ""],
+          Deactivate: ["", ""],
+          ModeSelector: ["", ""]
         }
       }
     );
@@ -815,7 +817,6 @@ export class NativeDesktopGlobalShortcutService {
     const wasRegistered = this.activeRegistrations.size > 0;
     this.activeRegistrations.clear();
     this.matchRules.clear();
-    this.callbackCapability = null;
     this.callbackServiceExported = false;
     this.callbackServiceRequested = false;
     this.kdeOwner = null;
@@ -823,15 +824,33 @@ export class NativeDesktopGlobalShortcutService {
     if (wasRegistered && !this.unregistering) this.onRegistrationLost(reason);
   }
 
-  private getCallbackCapability(): string {
-    const capability = this.callbackCapability ?? randomBytes(24).toString("hex");
-    this.callbackCapability = capability;
-    return capability;
+  private async isTrustedCallbackSender(sender: string): Promise<boolean> {
+    const bus = this.connection.currentBus();
+    if (!bus) return false;
+    try {
+      const processId = await this.invoke<number>({
+        bus,
+        destination: dbusDestination,
+        path: dbusPath,
+        interfaceName: dbusInterface,
+        member: "GetConnectionUnixProcessID",
+        signature: "s",
+        body: [sender]
+      });
+      return isTrustedDesktopShortcutProcessChain(await readLinuxProcessChain(processId));
+    } catch {
+      return false;
+    }
   }
 
-  private handleAuthenticatedCallback(capability: unknown, actionId: GlobalShortcutActionId, deactivated: boolean): void | Error {
-    if (!isAuthorizedNativeShortcutCallback(this.callbackCapability, capability)) {
-      const error = new Error("Invalid Murmur shortcut callback capability.");
+  private async handleAuthenticatedCallback(
+    message: unknown,
+    actionId: GlobalShortcutActionId,
+    deactivated: boolean
+  ): Promise<void | Error> {
+    const sender = dbusMessageSender(message);
+    if (!sender || !(await this.authorizeCallbackSender(sender))) {
+      const error = new Error("Unauthorized Murmur shortcut callback sender.");
       Object.assign(error, { dbusName: "dev.murmur.Error.Unauthorized" });
       return error;
     }
@@ -1220,12 +1239,58 @@ function normalizeGnomeShortcut(shortcut: string): string {
   return `${modifiers.map((modifier) => `<${modifier}>`).join("")}${key.toLowerCase()}`;
 }
 
-export function isAuthorizedNativeShortcutCallback(expectedCapability: string | null, receivedCapability: unknown): boolean {
-  return typeof receivedCapability === "string" && expectedCapability !== null && receivedCapability === expectedCapability;
+export interface DesktopShortcutProcessIdentity {
+  executable: string;
+  mode: number;
+  uid: number;
 }
 
-export function nativeShortcutCallbackCommand(method: "Activate" | "Deactivate" | "ModeSelector", capability: string): string {
-  return `dbus-send --session --type=method_call --dest=${dbusServiceName} ${dbusObjectPath} ${dbusCallbackInterface}.${method} string:${capability}`;
+export function isTrustedDesktopShortcutProcessChain(chain: DesktopShortcutProcessIdentity[]): boolean {
+  return chain.some((processIdentity) => {
+    const executableName = basename(processIdentity.executable).toLowerCase();
+    return (
+      trustedDesktopShortcutExecutables.has(executableName) &&
+      processIdentity.uid === 0 &&
+      (processIdentity.mode & 0o022) === 0
+    );
+  });
+}
+
+export function nativeShortcutCallbackCommand(method: "Activate" | "Deactivate" | "ModeSelector"): string {
+  return `dbus-send --session --type=method_call --dest=${dbusServiceName} ${dbusObjectPath} ${dbusCallbackInterface}.${method}`;
+}
+
+const trustedDesktopShortcutExecutables = new Set(["gnome-settings-daemon", "gnome-shell", "gsd-media-keys", "hyprland"]);
+
+async function readLinuxProcessChain(startProcessId: number): Promise<DesktopShortcutProcessIdentity[]> {
+  const chain: DesktopShortcutProcessIdentity[] = [];
+  let processId = startProcessId;
+  for (let depth = 0; depth < 8 && Number.isInteger(processId) && processId > 1; depth += 1) {
+    try {
+      const executable = await readlink(`/proc/${processId}/exe`);
+      const executableStat = await stat(executable);
+      chain.push({ executable, uid: executableStat.uid, mode: executableStat.mode });
+      const processStat = await readFile(`/proc/${processId}/stat`, "utf8");
+      processId = linuxParentProcessId(processStat);
+    } catch {
+      break;
+    }
+  }
+  return chain;
+}
+
+function linuxParentProcessId(processStat: string): number {
+  const commandEnd = processStat.lastIndexOf(")");
+  if (commandEnd < 0) return 0;
+  const fields = processStat.slice(commandEnd + 1).trim().split(/\s+/);
+  const parentProcessId = Number(fields[1]);
+  return Number.isInteger(parentProcessId) ? parentProcessId : 0;
+}
+
+function dbusMessageSender(message: unknown): string | null {
+  if (!message || typeof message !== "object") return null;
+  const sender = (message as { sender?: unknown }).sender;
+  return typeof sender === "string" && sender.length > 0 ? sender : null;
 }
 
 function kdeActionId(id: GlobalShortcutActionId): string[] {

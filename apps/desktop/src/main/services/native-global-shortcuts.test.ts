@@ -6,7 +6,7 @@ import {
   acceleratorToKdeQtKey,
   detectNativeShortcutBackends,
   findGnomeBindingInSettingsOutput,
-  isAuthorizedNativeShortcutCallback,
+  isTrustedDesktopShortcutProcessChain,
   nativeShortcutCallbackCommand
 } from "./native-global-shortcuts";
 
@@ -88,11 +88,25 @@ describe("acceleratorToHyprlandBinding", () => {
 });
 
 describe("native shortcut callback authorization", () => {
-  it("requires the per-registration capability in exported D-Bus callbacks", () => {
-    expect(isAuthorizedNativeShortcutCallback("secret", undefined)).toBe(false);
-    expect(isAuthorizedNativeShortcutCallback("secret", "wrong")).toBe(false);
-    expect(isAuthorizedNativeShortcutCallback("secret", "secret")).toBe(true);
-    expect(nativeShortcutCallbackCommand("Activate", "secret")).toContain("string:secret");
+  it("keeps authentication material out of readable compositor commands", () => {
+    expect(nativeShortcutCallbackCommand("Activate")).toBe(
+      "dbus-send --session --type=method_call --dest=dev.murmur.App /dev/murmur/App dev.murmur.App.Activate"
+    );
+  });
+
+  it("accepts only root-owned, non-writable compositor ancestry", () => {
+    expect(
+      isTrustedDesktopShortcutProcessChain([
+        { executable: "/usr/bin/dbus-send", uid: 0, mode: 0o100755 },
+        { executable: "/usr/libexec/gsd-media-keys", uid: 0, mode: 0o100755 }
+      ])
+    ).toBe(true);
+    expect(
+      isTrustedDesktopShortcutProcessChain([{ executable: "/home/user/bin/gsd-media-keys", uid: 1000, mode: 0o100755 }])
+    ).toBe(false);
+    expect(
+      isTrustedDesktopShortcutProcessChain([{ executable: "/usr/bin/Hyprland", uid: 0, mode: 0o100775 }])
+    ).toBe(false);
   });
 });
 
