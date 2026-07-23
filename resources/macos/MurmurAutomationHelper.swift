@@ -45,6 +45,56 @@ func selectedText() -> String? {
   return selected as? String
 }
 
+func accessibilityWindowBounds(_ window: AXUIElement) -> CGRect? {
+  var positionValue: CFTypeRef?
+  var sizeValue: CFTypeRef?
+  guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionValue) == .success,
+        AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeValue) == .success,
+        let positionValue,
+        let sizeValue else {
+    return nil
+  }
+
+  var position = CGPoint.zero
+  var size = CGSize.zero
+  guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &position),
+        AXValueGetValue(sizeValue as! AXValue, .cgSize, &size) else {
+    return nil
+  }
+  return CGRect(origin: position, size: size)
+}
+
+func coreGraphicsWindowId(_ window: AXUIElement, processIdentifier: pid_t) -> CGWindowID? {
+  guard let targetBounds = accessibilityWindowBounds(window),
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+          as? [[String: Any]] else {
+    return nil
+  }
+
+  for info in windows {
+    guard let ownerPid = info[kCGWindowOwnerPID as String] as? NSNumber,
+          ownerPid.int32Value == processIdentifier,
+          let windowNumber = info[kCGWindowNumber as String] as? NSNumber,
+          let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary else {
+      continue
+    }
+
+    var bounds = CGRect.zero
+    guard CGRectMakeWithDictionaryRepresentation(boundsDictionary, &bounds) else {
+      continue
+    }
+    let matchesBounds = abs(bounds.origin.x - targetBounds.origin.x) < 1 &&
+      abs(bounds.origin.y - targetBounds.origin.y) < 1 &&
+      abs(bounds.size.width - targetBounds.size.width) < 1 &&
+      abs(bounds.size.height - targetBounds.size.height) < 1
+    if matchesBounds {
+      return CGWindowID(windowNumber.uint32Value)
+    }
+  }
+
+  return nil
+}
+
 func activeWindowMetadata() -> [String: Any] {
   var payload: [String: Any] = [
     "ok": true,
@@ -64,8 +114,12 @@ func activeWindowMetadata() -> [String: Any] {
       var focusedWindow: CFTypeRef?
       let focusedResult = AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedWindow)
       if focusedResult == .success, let window = focusedWindow {
+        let windowElement = window as! AXUIElement
+        if let windowId = coreGraphicsWindowId(windowElement, processIdentifier: app.processIdentifier) {
+          payload["windowId"] = String(windowId)
+        }
         var title: CFTypeRef?
-        let titleResult = AXUIElementCopyAttributeValue(window as! AXUIElement, kAXTitleAttribute as CFString, &title)
+        let titleResult = AXUIElementCopyAttributeValue(windowElement, kAXTitleAttribute as CFString, &title)
         if titleResult == .success, let titleText = title as? String, !titleText.isEmpty {
           payload["windowTitle"] = titleText
         }

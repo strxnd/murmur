@@ -30,7 +30,7 @@ export interface ContextCommandAvailability {
   xprop: boolean;
 }
 
-type ActiveWindowMetadata = Pick<ContextSnapshot, "appName" | "appId" | "windowTitle">;
+type ActiveWindowMetadata = Pick<ContextSnapshot, "appName" | "appId" | "windowId" | "windowTitle">;
 
 type ContextEnv = Partial<
   Record<"DBUS_SESSION_BUS_ADDRESS" | "HYPRLAND_INSTANCE_SIGNATURE" | "XDG_CURRENT_DESKTOP" | "XDG_SESSION_TYPE", string>
@@ -338,6 +338,7 @@ export function parseHyprlandActiveWindow(output: string): ActiveWindowMetadata 
   return normalizeActiveWindowMetadata({
     appId: parsed.class ?? parsed.initialClass,
     appName: parsed.class ?? parsed.initialClass,
+    windowId: parsed.address,
     windowTitle: parsed.title ?? parsed.initialTitle
   });
 }
@@ -349,11 +350,12 @@ export function parseGnomeShellEvalOutput(output: string): ActiveWindowMetadata 
   return normalizeActiveWindowMetadata(parsed);
 }
 
-export function parseX11ActiveWindow(titleOutput: string, xpropOutput: string): ActiveWindowMetadata | null {
+export function parseX11ActiveWindow(titleOutput: string, xpropOutput: string, windowId?: string): ActiveWindowMetadata | null {
   const classNames = parseWmClass(xpropOutput);
   return normalizeActiveWindowMetadata({
     appId: classNames[1] ?? classNames[0],
     appName: classNames[1] ?? classNames[0],
+    windowId,
     windowTitle: titleOutput
   });
 }
@@ -468,7 +470,7 @@ async function captureX11ActiveWindow(): Promise<ActiveWindowMetadata | null> {
     execFileText("xdotool", ["getwindowname", windowId], metadataTimeoutMs).catch(() => ""),
     execFileText("xprop", ["-id", windowId, "WM_CLASS"], metadataTimeoutMs).catch(() => "")
   ]);
-  return parseX11ActiveWindow(titleOutput, xpropOutput);
+  return parseX11ActiveWindow(titleOutput, xpropOutput, windowId);
 }
 
 function captureMacosActiveWindow(helper: MacosAutomationHelper): Promise<ActiveWindowMetadata | null> {
@@ -478,6 +480,7 @@ function captureMacosActiveWindow(helper: MacosAutomationHelper): Promise<Active
     normalizeActiveWindowMetadata({
       appName: result.appName,
       appId: result.appId,
+      windowId: result.trusted === true ? result.windowId : undefined,
       windowTitle: result.trusted === true ? result.windowTitle : undefined
     })
   );
@@ -486,13 +489,14 @@ function captureMacosActiveWindow(helper: MacosAutomationHelper): Promise<Active
 function normalizeActiveWindowMetadata(input: Record<string, unknown>): ActiveWindowMetadata | null {
   const appId = cleanString(input.appId);
   const appName = cleanString(input.appName) ?? appId;
+  const windowId = cleanString(input.windowId);
   const windowTitle = cleanString(input.windowTitle);
-  const metadata = { appName, appId, windowTitle };
+  const metadata = { appName, appId, windowId, windowTitle };
   return hasActiveWindowMetadata(metadata) ? metadata : null;
 }
 
 function hasActiveWindowMetadata(metadata: ActiveWindowMetadata): boolean {
-  return Boolean(metadata.appName || metadata.appId || metadata.windowTitle);
+  return Boolean(metadata.appName || metadata.appId || metadata.windowId || metadata.windowTitle);
 }
 
 function parseWmClass(output: string): string[] {
@@ -563,6 +567,7 @@ function kdeActiveWindowScript(token: string): string {
   var payload = { token: ${JSON.stringify(token)} };
   if (win) {
     payload.windowTitle = prop(win, "caption") || prop(win, "captionNormal");
+    payload.windowId = prop(win, "internalId") || prop(win, "windowId");
     payload.appId = prop(win, "desktopFileName") || prop(win, "resourceClass") || prop(win, "resourceName");
     payload.appName = prop(win, "resourceClass") || prop(win, "desktopFileName") || prop(win, "resourceName");
   }
@@ -594,6 +599,7 @@ function gnomeShellActiveWindowScript(): string {
   return JSON.stringify({
     appId: call("get_gtk_application_id") || call("get_wm_class_instance") || call("get_wm_class"),
     appName: call("get_wm_class") || call("get_gtk_application_id") || call("get_wm_class_instance"),
+    windowId: call("get_stable_sequence") || call("get_id"),
     windowTitle: call("get_title")
   });
 })()

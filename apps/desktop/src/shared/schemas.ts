@@ -75,6 +75,7 @@ export const contextSnapshotSchema = z
   .object({
     appName: optionalStringSchema,
     appId: optionalStringSchema,
+    windowId: optionalStringSchema,
     windowTitle: optionalStringSchema,
     selectedText: optionalStringSchema,
     clipboardText: optionalStringSchema,

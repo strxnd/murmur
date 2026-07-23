@@ -2010,6 +2010,8 @@ export function isSameOutputTarget(original: ContextSnapshot, current: ContextSn
   const currentAppId = normalizeTargetField(current.appId);
   const originalAppName = normalizeTargetField(original.appName);
   const currentAppName = normalizeTargetField(current.appName);
+  const originalWindowId = normalizeTargetField(original.windowId);
+  const currentWindowId = normalizeTargetField(current.windowId);
   const originalWindowTitle = normalizeTargetField(original.windowTitle);
   const currentWindowTitle = normalizeTargetField(current.windowTitle);
 
@@ -2021,7 +2023,12 @@ export function isSameOutputTarget(original: ContextSnapshot, current: ContextSn
     return false;
   }
 
-  return Boolean(originalWindowTitle && currentWindowTitle === originalWindowTitle);
+  return Boolean(
+    originalWindowId &&
+      currentWindowId === originalWindowId &&
+      originalWindowTitle &&
+      currentWindowTitle === originalWindowTitle
+  );
 }
 
 function normalizeTargetField(value: string | undefined): string | undefined {

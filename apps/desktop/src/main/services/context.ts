@@ -78,7 +78,7 @@ export class ContextService {
         ? currentClipboard
         : undefined;
 
-    const hasAppMetadata = Boolean(activeWindow.appName || activeWindow.appId || activeWindow.windowTitle);
+    const hasAppMetadata = Boolean(activeWindow.appName || activeWindow.appId || activeWindow.windowId || activeWindow.windowTitle);
     const quality =
       hasAppMetadata && selectedText
         ? "full"

@@ -105,6 +105,7 @@ export interface SttSetupSnapshot {
 export interface ContextSnapshot {
   appName?: string;
   appId?: string;
+  windowId?: string;
   windowTitle?: string;
   selectedText?: string;
   clipboardText?: string;

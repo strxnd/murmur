@@ -95,6 +95,7 @@ const transcriptionResult: TranscriptionResult = {
 const capturedContext = {
   appName: "Test App",
   appId: "dev.test.app",
+  windowId: "window-1",
   windowTitle: "Test Window",
   capturedAt: "2026-07-23T00:00:00.000Z",
   sourceQuality: "full" as const,
@@ -324,6 +325,8 @@ describe("app-controller utility contracts", () => {
     expect(isSameOutputTarget(capturedContext, { ...capturedContext })).toBe(true);
     expect(isSameOutputTarget(capturedContext, { ...capturedContext, appId: "dev.other.app" })).toBe(false);
     expect(isSameOutputTarget(capturedContext, { ...capturedContext, windowTitle: "Other Window" })).toBe(false);
+    expect(isSameOutputTarget(capturedContext, { ...capturedContext, windowId: "window-2" })).toBe(false);
+    expect(isSameOutputTarget(capturedContext, { ...capturedContext, windowId: undefined })).toBe(false);
     expect(
       isSameOutputTarget(
         { ...capturedContext, windowTitle: undefined },
@@ -372,10 +375,10 @@ describe("AppController dictation ownership", () => {
     expect(harness.controller.session.status).toBe("complete");
   });
 
-  it("copies output without automation when focus no longer matches the recording target", async () => {
+  it("copies output without automation when an identically titled window in the same app becomes active", async () => {
     const harness = createControllerHarness({ aiEnabled: false });
     const sessionId = await startAndStop(harness.controller);
-    harness.setCurrentContext({ ...capturedContext, appId: "dev.other.app", appName: "Other App", windowTitle: "Other Window" });
+    harness.setCurrentContext({ ...capturedContext, windowId: "window-2" });
 
     await harness.controller.completeRecording({ sessionId, audio: new ArrayBuffer(1), mimeType: "audio/wav" });
 
