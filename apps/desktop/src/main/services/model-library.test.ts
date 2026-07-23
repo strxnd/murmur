@@ -10,6 +10,7 @@ import { buildProviderSetupDraft } from "../../shared/model-provider-setup";
 import type { SttRuntimeAvailability, SttRuntimeId } from "../../shared/types";
 import { resolveAppPaths, type AppPaths } from "./app-paths";
 import { ModelLibraryService } from "./model-library";
+import type { ProviderSecretCodec } from "./provider-secrets";
 import { StorageService } from "./storage";
 import type { SttRuntimeService } from "./stt-runtime";
 
@@ -73,6 +74,61 @@ describe("ModelLibraryService", () => {
     const snapshot = await service.activateModel("openai-gpt-5-5");
 
     expect(snapshot.activeModelIds.language).toBe("openai-gpt-5-5");
+  });
+
+  it("preserves an unreadable STT secret record while enabling a local provider", async () => {
+    let encryptionAvailable = true;
+    const { service, storage, paths } = setup("available", reversibleCodec(() => encryptionAvailable));
+    storage.setTranscriptionProviders(
+      storage.getState().transcriptionProviders.map((provider) =>
+        provider.id === "local-whisper-cpp"
+          ? { ...provider, apiKey: "local-stt-secret", apiKeyIntent: "replace", enabled: false }
+          : provider
+      )
+    );
+    touch(join(paths.modelDir, "ggml-tiny.en.bin"));
+    storage.upsertModelDownload(downloaded("whisper-tiny-en", paths));
+
+    encryptionAvailable = false;
+    const snapshot = await service.activateModel("whisper-tiny-en");
+
+    expect(snapshot.activeModelIds.voice).toBe("whisper-tiny-en");
+    encryptionAvailable = true;
+    const provider = storage.getState().transcriptionProviders.find((candidate) => candidate.id === "local-whisper-cpp");
+    expect(provider ? storage.resolveTranscriptionProviderSecret(provider).apiKey : undefined).toBe("local-stt-secret");
+  });
+
+  it("preserves an unreadable LLM secret record while enabling a local provider", async () => {
+    let encryptionAvailable = true;
+    const { service, storage } = setup("available", reversibleCodec(() => encryptionAvailable));
+    storage.setLlmProviders([
+      ...storage.getState().llmProviders,
+      {
+        id: "local-compatible",
+        type: "custom_openai_compatible",
+        name: "Local compatible",
+        baseUrl: "http://127.0.0.1:9000/v1",
+        apiKey: "local-llm-secret",
+        apiKeyIntent: "replace",
+        isCloud: false,
+        models: ["local-model"],
+        enabled: true
+      }
+    ]);
+    await service.getLibrary();
+    storage.setLlmProviders(
+      storage.getState().llmProviders.map((provider) =>
+        provider.id === "local-compatible" ? { ...provider, enabled: false, apiKeyIntent: "keep" } : provider
+      )
+    );
+
+    encryptionAvailable = false;
+    const snapshot = await service.activateModel("local-compatible:local-model");
+
+    expect(snapshot.activeModelIds.language).toBe("local-compatible:local-model");
+    encryptionAvailable = true;
+    const provider = storage.getState().llmProviders.find((candidate) => candidate.id === "local-compatible");
+    expect(provider ? storage.resolveLlmProviderSecret(provider).apiKey : undefined).toBe("local-llm-secret");
   });
 
   it("activates an API model after model-led provider setup state is saved", async () => {
@@ -574,11 +630,20 @@ describe("ModelLibraryService", () => {
   });
 });
 
-function setup(status: SttRuntimeAvailability["status"]) {
+function setup(status: SttRuntimeAvailability["status"], providerSecretCodec?: ProviderSecretCodec) {
   const paths = testPaths();
-  const storage = new StorageService(paths);
+  const storage = new StorageService(paths, undefined, providerSecretCodec);
   const service = new ModelLibraryService(paths, storage, () => undefined, fakeRuntimeService(status));
   return { service, storage, paths };
+}
+
+function reversibleCodec(isAvailable: () => boolean): ProviderSecretCodec {
+  return {
+    encoding: "electron-safe-storage",
+    isAvailable,
+    encrypt: (value) => Buffer.from(`encrypted:${value}`).toString("base64"),
+    decrypt: (value) => Buffer.from(value, "base64").toString("utf8").replace(/^encrypted:/, "")
+  };
 }
 
 function downloaded(modelId: string, paths: AppPaths) {

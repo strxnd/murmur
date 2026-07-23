@@ -680,7 +680,7 @@ export class ModelLibraryService {
       this.storage.setTranscriptionProviders(
         state.transcriptionProviders.map((candidate) =>
           candidate.id === providerId
-            ? { ...candidate, enabled: true, apiKeyIntent: candidate.hasStoredSecret ? "keep" : "remove" }
+            ? { ...candidate, enabled: true, apiKeyIntent: candidate.hasSecretRecord ? "keep" : "remove" }
             : candidate
         )
       );
@@ -693,7 +693,7 @@ export class ModelLibraryService {
     this.storage.setLlmProviders(
       state.llmProviders.map((candidate) =>
         candidate.id === providerId
-          ? { ...candidate, enabled: true, apiKeyIntent: candidate.hasStoredSecret ? "keep" : "remove" }
+          ? { ...candidate, enabled: true, apiKeyIntent: candidate.hasSecretRecord ? "keep" : "remove" }
           : candidate
       )
     );
