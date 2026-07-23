@@ -34,8 +34,9 @@ export class PasteService {
     return this.textAutomation.runExclusive(async () => {
       throwIfAborted(signal);
       const previousClipboard = captureClipboardSnapshot();
+      let pasteDispatchStarted = false;
       const restoreIfOwned = (): void => {
-        if (clipboard.readText() === text) restoreClipboardSnapshot(previousClipboard);
+        if (!pasteDispatchStarted && clipboard.readText() === text) restoreClipboardSnapshot(previousClipboard);
       };
       const onAbort = (): void => restoreIfOwned();
       signal?.addEventListener("abort", onAbort, { once: true });
@@ -47,6 +48,8 @@ export class PasteService {
         await abortableDelay(this.clipboardSettleDelayMs, signal);
         throwIfAborted(signal);
 
+        pasteDispatchStarted = true;
+        signal?.removeEventListener("abort", onAbort);
         const result = await this.textAutomation.pasteClipboard();
         if (!result.success) {
           return { pasted: false, message: result.message };

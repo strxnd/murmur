@@ -4,15 +4,28 @@ import { LinuxClipboardService } from "./linux-clipboard";
 const clipboardHarness = vi.hoisted(() => {
   let text = "";
   let primary = "";
+  let selectionAvailable = true;
   return {
-    readText: vi.fn((type?: string) => (type === "selection" ? primary : text)),
+    readText: vi.fn((type?: string) => {
+      if (type === "selection") {
+        if (!selectionAvailable) throw new Error("selection unavailable");
+        return primary;
+      }
+      return text;
+    }),
     reset: () => {
       text = "";
       primary = "";
+      selectionAvailable = true;
+    },
+    setSelectionAvailable: (available: boolean) => {
+      selectionAvailable = available;
     },
     writeText: vi.fn((value: string, type?: string) => {
-      if (type === "selection") primary = value;
-      else text = value;
+      if (type === "selection") {
+        if (!selectionAvailable) throw new Error("selection unavailable");
+        primary = value;
+      } else text = value;
     })
   };
 });
@@ -89,6 +102,41 @@ describe("LinuxClipboardService", () => {
         { command: "xclip", args: ["-selection", "primary"], input: "previous primary" }
       ])
     );
+  });
+
+  it("restores an external primary selection when Electron cannot read it", async () => {
+    clipboardHarness.writeText("previous clipboard");
+    clipboardHarness.setSelectionAvailable(false);
+    const calls: ExecCall[] = [];
+    let externalPrimary = "previous external primary";
+    let releaseWrites!: () => void;
+    const writesBlocked = new Promise<void>((resolve) => {
+      releaseWrites = resolve;
+    });
+    const service = new LinuxClipboardService({
+      commandExists: async (command) => command === "wl-copy" || command === "wl-paste",
+      env: { WAYLAND_DISPLAY: "wayland-1" },
+      execFileText: vi.fn(async (command, args, _timeoutMs, execOptions) => {
+        calls.push({ command, args, input: execOptions?.input });
+        if (command === "wl-paste") return externalPrimary;
+        if (execOptions?.input === "cancelled output") await writesBlocked;
+        if (command === "wl-copy" && args.includes("--primary")) externalPrimary = execOptions?.input ?? "";
+        return "";
+      }),
+      platform: "linux"
+    });
+    const controller = new AbortController();
+
+    const write = service.writeTextForPaste("cancelled output", controller.signal);
+    await vi.waitFor(() =>
+      expect(calls.filter((call) => call.command === "wl-copy" && call.input === "cancelled output")).toHaveLength(2)
+    );
+    controller.abort();
+    releaseWrites();
+
+    await expect(write).rejects.toMatchObject({ name: "AbortError" });
+    expect(externalPrimary).toBe("previous external primary");
+    expect(calls).toContainEqual({ command: "wl-copy", args: ["--primary"], input: "previous external primary" });
   });
 
   it("uses xsel for X11 clipboard writes when xclip is unavailable", async () => {

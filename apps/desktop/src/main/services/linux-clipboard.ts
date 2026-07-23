@@ -27,7 +27,9 @@ export class LinuxClipboardService {
   async writeTextForPaste(text: string, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) throw abortError();
     const previousText = clipboard.readText();
-    const previousPrimary = this.readElectronPrimarySelection() ?? "";
+    const previousPrimary =
+      this.platform === "linux" ? (await this.readPrimaryText()) ?? "" : this.readElectronPrimarySelection() ?? "";
+    if (signal?.aborted) throw abortError();
     let restoreStandard = false;
     let restorePrimary = false;
     const restoreElectronClipboard = (): void => {
@@ -60,6 +62,9 @@ export class LinuxClipboardService {
       if (!signal?.aborted) return;
 
       restoreElectronClipboard();
+      if (!restorePrimary && (await this.readExternalPrimaryText().catch(() => undefined)) === text) {
+        restorePrimary = true;
+      }
       await Promise.all([
         restoreStandard ? this.writeWlClipboard(previousText).catch(() => undefined) : Promise.resolve(),
         restorePrimary ? this.writeWlPrimarySelection(previousPrimary).catch(() => undefined) : Promise.resolve(),
@@ -77,7 +82,10 @@ export class LinuxClipboardService {
 
     const electronSelection = this.readElectronPrimarySelection();
     if (electronSelection) return electronSelection;
+    return this.readExternalPrimaryText();
+  }
 
+  private async readExternalPrimaryText(): Promise<string | undefined> {
     const readers = [
       () => this.readWlPrimarySelection(),
       () => this.readXclipPrimarySelection(),
