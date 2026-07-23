@@ -2,7 +2,7 @@ import type { ContextSnapshot, ModeConfig, VocabularyEntry } from "./types";
 
 export function buildVocabularyPrompt(vocabulary: VocabularyEntry[]): string {
   const terms = vocabulary
-    .filter((entry) => entry.term.trim().length > 0)
+    .filter((entry) => entry.enabled && entry.term.trim().length > 0)
     .slice(0, 80)
     .map((entry) => {
       const term = entry.term.trim();

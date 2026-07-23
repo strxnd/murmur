@@ -9,6 +9,7 @@ import {
   defaultSettings
 } from "../shared/defaults";
 import type {
+  AppSettings,
   AppStateSnapshot,
   CodexProviderRuntime,
   DictationHistoryItem,
@@ -112,6 +113,7 @@ interface TestController {
   stopRecording(notice?: string): Promise<AppStateSnapshot>;
   cancelRecording(): Promise<AppStateSnapshot>;
   clearLocalData(): Promise<AppStateSnapshot>;
+  captureRecordingContext(operation: DictationSessionOperation): Promise<typeof capturedContext>;
   completeRecording(payload: { sessionId: string; audio: ArrayBuffer; mimeType: string }): Promise<AppStateSnapshot>;
   ensureAutomationReadyForUserAction: ReturnType<typeof vi.fn>;
   dispose(): void;
@@ -129,6 +131,7 @@ interface ControllerHarness {
   llm: { process: ReturnType<typeof vi.fn> };
   paste: { copyText: ReturnType<typeof vi.fn>; insertText: ReturnType<typeof vi.fn> };
   codex: { logout: ReturnType<typeof vi.fn> };
+  contextCapture: ReturnType<typeof vi.fn>;
   mainWindowSend: ReturnType<typeof vi.fn>;
   setCodexStatus(status: CodexProviderRuntime): void;
   setCurrentContext(context: typeof capturedContext): void;
@@ -142,7 +145,11 @@ function createPersistedState(options: { aiEnabled?: boolean; llmProviders?: Llm
     context: { ...defaultModes[0].context }
   };
   return {
-    settings: { ...defaultSettings, activeModeId: mode.id, selectedTextCapture: "disabled" as const },
+    settings: {
+      ...defaultSettings,
+      activeModeId: mode.id,
+      selectedTextCapture: "disabled" as AppSettings["selectedTextCapture"]
+    },
     modes: [mode],
     transcriptionProviders: [{ ...testSttProvider }],
     llmProviders: (options.llmProviders ?? [{ ...codexProviderDefaults }]).map((provider) => ({ ...provider })),
@@ -207,6 +214,7 @@ function createControllerHarness(options: {
     logout: vi.fn(async () => ({ ...codexStatus })),
     dispose: vi.fn()
   };
+  const contextCapture = vi.fn(async () => currentContext);
 
   const controller = Object.create(AppController.prototype) as TestController & Record<string, unknown>;
   Object.assign(controller, {
@@ -217,7 +225,7 @@ function createControllerHarness(options: {
     closeToTrayNotification: null,
     storage,
     textAutomation: { dispose: vi.fn(), getCapability: vi.fn() },
-    context: { capture: vi.fn(async () => currentContext), dispose: vi.fn() },
+    context: { capture: contextCapture, dispose: vi.fn() },
     paste,
     automationPermissions: {},
     runtimeService: {},
@@ -269,6 +277,7 @@ function createControllerHarness(options: {
     llm,
     paste,
     codex,
+    contextCapture,
     mainWindowSend,
     setCodexStatus(status) {
       codexStatus = status;
@@ -419,6 +428,30 @@ describe("AppController shortcut fallback", () => {
 });
 
 describe("AppController dictation ownership", () => {
+  it("requests sensitive context only when both global and mode controls allow it", async () => {
+    const harness = createControllerHarness({ aiEnabled: false });
+    harness.state.settings.selectedTextCapture = "enabled";
+    harness.state.modes[0].context = { app: true, selectedText: false, clipboardText: false };
+    await harness.controller.startRecording("test");
+    const operation = harness.controller.sessionOperation;
+    expect(operation).not.toBeNull();
+
+    await harness.controller.captureRecordingContext(operation!);
+
+    const options = harness.contextCapture.mock.calls[0][0] as {
+      resolveChannels(metadata: typeof capturedContext): { selectedText: boolean; clipboardText: boolean };
+    };
+    expect(options.resolveChannels(capturedContext)).toEqual({ selectedText: false, clipboardText: false });
+
+    const globallyDisabled = createControllerHarness({ aiEnabled: false });
+    globallyDisabled.state.settings.selectedTextCapture = "disabled";
+    globallyDisabled.state.modes[0].context = { app: true, selectedText: true, clipboardText: true };
+    await globallyDisabled.controller.startRecording("test");
+    await globallyDisabled.controller.captureRecordingContext(globallyDisabled.controller.sessionOperation!);
+    const disabledOptions = globallyDisabled.contextCapture.mock.calls[0][0] as typeof options;
+    expect(disabledOptions.resolveChannels(capturedContext)).toEqual({ selectedText: false, clipboardText: true });
+  });
+
   it("starts recording without Accessibility and defers to clipboard-only delivery", async () => {
     const harness = createControllerHarness({ aiEnabled: false });
     harness.controller.ensureAutomationReadyForUserAction.mockReturnValue({

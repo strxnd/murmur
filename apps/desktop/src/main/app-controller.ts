@@ -1355,8 +1355,15 @@ export class AppController {
 
   private async captureRecordingContext(operation: DictationSessionOperation): Promise<ContextSnapshot> {
     this.dictationOwner.assertCurrent(operation);
+    const plan = operation.plan;
     return this.context.capture({
-      selectedText: operation.plan.settings.selectedTextCapture !== "disabled",
+      resolveChannels: (metadata) => {
+        const mode = resolveModeByContext(metadata, plan.modes, plan.autoModeRules, plan.settings.activeModeId);
+        return {
+          selectedText: plan.settings.selectedTextCapture === "enabled" && mode.context.selectedText,
+          clipboardText: mode.context.clipboardText
+        };
+      },
       signal: operation.controller.signal
     });
   }

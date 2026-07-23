@@ -110,11 +110,32 @@ describe("ContextService", () => {
     const context = new ContextService(new TextAutomationService(backend), 50, 1, fakePrimarySelection());
     clipboardHarness.set({ text: "previous", html: "<b>previous</b>", rtf: "{\\rtf1 previous}", image });
 
-    const snapshot = await context.capture();
+    const snapshot = await context.capture({ selectedText: true });
 
     expect(snapshot.selectedText).toBe("selected text");
     expect(backend.copyCalls).toBe(1);
     expect(clipboardHarness.get()).toEqual({ text: "previous", html: "<b>previous</b>", rtf: "{\\rtf1 previous}", image });
+  });
+
+  it("does not restore an old snapshot over clipboard data copied after capture", async () => {
+    const backend = new FakeBackend();
+    backend.onCopy = () => clipboardHarness.api.writeText("selected text");
+    const context = new ContextService(new TextAutomationService(backend), 50, 1, fakePrimarySelection());
+    clipboardHarness.set({ text: "previous" });
+    clipboardHarness.api.readHTML.mockClear();
+    clipboardHarness.api.readHTML
+      .mockImplementationOnce(() => clipboardHarness.get().html)
+      .mockImplementationOnce(() => clipboardHarness.get().html)
+      .mockImplementationOnce(() => {
+        const html = clipboardHarness.get().html;
+        clipboardHarness.set({ text: "new user clipboard" });
+        return html;
+      });
+
+    const snapshot = await context.capture({ selectedText: true });
+
+    expect(snapshot.selectedText).toBe("selected text");
+    expect(clipboardHarness.get().text).toBe("new user clipboard");
   });
 
   it("skips clipboard-based selection capture when the existing clipboard cannot be restored losslessly", async () => {
@@ -124,7 +145,7 @@ describe("ContextService", () => {
     clipboardHarness.set({ text: "previous" }, ["application/x-custom"]);
     clipboardHarness.api.writeText.mockClear();
 
-    const snapshot = await context.capture();
+    const snapshot = await context.capture({ selectedText: true });
 
     expect(snapshot.selectedText).toBeUndefined();
     expect(snapshot.diagnostics).toContain(
@@ -155,7 +176,7 @@ describe("ContextService", () => {
     clipboardHarness.set({ text: "previous" });
     const controller = new AbortController();
 
-    const capture = context.capture({ signal: controller.signal });
+    const capture = context.capture({ selectedText: true, signal: controller.signal });
     await Promise.resolve();
     controller.abort();
     releaseQueue();
@@ -181,7 +202,7 @@ describe("ContextService", () => {
     clipboardHarness.set({ text: "previous", html: "<b>previous</b>" });
     const controller = new AbortController();
 
-    const capture = context.capture({ signal: controller.signal });
+    const capture = context.capture({ selectedText: true, signal: controller.signal });
     await copyStarted;
     controller.abort();
     releaseCopy();
@@ -196,7 +217,7 @@ describe("ContextService", () => {
     const context = new ContextService(new TextAutomationService(backend), 5, 1, fakePrimarySelection());
     clipboardHarness.set({ text: "previous" });
 
-    const snapshot = await context.capture();
+    const snapshot = await context.capture({ selectedText: true });
 
     expect(snapshot.selectedText).toBeUndefined();
     expect(backend.copyCalls).toBe(1);
@@ -214,7 +235,7 @@ describe("ContextService", () => {
     const context = new ContextService(new TextAutomationService(backend), 5, 1, fakePrimarySelection());
     clipboardHarness.set({ text: "previous" });
 
-    const snapshot = await context.capture();
+    const snapshot = await context.capture({ selectedText: true });
 
     expect(snapshot.selectedText).toBeUndefined();
     expect(backend.copyCalls).toBe(0);
@@ -233,6 +254,40 @@ describe("ContextService", () => {
     expect(clipboardHarness.get().text).toBe("previous");
   });
 
+  it("does not read clipboard context unless the caller explicitly requests it", async () => {
+    const backend = new FakeBackend();
+    const context = new ContextService(new TextAutomationService(backend), 5, 1, fakePrimarySelection());
+    clipboardHarness.set({ text: "private clipboard" });
+    clipboardHarness.api.readText.mockClear();
+
+    const snapshot = await context.capture({ selectedText: false, clipboardText: false });
+
+    expect(snapshot.clipboardText).toBeUndefined();
+    expect(clipboardHarness.api.readText).not.toHaveBeenCalled();
+  });
+
+  it("includes clipboard context only after observing a recent external change", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-23T12:00:00.000Z"));
+    const backend = new FakeBackend();
+    const context = new ContextService(new TextAutomationService(backend), 5, 1, fakePrimarySelection());
+    const tracking = context as unknown as { startClipboardTracking: () => void };
+    clipboardHarness.set({ text: "hours-old secret" });
+    tracking.startClipboardTracking();
+
+    const stale = await context.capture({ clipboardText: true });
+    expect(stale.clipboardText).toBeUndefined();
+
+    clipboardHarness.set({ text: "fresh clipboard" });
+    const fresh = await context.capture({ clipboardText: true });
+    expect(fresh.clipboardText).toBe("fresh clipboard");
+
+    vi.advanceTimersByTime(3001);
+    const expired = await context.capture({ clipboardText: true });
+    expect(expired.clipboardText).toBeUndefined();
+    context.dispose();
+  });
+
   it("uses PRIMARY selection when clipboard copy does not change text", async () => {
     let primary = "old primary";
     const backend = new FakeBackend();
@@ -246,7 +301,7 @@ describe("ContextService", () => {
     });
     clipboardHarness.set({ text: "previous" });
 
-    const snapshot = await context.capture();
+    const snapshot = await context.capture({ selectedText: true });
 
     expect(snapshot.selectedText).toBe("selected primary");
     expect(clipboardHarness.get().text).toBe("previous");
@@ -271,7 +326,7 @@ describe("ContextService", () => {
     const context = new ContextService(new TextAutomationService(backend), 5, 1, fakePrimarySelection());
     clipboardHarness.set({ text: "previous" });
 
-    const snapshot = await context.capture();
+    const snapshot = await context.capture({ selectedText: true });
 
     expect(snapshot.selectedText).toBe("ax selected");
     expect(backend.selectedTextCalls).toBe(1);
@@ -298,7 +353,7 @@ describe("ContextService", () => {
     const context = new ContextService(new TextAutomationService(backend), 50, 1, fakePrimarySelection());
     clipboardHarness.set({ text: "previous" });
 
-    const snapshot = await context.capture();
+    const snapshot = await context.capture({ selectedText: true });
 
     expect(snapshot.selectedText).toBe("copied selected text");
     expect(backend.selectedTextCalls).toBe(1);
