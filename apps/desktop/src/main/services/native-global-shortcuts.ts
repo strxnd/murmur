@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import * as dbusNative from "@homebridge/dbus-native";
-import type { BusConnection, MessageBus } from "@homebridge/dbus-native";
 import type { ActivationMode, GlobalShortcutActionId } from "../../shared/types";
+import { DbusSessionConnection, type DbusMessage, type DbusMessageBus } from "./dbus-session-connection";
 
 const dbusServiceName = "dev.murmur.App";
 const dbusObjectPath = "/dev/murmur/App";
@@ -17,6 +18,11 @@ const nativeTimeoutMs = 3000;
 
 const gnomeMediaKeysSchema = "org.gnome.settings-daemon.plugins.media-keys";
 const gnomeCustomKeybindingSchema = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding";
+const gnomeBuiltinKeybindingSchemas = [
+  "org.gnome.desktop.wm.keybindings",
+  gnomeMediaKeysSchema,
+  "org.gnome.shell.keybindings"
+];
 
 const kdeDestination = "org.kde.kglobalaccel";
 const kdePath = "/kglobalaccel";
@@ -69,6 +75,13 @@ export interface NativeDesktopShortcutRegistrationOptions {
   actions: NativeDesktopShortcutActionRegistration[];
 }
 
+export interface NativeDesktopGlobalShortcutDependencies {
+  platform?: NodeJS.Platform | string;
+  env?: NodeJS.ProcessEnv;
+  createBus?: () => NativeMessageBus;
+  onRegistrationLost?: (reason: string) => void;
+}
+
 export interface NativeDesktopShortcutRegistrationResult {
   attempted: boolean;
   registered: boolean;
@@ -91,19 +104,13 @@ type DbusNativeModule = typeof dbusNative & {
   messageType: { methodCall: number; methodReturn: number; error: number; signal: number };
 };
 
-type NativeBusConnection = BusConnection & {
-  end?: () => void;
-};
-
 interface DbusExportedInterface {
   name: string;
   methods: Record<string, [string, string]>;
 }
 
-type NativeMessageBus = MessageBus & {
-  connection: NativeBusConnection;
-  name?: string;
-  exportInterface?: (implementation: Record<string, () => void>, path: string, iface: DbusExportedInterface) => void;
+type NativeMessageBus = DbusMessageBus & {
+  exportInterface?: (implementation: Record<string, (...args: unknown[]) => void | Error>, path: string, iface: DbusExportedInterface) => void;
   releaseName?: (name: string, callback: (error?: DbusError) => void) => void;
   requestName?: (name: string, flags: number, callback: (error?: DbusError, result?: number) => void) => void;
 };
@@ -111,13 +118,6 @@ type NativeMessageBus = MessageBus & {
 interface DbusError {
   name?: string;
   message?: unknown;
-}
-
-interface DbusMessage {
-  path?: string;
-  interface?: string;
-  member?: string;
-  body?: unknown[];
 }
 
 interface ActiveNativeRegistration {
@@ -142,7 +142,6 @@ interface RegisteredHyprlandBinding extends HyprlandBinding {
 const dbus = dbusNative as DbusNativeModule;
 
 export class NativeDesktopGlobalShortcutService {
-  private bus: NativeMessageBus | null = null;
   private activeRegistrations = new Map<GlobalShortcutActionId, ActiveNativeRegistration>();
   private callbackServiceExported = false;
   private callbackServiceRequested = false;
@@ -150,6 +149,21 @@ export class NativeDesktopGlobalShortcutService {
   private hyprlandBindings = new Map<GlobalShortcutActionId, RegisteredHyprlandBinding>();
   private kdeRegistered = new Set<GlobalShortcutActionId>();
   private matchRules = new Set<string>();
+  private callbackCapability: string | null = null;
+  private kdeOwner: string | null = null;
+  private unregistering = false;
+  private readonly platform: NodeJS.Platform | string;
+  private readonly env: NodeJS.ProcessEnv;
+  private readonly onRegistrationLost: (reason: string) => void;
+  private readonly connection: DbusSessionConnection<NativeMessageBus>;
+
+  constructor(dependencies: NativeDesktopGlobalShortcutDependencies = {}) {
+    this.platform = dependencies.platform ?? process.platform;
+    this.env = dependencies.env ?? process.env;
+    this.onRegistrationLost = dependencies.onRegistrationLost ?? (() => undefined);
+    const createBus = dependencies.createBus ?? (() => dbus.sessionBus({ ReturnLongjs: false }));
+    this.connection = new DbusSessionConnection(createBus, this.handleMessage, this.handleConnectionLost);
+  }
 
   async register(options: NativeDesktopShortcutRegistrationOptions): Promise<NativeDesktopShortcutRegistrationResult> {
     await this.unregister();
@@ -166,15 +180,15 @@ export class NativeDesktopGlobalShortcutService {
       actionResults: patch.actionResults ?? actionResults
     });
 
-    if (process.platform !== "linux") return result({});
+    if (this.platform !== "linux") return result({});
 
-    const backends = detectNativeShortcutBackends();
+    const backends = detectNativeShortcutBackends(this.env, this.platform);
     if (backends.length === 0) {
       diagnostics.push("No GNOME, KDE, or Hyprland native shortcut backend was detected.");
       return result({});
     }
 
-    if (!process.env.DBUS_SESSION_BUS_ADDRESS) {
+    if (!this.env.DBUS_SESSION_BUS_ADDRESS) {
       diagnostics.push("No D-Bus session bus is available for native desktop global shortcuts.");
       return result({ attempted: true });
     }
@@ -194,44 +208,49 @@ export class NativeDesktopGlobalShortcutService {
   }
 
   async unregister(): Promise<void> {
+    this.unregistering = true;
     this.activeRegistrations.clear();
 
-    if (this.gnomeRegistered.size > 0) {
-      const registered = new Set(this.gnomeRegistered);
-      this.gnomeRegistered.clear();
-      await this.unregisterGnome().catch(() => undefined);
-      for (const id of registered) this.activeRegistrations.delete(id);
-    }
+    try {
+      if (this.gnomeRegistered.size > 0) {
+        const registered = new Set(this.gnomeRegistered);
+        this.gnomeRegistered.clear();
+        await this.unregisterGnome().catch(() => undefined);
+        for (const id of registered) this.activeRegistrations.delete(id);
+      }
 
-    if (this.hyprlandBindings.size > 0) {
-      const bindings = [...this.hyprlandBindings.values()];
-      this.hyprlandBindings.clear();
-      await Promise.all(
-        bindings.flatMap((binding) => [
-          execFileOutput("hyprctl", ["keyword", "unbind", binding.bindKey], commandTimeoutMs).catch(() => undefined),
-          binding.releaseBindKey
-            ? execFileOutput("hyprctl", ["keyword", "unbind", binding.releaseBindKey], commandTimeoutMs).catch(() => undefined)
-            : Promise.resolve("")
-        ])
-      );
-    }
+      if (this.hyprlandBindings.size > 0) {
+        const bindings = [...this.hyprlandBindings.values()];
+        this.hyprlandBindings.clear();
+        await Promise.all(
+          bindings.flatMap((binding) => [
+            execFileOutput("hyprctl", ["keyword", "unbind", binding.bindKey], commandTimeoutMs).catch(() => undefined),
+            binding.releaseBindKey
+              ? execFileOutput("hyprctl", ["keyword", "unbind", binding.releaseBindKey], commandTimeoutMs).catch(() => undefined)
+              : Promise.resolve("")
+          ])
+        );
+      }
 
-    if (this.kdeRegistered.size > 0) {
-      this.kdeRegistered.clear();
-      await this.unregisterKde().catch(() => undefined);
-    }
+      if (this.kdeRegistered.size > 0) {
+        this.kdeRegistered.clear();
+        await this.unregisterKde().catch(() => undefined);
+      }
 
-    await this.removeAllMatches();
+      await this.removeAllMatches();
+      this.callbackCapability = null;
+    } finally {
+      this.unregistering = false;
+    }
   }
 
   dispose(): void {
     void this.unregister().finally(() => {
-      if (this.callbackServiceRequested && this.bus?.releaseName) {
-        this.bus.releaseName(dbusServiceName, () => undefined);
+      const bus = this.connection.currentBus();
+      if (this.callbackServiceRequested && bus?.releaseName) {
+        bus.releaseName(dbusServiceName, () => undefined);
       }
-      this.bus?.connection.removeListener("message", this.handleMessage);
-      this.bus?.connection.end?.();
-      this.bus = null;
+      this.connection.dispose();
       this.callbackServiceExported = false;
       this.callbackServiceRequested = false;
     });
@@ -278,13 +297,19 @@ export class NativeDesktopGlobalShortcutService {
       }
       usedShortcuts.add(normalizedShortcut);
 
+      const builtinConflict = await this.findGnomeBuiltinConflict(shortcut);
+      if (builtinConflict) {
+        actionResults[action.id].diagnostics.push(`GNOME shortcut "${shortcut}" is already used by built-in action ${builtinConflict}.`);
+        continue;
+      }
+
       const conflict = await this.findGnomeConflict(shortcut, existing, ownPaths);
       if (conflict) {
         actionResults[action.id].diagnostics.push(`GNOME custom shortcut "${shortcut}" is already used by another custom shortcut.`);
         continue;
       }
 
-      const command = dbusSendCommand(definition.dbusMethod);
+      const command = nativeShortcutCallbackCommand(definition.dbusMethod, this.getCallbackCapability());
       await execFileOutput(
         "gsettings",
         ["set", `${gnomeCustomKeybindingSchema}:${definition.gnomePath}`, "name", action.description],
@@ -300,6 +325,19 @@ export class NativeDesktopGlobalShortcutService {
         ["set", `${gnomeCustomKeybindingSchema}:${definition.gnomePath}`, "command", command],
         commandTimeoutMs
       );
+      const assignedBinding = stripGsettingsString(
+        (
+          await execFileOutput(
+            "gsettings",
+            ["get", `${gnomeCustomKeybindingSchema}:${definition.gnomePath}`, "binding"],
+            commandTimeoutMs
+          )
+        ).trim()
+      );
+      if (normalizeGnomeShortcut(assignedBinding) !== normalizedShortcut) {
+        actionResults[action.id].diagnostics.push(`GNOME did not retain the requested shortcut "${shortcut}".`);
+        continue;
+      }
 
       if (!nextPaths.includes(definition.gnomePath)) {
         nextPaths.push(definition.gnomePath);
@@ -324,7 +362,7 @@ export class NativeDesktopGlobalShortcutService {
     }
 
     const activationResult = actionResults.activation;
-    if (!activationResult.registered) {
+    if (!Object.values(actionResults).some((actionResult) => actionResult.registered)) {
       return { registered: false, actionResults };
     }
 
@@ -360,6 +398,20 @@ export class NativeDesktopGlobalShortcutService {
   private async getGnomeKeybindingPaths(): Promise<string[]> {
     const output = await execFileOutput("gsettings", ["get", gnomeMediaKeysSchema, "custom-keybindings"], commandTimeoutMs);
     return parseGsettingsStringList(output);
+  }
+
+  private async findGnomeBuiltinConflict(shortcut: string): Promise<string | null> {
+    const normalizedShortcut = normalizeGnomeShortcut(shortcut);
+    for (const schema of gnomeBuiltinKeybindingSchemas) {
+      try {
+        const output = await execFileOutput("gsettings", ["list-recursively", schema], commandTimeoutMs);
+        const conflict = findGnomeBindingInSettingsOutput(output, normalizedShortcut);
+        if (conflict) return `${schema}.${conflict}`;
+      } catch {
+        continue;
+      }
+    }
+    return null;
   }
 
   private async findGnomeConflict(shortcut: string, paths: string[], ownPaths: string[]): Promise<string | null> {
@@ -409,7 +461,7 @@ export class NativeDesktopGlobalShortcutService {
 
       await execFileOutput(
         "hyprctl",
-        ["keyword", "bind", `${binding.bindKey}, exec, ${dbusSendCommand(definition.dbusMethod)}`],
+        ["keyword", "bind", `${binding.bindKey}, exec, ${nativeShortcutCallbackCommand(definition.dbusMethod, this.getCallbackCapability())}`],
         commandTimeoutMs
       );
 
@@ -417,7 +469,11 @@ export class NativeDesktopGlobalShortcutService {
       let releaseBindKey: string | undefined;
       if (pushToTalkRelease) {
         try {
-          await execFileOutput("hyprctl", ["keyword", "bindr", `${binding.bindKey}, exec, ${dbusSendCommand("Deactivate")}`], commandTimeoutMs);
+          await execFileOutput(
+            "hyprctl",
+            ["keyword", "bindr", `${binding.bindKey}, exec, ${nativeShortcutCallbackCommand("Deactivate", this.getCallbackCapability())}`],
+            commandTimeoutMs
+          );
           releaseBindKey = binding.bindKey;
         } catch (error) {
           await execFileOutput("hyprctl", ["keyword", "unbind", binding.bindKey], commandTimeoutMs).catch(() => undefined);
@@ -443,7 +499,7 @@ export class NativeDesktopGlobalShortcutService {
     }
 
     const activationResult = actionResults.activation;
-    if (!activationResult.registered) {
+    if (!Object.values(actionResults).some((actionResult) => actionResult.registered)) {
       return { registered: false, actionResults };
     }
 
@@ -461,7 +517,9 @@ export class NativeDesktopGlobalShortcutService {
     diagnostics: string[]
   ): Promise<Partial<NativeDesktopShortcutRegistrationResult> & { registered: boolean }> {
     const bus = this.getBus();
-    await this.addMatch(kdeSignalMatch("globalShortcutPressed"));
+    this.kdeOwner = await this.getNameOwner(bus, kdeDestination);
+    await this.addMatch(kdeOwnerChangedMatch());
+    await this.addMatch(kdeSignalMatch("globalShortcutPressed", this.kdeOwner));
     const actionResults = emptyActionResults();
     const usedQtKeys = new Set<number>();
 
@@ -546,7 +604,7 @@ export class NativeDesktopGlobalShortcutService {
     }
 
     const activationResult = actionResults.activation;
-    if (!activationResult.registered) {
+    if (!Object.values(actionResults).some((actionResult) => actionResult.registered)) {
       return { registered: false, actionResults };
     }
 
@@ -560,11 +618,12 @@ export class NativeDesktopGlobalShortcutService {
   }
 
   private async unregisterKde(): Promise<void> {
-    if (!this.bus) return;
+    const bus = this.connection.currentBus();
+    if (!bus) return;
     await Promise.all(
       shortcutActionIds.map((id) =>
         this.invoke({
-          bus: this.bus!,
+          bus,
           destination: kdeDestination,
           path: kdePath,
           interfaceName: kdeInterface,
@@ -610,17 +669,17 @@ export class NativeDesktopGlobalShortcutService {
     }
     bus.exportInterface(
       {
-        Activate: () => this.handleActivated("activation"),
-        Deactivate: () => this.handleDeactivated("activation"),
-        ModeSelector: () => this.handleActivated("mode-selector")
+        Activate: (capability) => this.handleAuthenticatedCallback(capability, "activation", false),
+        Deactivate: (capability) => this.handleAuthenticatedCallback(capability, "activation", true),
+        ModeSelector: (capability) => this.handleAuthenticatedCallback(capability, "mode-selector", false)
       },
       dbusObjectPath,
       {
         name: dbusCallbackInterface,
         methods: {
-          Activate: ["", ""],
-          Deactivate: ["", ""],
-          ModeSelector: ["", ""]
+          Activate: ["s", ""],
+          Deactivate: ["s", ""],
+          ModeSelector: ["s", ""]
         }
       }
     );
@@ -628,11 +687,7 @@ export class NativeDesktopGlobalShortcutService {
   }
 
   private getBus(): NativeMessageBus {
-    if (this.bus) return this.bus;
-    const bus = dbus.sessionBus({ ReturnLongjs: false });
-    bus.connection.on("message", this.handleMessage);
-    this.bus = bus;
-    return bus;
+    return this.connection.getBus();
   }
 
   private requestName(bus: NativeMessageBus, name: string): Promise<number> {
@@ -642,9 +697,18 @@ export class NativeDesktopGlobalShortcutService {
         return;
       }
 
-      const timer = setTimeout(() => reject(new Error(`Timed out requesting D-Bus name ${name}.`)), nativeTimeoutMs);
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        const error = new Error(`Timed out requesting D-Bus name ${name}.`);
+        reject(error);
+        this.connection.reset(error);
+      }, nativeTimeoutMs);
       timer.unref();
       bus.requestName(name, dbusRequestNameDoNotQueue, (error, result) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         if (error) {
           reject(new Error(`${error.name ?? "D-Bus error"}: ${String(error.message ?? "")}`));
@@ -664,30 +728,30 @@ export class NativeDesktopGlobalShortcutService {
     signature?: string;
     body?: unknown[];
   }): Promise<T> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(new Error(`Timed out calling ${options.interfaceName}.${options.member}.`));
-      }, nativeTimeoutMs);
-      timer.unref();
+    return this.connection.invoke<T>({
+      bus: options.bus,
+      message: {
+        destination: options.destination,
+        path: options.path,
+        interface: options.interfaceName,
+        member: options.member,
+        signature: options.signature,
+        body: options.body
+      },
+      timeoutMs: nativeTimeoutMs,
+      timeoutMessage: `Timed out calling ${options.interfaceName}.${options.member}.`
+    });
+  }
 
-      options.bus.invoke(
-        {
-          destination: options.destination,
-          path: options.path,
-          interface: options.interfaceName,
-          member: options.member,
-          signature: options.signature,
-          body: options.body
-        },
-        (error, value) => {
-          clearTimeout(timer);
-          if (error) {
-            reject(new Error(`${error.name}: ${String(error.message)}`));
-            return;
-          }
-          resolve(value as T);
-        }
-      );
+  private getNameOwner(bus: NativeMessageBus, name: string): Promise<string> {
+    return this.invoke<string>({
+      bus,
+      destination: dbusDestination,
+      path: dbusPath,
+      interfaceName: dbusInterface,
+      member: "GetNameOwner",
+      signature: "s",
+      body: [name]
     });
   }
 
@@ -707,10 +771,11 @@ export class NativeDesktopGlobalShortcutService {
   }
 
   private async removeMatch(rule: string): Promise<void> {
-    if (!this.matchRules.has(rule) || !this.bus) return;
+    const bus = this.connection.currentBus();
+    if (!this.matchRules.has(rule) || !bus) return;
     this.matchRules.delete(rule);
     await this.invoke({
-      bus: this.bus,
+      bus,
       destination: dbusDestination,
       path: dbusPath,
       interfaceName: dbusInterface,
@@ -725,6 +790,15 @@ export class NativeDesktopGlobalShortcutService {
   }
 
   private readonly handleMessage = (message: DbusMessage): void => {
+    if (message.sender === dbusDestination && message.interface === dbusInterface && message.member === "NameOwnerChanged") {
+      const [name, oldOwner, newOwner] = message.body ?? [];
+      if (name === kdeDestination && oldOwner === this.kdeOwner && newOwner !== this.kdeOwner) {
+        this.loseRegistrations("KDE KGlobalAccel restarted.");
+      }
+      return;
+    }
+
+    if (message.sender !== this.kdeOwner) return;
     if (message.interface !== kdeComponentInterface || message.member !== "globalShortcutPressed") return;
     if (message.path !== kdeComponentPath) return;
     const [, actionUnique] = message.body ?? [];
@@ -732,6 +806,38 @@ export class NativeDesktopGlobalShortcutService {
     if (!actionId) return;
     this.handleActivated(actionId);
   };
+
+  private readonly handleConnectionLost = (error: Error): void => {
+    this.loseRegistrations(`D-Bus session connection failed: ${error.message}`);
+  };
+
+  private loseRegistrations(reason: string): void {
+    const wasRegistered = this.activeRegistrations.size > 0;
+    this.activeRegistrations.clear();
+    this.matchRules.clear();
+    this.callbackCapability = null;
+    this.callbackServiceExported = false;
+    this.callbackServiceRequested = false;
+    this.kdeOwner = null;
+    this.connection.reset(new Error(reason));
+    if (wasRegistered && !this.unregistering) this.onRegistrationLost(reason);
+  }
+
+  private getCallbackCapability(): string {
+    const capability = this.callbackCapability ?? randomBytes(24).toString("hex");
+    this.callbackCapability = capability;
+    return capability;
+  }
+
+  private handleAuthenticatedCallback(capability: unknown, actionId: GlobalShortcutActionId, deactivated: boolean): void | Error {
+    if (!isAuthorizedNativeShortcutCallback(this.callbackCapability, capability)) {
+      const error = new Error("Invalid Murmur shortcut callback capability.");
+      Object.assign(error, { dbusName: "dev.murmur.Error.Unauthorized" });
+      return error;
+    }
+    if (deactivated) this.handleDeactivated(actionId);
+    else this.handleActivated(actionId);
+  }
 
   private handleActivated(actionId: GlobalShortcutActionId): void {
     const registration = this.activeRegistrations.get(actionId);
@@ -1093,6 +1199,17 @@ function stripGsettingsString(value: string): string {
   return value.trim().replace(/^['"]|['"]$/g, "");
 }
 
+export function findGnomeBindingInSettingsOutput(output: string, normalizedShortcut: string): string | null {
+  for (const line of output.split("\n")) {
+    const match = line.trim().match(/^\S+\s+(\S+)\s+(.+)$/);
+    if (!match) continue;
+    const [, key, value] = match;
+    const candidates = value.match(/<[^>]+>[^'",\]]+|(?:Ctrl|Alt|Shift|Super|Control|Primary)\+[^'",\]]+/gi) ?? [];
+    if (candidates.some((candidate) => normalizeGnomeShortcut(candidate.trim()) === normalizedShortcut)) return key;
+  }
+  return null;
+}
+
 function normalizeGnomeShortcut(shortcut: string): string {
   const modifiers: string[] = [];
   const key = shortcut.replace(/<(\w+)>/g, (_match, modifier: string) => {
@@ -1103,8 +1220,12 @@ function normalizeGnomeShortcut(shortcut: string): string {
   return `${modifiers.map((modifier) => `<${modifier}>`).join("")}${key.toLowerCase()}`;
 }
 
-function dbusSendCommand(method: "Activate" | "Deactivate" | "ModeSelector"): string {
-  return `dbus-send --session --type=method_call --dest=${dbusServiceName} ${dbusObjectPath} ${dbusCallbackInterface}.${method}`;
+export function isAuthorizedNativeShortcutCallback(expectedCapability: string | null, receivedCapability: unknown): boolean {
+  return typeof receivedCapability === "string" && expectedCapability !== null && receivedCapability === expectedCapability;
+}
+
+export function nativeShortcutCallbackCommand(method: "Activate" | "Deactivate" | "ModeSelector", capability: string): string {
+  return `dbus-send --session --type=method_call --dest=${dbusServiceName} ${dbusObjectPath} ${dbusCallbackInterface}.${method} string:${capability}`;
 }
 
 function kdeActionId(id: GlobalShortcutActionId): string[] {
@@ -1120,8 +1241,12 @@ function kdeActionIdFromSignal(actionUnique: unknown): GlobalShortcutActionId | 
   return null;
 }
 
-function kdeSignalMatch(member: string): string {
-  return `type='signal',sender='${kdeDestination}',path='${kdeComponentPath}',interface='${kdeComponentInterface}',member='${member}'`;
+function kdeSignalMatch(member: string, sender: string | null): string {
+  return `type='signal',sender='${sender ?? kdeDestination}',path='${kdeComponentPath}',interface='${kdeComponentInterface}',member='${member}'`;
+}
+
+function kdeOwnerChangedMatch(): string {
+  return `type='signal',sender='${dbusDestination}',path='${dbusPath}',interface='${dbusInterface}',member='NameOwnerChanged',arg0='${kdeDestination}'`;
 }
 
 function backendLabel(backend: NativeDesktopShortcutBackend): string {

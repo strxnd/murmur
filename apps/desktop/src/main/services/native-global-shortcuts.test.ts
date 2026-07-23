@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { defaultSettings } from "../../shared/defaults";
 import {
   acceleratorToGnomeShortcut,
   acceleratorToHyprlandBinding,
   acceleratorToKdeQtKey,
-  detectNativeShortcutBackends
+  detectNativeShortcutBackends,
+  findGnomeBindingInSettingsOutput,
+  isAuthorizedNativeShortcutCallback,
+  nativeShortcutCallbackCommand
 } from "./native-global-shortcuts";
 
 describe("detectNativeShortcutBackends", () => {
@@ -80,6 +84,31 @@ describe("acceleratorToHyprlandBinding", () => {
     expect(acceleratorToHyprlandBinding("VolumeUp")).toBeNull();
     expect(acceleratorToHyprlandBinding("Super")).toBeNull();
     expect(acceleratorToHyprlandBinding("CommandOrControl+A+B")).toBeNull();
+  });
+});
+
+describe("native shortcut callback authorization", () => {
+  it("requires the per-registration capability in exported D-Bus callbacks", () => {
+    expect(isAuthorizedNativeShortcutCallback("secret", undefined)).toBe(false);
+    expect(isAuthorizedNativeShortcutCallback("secret", "wrong")).toBe(false);
+    expect(isAuthorizedNativeShortcutCallback("secret", "secret")).toBe(true);
+    expect(nativeShortcutCallbackCommand("Activate", "secret")).toContain("string:secret");
+  });
+});
+
+describe("GNOME built-in shortcut conflicts", () => {
+  it("uses a default that does not collide with GNOME's window menu", () => {
+    expect(defaultSettings.activationHotkey).toBe("Alt+Shift+R");
+  });
+
+  it("finds accelerators owned by built-in GNOME schemas", () => {
+    const output = [
+      "org.gnome.desktop.wm.keybindings activate-window-menu ['<Alt>space']",
+      "org.gnome.desktop.wm.keybindings close ['<Alt>F4']"
+    ].join("\n");
+
+    expect(findGnomeBindingInSettingsOutput(output, "<alt>space")).toBe("activate-window-menu");
+    expect(findGnomeBindingInSettingsOutput(output, "<alt><shift>r")).toBeNull();
   });
 });
 

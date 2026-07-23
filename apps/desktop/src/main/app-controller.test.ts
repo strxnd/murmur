@@ -27,6 +27,7 @@ import {
   wrapIndex
 } from "./app-controller";
 import { DictationSessionOwner, type DictationSessionOperation } from "./services/dictation-session";
+import { globalShortcut } from "./electron-api";
 
 vi.mock("./electron-api", () => ({
   app: {
@@ -313,6 +314,65 @@ describe("app-controller utility contracts", () => {
     finishRefresh();
     await expect(selection).resolves.toEqual(codexProviderDefaults);
     expect(selectProvider).toHaveBeenCalledOnce();
+  });
+});
+
+describe("AppController shortcut fallback", () => {
+  it("keeps a registered activation backend while resolving the mode selector independently", async () => {
+    const nativeModeResult = {
+      registered: true,
+      pushToTalkRelease: false,
+      triggerDescription: "ALT+SHIFT+k",
+      diagnostics: []
+    };
+    const controller = Object.create(AppController.prototype) as {
+      nativeHotkeys: { register: ReturnType<typeof vi.fn> };
+      registerModeSelectorFallback(
+        action: {
+          id: "mode-selector";
+          accelerator: string;
+          description: string;
+          activationMode: "toggle";
+          onActivated: () => void;
+          onDeactivated: () => void;
+          onPressedWithoutRelease: () => void;
+        },
+        diagnostics: string[],
+        tryNative: boolean
+      ): Promise<typeof nativeModeResult>;
+    };
+    controller.nativeHotkeys = {
+      register: vi.fn(async () => ({
+        attempted: true,
+        registered: true,
+        backend: "gnome_custom_shortcut",
+        pushToTalkRelease: false,
+        diagnostics: [],
+        actionResults: {
+          activation: { registered: false, pushToTalkRelease: false, diagnostics: [] },
+          "mode-selector": nativeModeResult
+        }
+      }))
+    };
+    vi.mocked(globalShortcut.register).mockClear();
+
+    const result = await controller.registerModeSelectorFallback(
+      {
+        id: "mode-selector",
+        accelerator: "Alt+Shift+K",
+        description: "Show Murmur mode selector",
+        activationMode: "toggle",
+        onActivated: vi.fn(),
+        onDeactivated: vi.fn(),
+        onPressedWithoutRelease: vi.fn()
+      },
+      ["portal omitted mode selector"],
+      true
+    );
+
+    expect(controller.nativeHotkeys.register).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ registered: true, triggerDescription: "ALT+SHIFT+k" });
+    expect(globalShortcut.register).not.toHaveBeenCalled();
   });
 });
 
