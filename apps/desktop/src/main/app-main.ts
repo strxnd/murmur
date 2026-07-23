@@ -1,3 +1,4 @@
+import { murmurLinuxDesktopName } from "../shared/app-identity";
 import { app, dialog, globalShortcut, Menu } from "./electron-api";
 import { AppController } from "./app-controller";
 import { isSupportedPlatform, unsupportedPlatformMessage } from "./services/platform-support";
@@ -12,7 +13,7 @@ if (!isSupportedPlatform(process.platform)) {
     .catch(() => app.quit());
 } else if (process.platform === "linux") {
   const linuxApp = app as typeof app & { setDesktopName?: (desktopName: string) => void };
-  linuxApp.setDesktopName?.("dev.murmur.app.desktop");
+  linuxApp.setDesktopName?.(murmurLinuxDesktopName);
 
   startApp();
 } else {

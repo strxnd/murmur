@@ -22,7 +22,16 @@ interface PathProvider {
   getPath(name: "home" | "temp"): string;
 }
 
-export function resolveAppPaths(app: PathProvider, env: NodeJS.ProcessEnv = process.env): AppPaths {
+interface AppPathRuntime {
+  platform?: NodeJS.Platform;
+  uid?: number;
+}
+
+export function resolveAppPaths(
+  app: PathProvider,
+  env: NodeJS.ProcessEnv = process.env,
+  runtime: AppPathRuntime = {}
+): AppPaths {
   const homeDir = app.getPath("home");
   const configBase = absoluteEnvPath(env.XDG_CONFIG_HOME) ?? join(homeDir, ".config");
   const dataBase = absoluteEnvPath(env.XDG_DATA_HOME) ?? join(homeDir, ".local", "share");
@@ -31,7 +40,7 @@ export function resolveAppPaths(app: PathProvider, env: NodeJS.ProcessEnv = proc
   const configDir = join(configBase, "murmur");
   const dataDir = join(dataBase, "murmur");
   const cacheDir = join(cacheBase, "murmur");
-  const tempDir = join(app.getPath("temp"), "murmur");
+  const tempDir = resolveTempDir(app.getPath("temp"), runtime.platform ?? process.platform, runtime.uid ?? process.getuid?.());
   const audioDir = join(dataDir, "audio");
   const modelDir = join(cacheDir, "models", "stt");
   const runtimeDir = join(cacheDir, "runtimes", "stt");
@@ -62,6 +71,12 @@ export function ensureOwnerOnlyDirectory(path: string): void {
 
 export function ensureOwnerOnlyFile(path: string): void {
   chmodSync(path, ownerOnlyFileMode);
+}
+
+function resolveTempDir(tempBase: string, platform: NodeJS.Platform, uid: number | undefined): string {
+  if (platform !== "linux") return join(tempBase, "murmur");
+  if (uid === undefined) throw new Error("Unable to resolve the current Linux user ID for Murmur's temporary directory.");
+  return join(tempBase, `murmur-${uid}`);
 }
 
 function absoluteEnvPath(value: string | undefined): string | undefined {

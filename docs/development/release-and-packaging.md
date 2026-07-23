@@ -76,7 +76,7 @@ The `build` block in `package.json` sets:
 - `appId: dev.kumaraarav.murmur`
 - `afterPack: scripts/after-pack.cjs`
 - `productName: Murmur`
-- `desktopName: murmur`
+- `desktopName: dev.kumaraarav.murmur`, shared by the Linux desktop filename, `StartupWMClass`, runtime desktop name, and portal registration
 - Linux distributable targets: `AppImage`, `deb`, and `rpm`
 - Linux desktop-name syncing for installed package integration
 - Linux package category: `Utility`

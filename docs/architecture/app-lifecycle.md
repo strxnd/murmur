@@ -1,12 +1,12 @@
 # App Lifecycle
 
-[`src/main/index.ts`](../../apps/desktop/src/main/index.ts) is the production main entrypoint. On Linux Wayland it relaunches the app with `--ozone-platform=x11` unless that flag is already present or `MURMUR_XWAYLAND_RELAUNCHED=1` is set. It then loads [`src/main/app-main.ts`](../../apps/desktop/src/main/app-main.ts).
+[`src/main/index.ts`](../../apps/desktop/src/main/index.ts) is the production main entrypoint. On Linux Wayland it relaunches the app with `--ozone-platform=x11` only when `DISPLAY` confirms that XWayland is available, unless that flag is already present or `MURMUR_XWAYLAND_RELAUNCHED=1` is set. Wayland-only sessions retain Chromium's native Wayland backend. It then loads [`src/main/app-main.ts`](../../apps/desktop/src/main/app-main.ts).
 
 ## Startup
 
 `app-main.ts`:
 
-- Sets the Linux desktop name to `dev.murmur.app.desktop` when Electron exposes `setDesktopName`.
+- Sets the Linux desktop name to `dev.kumaraarav.murmur.desktop` when Electron exposes `setDesktopName`, matching the packaged desktop entry and portal app ID.
 - Removes the application menu.
 - Acquires Electron's single-instance lock.
 - Initializes one `AppController` after `app.whenReady()`.

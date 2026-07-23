@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-module.exports = async function afterPack(context) {
+async function afterPack(context) {
   if (context.electronPlatformName !== "linux") return;
 
   const appDir = context.appOutDir;
@@ -13,7 +13,12 @@ module.exports = async function afterPack(context) {
 
   fs.renameSync(binaryPath, realBinaryPath);
   fs.writeFileSync(binaryPath, linuxLauncher(binaryName), { mode: 0o755 });
-};
+}
+
+function shouldForceXWayland(environment) {
+  return (environment.XDG_SESSION_TYPE === "wayland" || Boolean(environment.WAYLAND_DISPLAY))
+    && Boolean(environment.DISPLAY);
+}
 
 function linuxLauncher(binaryName) {
   return `#!/usr/bin/env bash
@@ -23,9 +28,8 @@ function linuxLauncher(binaryName) {
 HERE="$(dirname "$(readlink -f "\${BASH_SOURCE[0]}")")"
 FLAGS=()
 
-# Wayland: force XWayland because Electron overlay positioning/focus hints
-# are not reliable for normal native Wayland toplevel windows.
-if [ "\${XDG_SESSION_TYPE:-}" = "wayland" ] || [ -n "\${WAYLAND_DISPLAY:-}" ]; then
+# Prefer XWayland for overlay positioning only when an X11 display is available.
+if { [ "\${XDG_SESSION_TYPE:-}" = "wayland" ] || [ -n "\${WAYLAND_DISPLAY:-}" ]; } && [ -n "\${DISPLAY:-}" ]; then
   FLAGS+=(--ozone-platform=x11)
   export MURMUR_XWAYLAND_RELAUNCHED=1
 fi
@@ -41,3 +45,7 @@ fi
 exec -a "$0" "$HERE/${binaryName}-app" "\${FLAGS[@]}" "$@"
 `;
 }
+
+module.exports = afterPack;
+module.exports.linuxLauncher = linuxLauncher;
+module.exports.shouldForceXWayland = shouldForceXWayland;

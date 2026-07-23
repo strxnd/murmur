@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import * as dbusNative from "@homebridge/dbus-native";
 import type { BusConnection, MessageBus } from "@homebridge/dbus-native";
+import { murmurAppId } from "../../shared/app-identity";
 import type { ActivationMode, GlobalShortcutActionId } from "../../shared/types";
 
 const portalDestination = "org.freedesktop.portal.Desktop";
@@ -13,7 +14,6 @@ const sessionInterface = "org.freedesktop.portal.Session";
 const dbusDestination = "org.freedesktop.DBus";
 const dbusPath = "/org/freedesktop/DBus";
 const dbusInterface = "org.freedesktop.DBus";
-const appId = "dev.murmur.app";
 const portalTimeoutMs = 3000;
 
 const shortcutActionIds: GlobalShortcutActionId[] = ["activation", "mode-selector"];
@@ -348,7 +348,7 @@ export class XdgGlobalShortcutService {
         interfaceName: hostRegistryInterface,
         member: "Register",
         signature: "sa{sv}",
-        body: [appId, []]
+        body: [murmurAppId, []]
       });
       this.hostAppRegistered = true;
     } catch (error) {
@@ -357,7 +357,7 @@ export class XdgGlobalShortcutService {
         this.hostAppRegistered = true;
         return;
       }
-      diagnostics.push(`XDG Desktop Portal app registration failed for ${appId}: ${message}.`);
+      diagnostics.push(`XDG Desktop Portal app registration failed for ${murmurAppId}: ${message}.`);
     }
   }
 
@@ -564,7 +564,7 @@ export function shortcutPropertiesForPortalVersion(description: string, preferre
 }
 
 function portalActionId(id: GlobalShortcutActionId): string {
-  return `${appId}:${id}`;
+  return `${murmurAppId}:${id}`;
 }
 
 function emptyActionResults(): Record<GlobalShortcutActionId, XdgShortcutActionResult> {
