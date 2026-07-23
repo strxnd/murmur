@@ -38,9 +38,16 @@ const clipboardHarness = vi.hoisted(() => {
     api,
     image: (empty = false) => ({ isEmpty: () => empty }),
     get: () => state,
-    set: (next: Partial<typeof state>, nextFormats: string[] = []) => {
+    set: (next: Partial<typeof state>, nextFormats?: string[]) => {
       state = { text: "", html: "", rtf: "", image: emptyImage, ...next };
-      formats = nextFormats;
+      formats =
+        nextFormats ??
+        [
+          ...(state.text ? ["text/plain"] : []),
+          ...(state.html ? ["text/html"] : []),
+          ...(state.rtf ? ["text/rtf"] : []),
+          ...(!state.image.isEmpty() ? ["image/png"] : [])
+        ];
     }
   };
 });

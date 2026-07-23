@@ -36,14 +36,21 @@ export interface ClipboardSnapshot {
 
 export function captureClipboardSnapshot(): ClipboardSnapshot {
   const image = clipboard.readImage();
-  const formats = clipboard.availableFormats?.() ?? [];
+  const rawFormats = clipboard.availableFormats?.();
+  const text = clipboard.readText();
+  const html = clipboard.readHTML();
+  const rtf = clipboard.readRTF();
+  const formats = normalizeClipboardFormats(rawFormats ?? []);
+  const hasContent = Boolean(text || html || rtf || !image.isEmpty());
   return {
-    text: clipboard.readText(),
-    html: clipboard.readHTML(),
-    rtf: clipboard.readRTF(),
+    text,
+    html,
+    rtf,
     image: image.isEmpty() ? undefined : image,
-    formats: normalizeClipboardFormats(formats),
-    restorable: formats.every(isRestorableClipboardFormat)
+    formats,
+    restorable:
+      rawFormats !== undefined &&
+      (formats.length === 0 ? !hasContent : formats.every(isRestorableClipboardFormat))
   };
 }
 

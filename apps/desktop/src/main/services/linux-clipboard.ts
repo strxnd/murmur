@@ -46,6 +46,7 @@ export class LinuxClipboardService {
       ]);
     };
     const restoreAfterAbort = async (): Promise<void> => {
+      if (ownershipToken) return;
       const restoreStandard = clipboard.readText() === text;
       let restorePrimary = this.readElectronPrimarySelection() === text;
       if (restoreStandard) clipboard.writeText(previousText);
@@ -55,52 +56,54 @@ export class LinuxClipboardService {
       }
       await restoreExternalSelections(restoreStandard, restorePrimary);
     };
+    const lease = {
+      restoreIfOwned: async () => {
+        let restorePrimary = ownershipToken
+          ? primaryOwnershipMarked && clipboardHasOwnershipToken(ownershipToken, "selection")
+          : this.readElectronPrimarySelection() === text;
+        if (
+          !ownershipToken &&
+          this.platform === "linux" &&
+          !restorePrimary &&
+          (await this.readExternalPrimaryText().catch(() => undefined)) === text
+        ) {
+          restorePrimary = true;
+        }
+        if (restorePrimary) this.writeElectronPrimarySelection(previousPrimary);
+        await restoreExternalSelections(false, restorePrimary);
+      }
+    };
     const onAbort = (): void => {
       void restoreAfterAbort().catch(() => undefined);
     };
     signal?.addEventListener("abort", onAbort, { once: true });
 
     try {
-      clipboard.writeText(text);
+      if (ownershipToken) writeOwnedClipboardText(text, ownershipToken);
+      else clipboard.writeText(text);
       if (this.platform === "linux") {
-        this.writeElectronPrimarySelection(text);
-        await Promise.all([
-          this.writeWlClipboard(text).catch(() => undefined),
-          this.writeWlPrimarySelection(text).catch(() => undefined),
-          this.writeXClipboard(text).catch(() => undefined),
-          this.writeXPrimarySelection(text).catch(() => undefined)
-        ]);
         if (ownershipToken) {
           try {
             writeOwnedClipboardText(text, ownershipToken, "selection");
             primaryOwnershipMarked = true;
           } catch {
-            primaryOwnershipMarked = false;
+            this.writeElectronPrimarySelection(text);
           }
+        } else {
+          this.writeElectronPrimarySelection(text);
         }
+        await Promise.all([
+          this.writeWlPrimarySelection(text).catch(() => undefined),
+          this.writeXPrimarySelection(text).catch(() => undefined)
+        ]);
       }
       if (signal?.aborted) {
+        if (ownershipToken) return lease;
         await restoreAfterAbort();
         throw abortError();
       }
 
-      return {
-        restoreIfOwned: async () => {
-          let restorePrimary = ownershipToken
-            ? primaryOwnershipMarked && clipboardHasOwnershipToken(ownershipToken, "selection")
-            : this.readElectronPrimarySelection() === text;
-          if (
-            !ownershipToken &&
-            this.platform === "linux" &&
-            !restorePrimary &&
-            (await this.readExternalPrimaryText().catch(() => undefined)) === text
-          ) {
-            restorePrimary = true;
-          }
-          if (restorePrimary) this.writeElectronPrimarySelection(previousPrimary);
-          await restoreExternalSelections(false, restorePrimary);
-        }
-      };
+      return lease;
     } finally {
       signal?.removeEventListener("abort", onAbort);
     }

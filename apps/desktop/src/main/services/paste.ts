@@ -5,7 +5,6 @@ import {
   clipboardHasOwnershipToken,
   clipboardMatchesSnapshot,
   restoreClipboardSnapshot,
-  writeOwnedClipboardText,
   type ClipboardSnapshot
 } from "./clipboard-snapshot";
 import { LinuxClipboardService } from "./linux-clipboard";
@@ -79,17 +78,24 @@ export class PasteService {
       let ownedClipboard: ClipboardSnapshot | undefined;
       const restoreIfOwned = async (): Promise<void> => {
         await clipboardLease?.restoreIfOwned();
-        const ownsStandardClipboard =
-          clipboardOwnershipToken && ownedClipboard
-            ? clipboardHasOwnershipToken(clipboardOwnershipToken) && clipboardMatchesSnapshot(ownedClipboard)
-            : clipboard.readText() === text;
+        const ownsStandardClipboard = clipboardOwnershipToken
+          ? clipboardHasOwnershipToken(clipboardOwnershipToken) &&
+            (!ownedClipboard || clipboardMatchesSnapshot(ownedClipboard))
+          : clipboard.readText() === text;
         if (ownsStandardClipboard) restoreClipboardSnapshot(previousClipboard);
       };
 
       try {
         clipboardLease = await this.linuxClipboard.writeTextForPaste(text, signal, clipboardOwnershipToken);
         throwIfAborted(signal);
-        writeOwnedClipboardText(text, clipboardOwnershipToken);
+        if (!clipboardHasOwnershipToken(clipboardOwnershipToken)) {
+          await clipboardLease.restoreIfOwned();
+          return {
+            pasted: false,
+            message: "Automatic paste was skipped because the clipboard changed during delivery.",
+            clipboardRetained: false
+          };
+        }
         ownedClipboard = captureClipboardSnapshot();
 
         await abortableDelay(this.clipboardSettleDelayMs, signal);

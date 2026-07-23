@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type { AutomationResult, TextAutomationBackend, TextAutomationCapability } from "./text-automation";
 import { TextAutomationService } from "./text-automation";
+import { writeOwnedClipboardText } from "./clipboard-snapshot";
 import { PasteService, type ClipboardPasteLease } from "./paste";
 
 const clipboardHarness = vi.hoisted(() => {
@@ -39,9 +40,16 @@ const clipboardHarness = vi.hoisted(() => {
     api,
     image: (empty = false) => ({ isEmpty: () => empty }),
     get: () => state,
-    set: (next: Partial<typeof state>, nextFormats: string[] = []) => {
+    set: (next: Partial<typeof state>, nextFormats?: string[]) => {
       state = { text: "", html: "", rtf: "", image: emptyImage, ...next };
-      formats = nextFormats;
+      formats =
+        nextFormats ??
+        [
+          ...(state.text ? ["text/plain"] : []),
+          ...(state.html ? ["text/html"] : []),
+          ...(state.rtf ? ["text/rtf"] : []),
+          ...(!state.image.isEmpty() ? ["image/png"] : [])
+        ];
     }
   };
 });
@@ -112,10 +120,10 @@ describe("PasteService", () => {
       releaseWrite = resolve;
     });
     const service = new PasteService(new TextAutomationService(backend), 0, {
-      async writeTextForPaste(text: string): Promise<ClipboardPasteLease> {
+      async writeTextForPaste(text, _signal, ownershipToken): Promise<ClipboardPasteLease> {
         markWriteStarted();
         await writeBlocked;
-        clipboardHarness.api.writeText(text);
+        writeOwnedClipboardText(text, ownershipToken!);
         return fakeLease();
       }
     });
@@ -133,6 +141,111 @@ describe("PasteService", () => {
       html: "<b>previous</b>",
       rtf: "{\\rtf1 previous}"
     });
+  });
+
+  it("restores the complete rich clipboard when an owned helper write is aborted", async () => {
+    const backend = new FakeBackend();
+    let releaseWrite!: () => void;
+    let markWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    const writeBlocked = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const service = new PasteService(new TextAutomationService(backend), 0, {
+      async writeTextForPaste(text, _signal, ownershipToken): Promise<ClipboardPasteLease> {
+        writeOwnedClipboardText(text, ownershipToken!);
+        markWriteStarted();
+        await writeBlocked;
+        return fakeLease();
+      }
+    });
+    clipboardHarness.set({ text: "previous", html: "<b>previous</b>", rtf: "{\\rtf1 previous}" }, [
+      "text/plain",
+      "text/html",
+      "text/rtf"
+    ]);
+    const controller = new AbortController();
+
+    const result = service.insertText("cancelled output", controller.signal);
+    await writeStarted;
+    controller.abort();
+    releaseWrite();
+
+    await expect(result).rejects.toMatchObject({ name: "AbortError" });
+    expect(backend.pasteCalls).toBe(0);
+    expect(clipboardHarness.get()).toMatchObject({
+      text: "previous",
+      html: "<b>previous</b>",
+      rtf: "{\\rtf1 previous}"
+    });
+  });
+
+  it("preserves a same-text user clipboard update during an aborted helper write", async () => {
+    const backend = new FakeBackend();
+    let releaseWrite!: () => void;
+    let markWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    const writeBlocked = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const service = new PasteService(new TextAutomationService(backend), 0, {
+      async writeTextForPaste(text, _signal, ownershipToken): Promise<ClipboardPasteLease> {
+        writeOwnedClipboardText(text, ownershipToken!);
+        markWriteStarted();
+        await writeBlocked;
+        return fakeLease();
+      }
+    });
+    clipboardHarness.set({ text: "previous", html: "<b>previous</b>" }, ["text/plain", "text/html"]);
+    const controller = new AbortController();
+
+    const result = service.insertText("cancelled output", controller.signal);
+    await writeStarted;
+    clipboardHarness.set({ text: "cancelled output" }, ["text/plain"]);
+    controller.abort();
+    releaseWrite();
+
+    await expect(result).rejects.toMatchObject({ name: "AbortError" });
+    expect(backend.pasteCalls).toBe(0);
+    expect(clipboardHarness.get()).toMatchObject({ text: "cancelled output", html: "" });
+  });
+
+  it("does not overwrite a user clipboard update while helper writes are pending", async () => {
+    const backend = new FakeBackend();
+    let releaseWrite!: () => void;
+    let markWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    const writeBlocked = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const service = new PasteService(new TextAutomationService(backend), 0, {
+      async writeTextForPaste(text, _signal, ownershipToken): Promise<ClipboardPasteLease> {
+        writeOwnedClipboardText(text, ownershipToken!);
+        markWriteStarted();
+        await writeBlocked;
+        return fakeLease();
+      }
+    });
+    clipboardHarness.set({ text: "previous" }, ["text/plain"]);
+
+    const result = service.insertText("processed output");
+    await writeStarted;
+    clipboardHarness.set({ text: "new user clipboard" }, ["text/plain"]);
+    releaseWrite();
+
+    await expect(result).resolves.toEqual({
+      pasted: false,
+      message: "Automatic paste was skipped because the clipboard changed during delivery.",
+      clipboardRetained: false
+    });
+    expect(backend.pasteCalls).toBe(0);
+    expect(clipboardHarness.get().text).toBe("new user clipboard");
   });
 
   it("restores the previous clipboard after a confirmed paste even if cancellation arrives during dispatch", async () => {
@@ -286,6 +399,22 @@ describe("PasteService", () => {
     expect(clipboardHarness.get().text).toBe("processed output");
   });
 
+  it("retains output when clipboard format enumeration is unavailable", async () => {
+    const backend = new FakeBackend();
+    const service = new PasteService(new TextAutomationService(backend), 0, fakeLinuxClipboard(), 0);
+    clipboardHarness.set({ text: "previous" }, ["text/plain"]);
+    clipboardHarness.api.availableFormats.mockReturnValueOnce(undefined as never);
+
+    const result = await service.insertText("processed output");
+
+    expect(result).toEqual({
+      pasted: true,
+      message: "Paste shortcut sent; output left on the clipboard because the previous clipboard contained unsupported formats.",
+      clipboardRetained: true
+    });
+    expect(clipboardHarness.get().text).toBe("processed output");
+  });
+
   it("does not overwrite clipboard data copied by the user during paste dispatch", async () => {
     const backend = new FakeBackend();
     backend.pasteStarted = () => clipboardHarness.api.writeText("new user clipboard");
@@ -360,10 +489,13 @@ describe("PasteService", () => {
   });
 });
 
-function fakeLinuxClipboard(): { writeTextForPaste: (text: string) => Promise<ClipboardPasteLease> } {
+function fakeLinuxClipboard(): {
+  writeTextForPaste: (text: string, signal?: AbortSignal, ownershipToken?: string) => Promise<ClipboardPasteLease>;
+} {
   return {
-    async writeTextForPaste(text: string): Promise<ClipboardPasteLease> {
-      clipboardHarness.api.writeText(text);
+    async writeTextForPaste(text: string, _signal?: AbortSignal, ownershipToken?: string): Promise<ClipboardPasteLease> {
+      if (ownershipToken) writeOwnedClipboardText(text, ownershipToken);
+      else clipboardHarness.api.writeText(text);
       return fakeLease();
     }
   };

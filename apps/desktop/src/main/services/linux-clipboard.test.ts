@@ -66,7 +66,7 @@ describe("LinuxClipboardService", () => {
     clipboardHarness.writeText.mockClear();
   });
 
-  it("mirrors paste text to Wayland and X11 clipboards", async () => {
+  it("mirrors paste text to Wayland and X11 PRIMARY selections", async () => {
     const calls: ExecCall[] = [];
     const service = createService({
       calls,
@@ -79,12 +79,16 @@ describe("LinuxClipboardService", () => {
     expect(clipboardHarness.writeText).toHaveBeenCalledWith("processed output");
     expect(calls).toEqual(
       expect.arrayContaining([
-        { command: "wl-copy", args: [], input: "processed output" },
         { command: "wl-copy", args: ["--primary"], input: "processed output" },
-        { command: "xclip", args: ["-selection", "clipboard"], input: "processed output" },
         { command: "xclip", args: ["-selection", "primary"], input: "processed output" }
       ])
     );
+    expect(calls).not.toContainEqual({ command: "wl-copy", args: [], input: "processed output" });
+    expect(calls).not.toContainEqual({
+      command: "xclip",
+      args: ["-selection", "clipboard"],
+      input: "processed output"
+    });
   });
 
   it("leaves standard clipboard restoration to the full snapshot after a successful paste", async () => {
@@ -161,7 +165,7 @@ describe("LinuxClipboardService", () => {
     const controller = new AbortController();
 
     const write = service.writeTextForPaste("cancelled output", controller.signal);
-    await vi.waitFor(() => expect(calls).toHaveLength(4));
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
     controller.abort();
 
     expect(clipboardHarness.readText()).toBe("previous clipboard");
@@ -203,7 +207,7 @@ describe("LinuxClipboardService", () => {
 
     const write = service.writeTextForPaste("cancelled output", controller.signal);
     await vi.waitFor(() =>
-      expect(calls.filter((call) => call.command === "wl-copy" && call.input === "cancelled output")).toHaveLength(2)
+      expect(calls.filter((call) => call.command === "wl-copy" && call.input === "cancelled output")).toHaveLength(1)
     );
     controller.abort();
     releaseWrites();
@@ -223,12 +227,8 @@ describe("LinuxClipboardService", () => {
 
     await service.writeTextForPaste("processed output");
 
-    expect(calls).toEqual(
-      expect.arrayContaining([
-        { command: "xsel", args: ["--clipboard", "--input"], input: "processed output" },
-        { command: "xsel", args: ["--primary", "--input"], input: "processed output" }
-      ])
-    );
+    expect(calls).toContainEqual({ command: "xsel", args: ["--primary", "--input"], input: "processed output" });
+    expect(calls).not.toContainEqual({ command: "xsel", args: ["--clipboard", "--input"], input: "processed output" });
   });
 
 });
