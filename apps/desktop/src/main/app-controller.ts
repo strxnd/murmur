@@ -62,7 +62,7 @@ import { CodexOAuthService } from "./services/codex-oauth";
 import { ContextService } from "./services/context";
 import { LlmService } from "./services/llm";
 import { ModelLibraryService } from "./services/model-library";
-import { PasteService } from "./services/paste";
+import { PasteService, type PasteResult } from "./services/paste";
 import { StorageService } from "./services/storage";
 import { createSafeStorageProviderSecretCodec } from "./services/provider-secrets";
 import { isTrustedRendererUrl, resolveRendererSource, type RendererSource } from "./services/renderer-security";
@@ -1378,9 +1378,9 @@ export class AppController {
       const rawWordCount = countWords(transcription.text);
       const processedWordCount = countWords(processedText);
       const shouldPasteOutput = plan.source !== "onboarding";
-      const pasteResult = shouldPasteOutput
+      const pasteResult: PasteResult = shouldPasteOutput
         ? await this.pasteProcessedText(operation, processedText, context)
-        : { pasted: true, message: "" };
+        : { pasted: true, message: "", clipboardRetained: false };
       this.dictationOwner.assertCurrent(operation);
 
       const item: DictationHistoryItem = {
@@ -1428,7 +1428,7 @@ export class AppController {
         ...this.session,
         status: "complete",
         transcriptPreview: processedText,
-        error: [pasteResult.pasted ? undefined : pasteResult.message, llmFailureMessage, historyFailureMessage]
+        error: [pasteResult.pasted && !pasteResult.clipboardRetained ? undefined : pasteResult.message, llmFailureMessage, historyFailureMessage]
           .filter((message): message is string => Boolean(message))
           .join(" ") || undefined
       };
@@ -1455,7 +1455,7 @@ export class AppController {
     operation: DictationSessionOperation,
     text: string,
     originalTarget: ContextSnapshot
-  ): Promise<{ pasted: boolean; message: string }> {
+  ): Promise<PasteResult> {
     this.dictationOwner.assertCurrent(operation);
     this.session = { ...this.session, status: "pasting" };
     this.broadcastState();
@@ -1481,7 +1481,7 @@ export class AppController {
 
     const pasteResult = await this.paste.insertText(text, operation.controller.signal);
     this.dictationOwner.assertCurrent(operation);
-    if (!pasteResult.pasted) {
+    if (!pasteResult.pasted || pasteResult.clipboardRetained) {
       this.notifyPasteFallback(pasteResult.message);
     }
     return pasteResult;

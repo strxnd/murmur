@@ -369,6 +369,21 @@ describe("AppController dictation ownership", () => {
     expect(harness.controller.session.error).toContain("original app or window is no longer active");
   });
 
+  it("surfaces a nonfatal warning when output must remain on the clipboard", async () => {
+    const harness = createControllerHarness({ aiEnabled: false });
+    const sessionId = await startAndStop(harness.controller);
+    harness.paste.insertText.mockResolvedValueOnce({
+      pasted: true,
+      message: "Paste shortcut sent; output left on the clipboard because the previous clipboard contained unsupported formats.",
+      clipboardRetained: true
+    });
+
+    await harness.controller.completeRecording({ sessionId, audio: new ArrayBuffer(1), mimeType: "audio/wav" });
+
+    expect(harness.controller.session.status).toBe("complete");
+    expect(harness.controller.session.error).toContain("output left on the clipboard");
+  });
+
   it("keeps successful delivery complete when history persistence fails", async () => {
     const harness = createControllerHarness({ aiEnabled: false });
     const sessionId = await startAndStop(harness.controller);
