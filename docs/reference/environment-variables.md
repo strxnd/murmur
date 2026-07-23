@@ -15,7 +15,7 @@ This page lists environment variables used by current code paths.
 | `MURMUR_RUNTIME_PLATFORM` | `scripts/stage-bundled-runtimes.mjs` | Runtime platform key or `linux`/`darwin` platform used when `--platform` is not passed. Defaults to `current`. |
 | `MURMUR_RUNTIME_ARCH` | `scripts/stage-bundled-runtimes.mjs` | Runtime architecture used with `MURMUR_RUNTIME_PLATFORM=linux` or `darwin` when `--arch` is not passed. Accepts `x64`, `arm64`, `amd64`, or `aarch64`. |
 | `MURMUR_RUNTIME_VENDOR_ROOT` | `scripts/stage-bundled-runtimes.mjs` | Override the prepared runtime input root. Defaults to `vendor/runtimes`. |
-| `MURMUR_RUNTIME_STAGING_ROOT` | `scripts/stage-bundled-runtimes.mjs` | Override the packaged runtime staging root. Defaults to `.cache/bundled-runtimes/runtimes`. |
+| `MURMUR_RUNTIME_STAGING_ROOT` | `scripts/stage-bundled-runtimes.mjs` | Override the packaged runtime staging root. Defaults to `.cache/bundled-runtimes/runtimes`. Overrides must be a canonical `runtimes` leaf under a parent containing a valid `.murmur-runtime-staging-parent` marker; non-empty staging leaves must also contain the script-managed `.murmur-runtime-staging` marker. |
 | `MURMUR_RUNTIME_READY_TIMEOUT_MS` | `TranscriptionService` | Timeout for `whisper-server` readiness. Defaults to `45000`. |
 | `MURMUR_PROVIDER_RESPONSE_TIMEOUT_MS` | `TranscriptionService`, `LlmService` | Total response timeout for STT and LLM HTTP provider calls. |
 | `MURMUR_PROVIDER_RESPONSE_IDLE_TIMEOUT_MS` | `TranscriptionService`, `LlmService` | Idle response timeout for STT and LLM HTTP provider calls. |
