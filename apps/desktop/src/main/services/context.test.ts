@@ -103,38 +103,40 @@ class FakeBackend implements TextAutomationBackend {
 }
 
 describe("ContextService", () => {
-  it("restores the clipboard after selected text capture", async () => {
-    const image = clipboardHarness.image();
+  it("fails closed once copied selected text replaces the owned marker", async () => {
     const backend = new FakeBackend();
     backend.onCopy = () => clipboardHarness.api.writeText("selected text");
     const context = new ContextService(new TextAutomationService(backend), 50, 1, fakePrimarySelection());
-    clipboardHarness.set({ text: "previous", html: "<b>previous</b>", rtf: "{\\rtf1 previous}", image });
+    clipboardHarness.set({ text: "previous", html: "<b>previous</b>", rtf: "{\\rtf1 previous}" });
 
     const snapshot = await context.capture({ selectedText: true });
 
     expect(snapshot.selectedText).toBe("selected text");
     expect(backend.copyCalls).toBe(1);
-    expect(clipboardHarness.get()).toEqual({ text: "previous", html: "<b>previous</b>", rtf: "{\\rtf1 previous}", image });
+    expect(clipboardHarness.get()).toMatchObject({ text: "selected text", html: "", rtf: "" });
   });
 
-  it("does not restore an old snapshot over clipboard data copied after capture", async () => {
+  it("does not restore an old snapshot over an external write while copy automation is stalled", async () => {
     const backend = new FakeBackend();
-    backend.onCopy = () => clipboardHarness.api.writeText("selected text");
+    let releaseCopy!: () => void;
+    let markCopyStarted!: () => void;
+    backend.copyBlocked = new Promise<void>((resolve) => {
+      releaseCopy = resolve;
+    });
+    const copyStarted = new Promise<void>((resolve) => {
+      markCopyStarted = resolve;
+    });
+    backend.copyStarted = markCopyStarted;
     const context = new ContextService(new TextAutomationService(backend), 50, 1, fakePrimarySelection());
     clipboardHarness.set({ text: "previous" });
-    clipboardHarness.api.readHTML.mockClear();
-    clipboardHarness.api.readHTML
-      .mockImplementationOnce(() => clipboardHarness.get().html)
-      .mockImplementationOnce(() => clipboardHarness.get().html)
-      .mockImplementationOnce(() => {
-        const html = clipboardHarness.get().html;
-        clipboardHarness.set({ text: "new user clipboard" });
-        return html;
-      });
 
-    const snapshot = await context.capture({ selectedText: true });
+    const capture = context.capture({ selectedText: true });
+    await copyStarted;
+    clipboardHarness.api.writeText("new user clipboard");
+    releaseCopy();
+    const snapshot = await capture;
 
-    expect(snapshot.selectedText).toBe("selected text");
+    expect(snapshot.selectedText).toBe("new user clipboard");
     expect(clipboardHarness.get().text).toBe("new user clipboard");
   });
 
@@ -358,7 +360,7 @@ describe("ContextService", () => {
     expect(snapshot.selectedText).toBe("copied selected text");
     expect(backend.selectedTextCalls).toBe(1);
     expect(backend.copyCalls).toBe(1);
-    expect(clipboardHarness.get().text).toBe("previous");
+    expect(clipboardHarness.get().text).toBe("copied selected text");
   });
 
   it("disposes clipboard tracking and ignores duplicate starts", () => {

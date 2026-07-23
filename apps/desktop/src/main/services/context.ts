@@ -4,10 +4,8 @@ import { clipboard } from "../electron-api";
 import {
   captureClipboardSnapshot,
   clipboardHasOwnershipToken,
-  clipboardMatchesSnapshot,
   restoreClipboardSnapshot,
-  writeOwnedClipboardText,
-  type ClipboardSnapshot
+  writeOwnedClipboardText
 } from "./clipboard-snapshot";
 import { DesktopMetadataService } from "./context-metadata";
 import { LinuxClipboardService } from "./linux-clipboard";
@@ -162,7 +160,6 @@ export class ContextService {
       const ownershipToken = randomUUID();
       const sentinel = `murmur-selection-${ownershipToken}`;
       const originalPrimary = await this.linuxClipboard.readPrimaryText().catch(() => undefined);
-      let ownedClipboard: ClipboardSnapshot | undefined;
       this.clipboardTransactionDepth += 1;
       try {
         throwIfAborted(signal);
@@ -175,10 +172,7 @@ export class ContextService {
         }
 
         const copied = await this.pollClipboardChange(sentinel, signal);
-        if (copied && copied !== sentinel) {
-          ownedClipboard = captureClipboardSnapshot();
-          return copied;
-        }
+        if (copied && copied !== sentinel) return copied;
         const primary = await this.linuxClipboard.readPrimaryText().catch(() => undefined);
         throwIfAborted(signal);
         if (primary && primary !== sentinel && primary !== originalPrimary) {
@@ -191,10 +185,7 @@ export class ContextService {
         return undefined;
       } finally {
         try {
-          const transactionStillOwnsClipboard =
-            clipboardHasOwnershipToken(ownershipToken) ||
-            (ownedClipboard !== undefined && clipboardMatchesSnapshot(ownedClipboard));
-          if (transactionStillOwnsClipboard) {
+          if (clipboardHasOwnershipToken(ownershipToken)) {
             restoreClipboardSnapshot(original);
             this.lastClipboardText = original.text;
           } else {
