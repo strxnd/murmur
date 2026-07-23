@@ -66,6 +66,30 @@ describe("LinuxClipboardService", () => {
     );
   });
 
+  it("restores owned clipboard selections after a successful paste", async () => {
+    clipboardHarness.writeText("previous clipboard");
+    clipboardHarness.writeText("previous primary", "selection");
+    const calls: ExecCall[] = [];
+    const service = createService({
+      calls,
+      env: { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-1" },
+      tools: ["wl-copy", "xclip"]
+    });
+
+    const lease = await service.writeTextForPaste("processed output");
+    await lease.restoreIfOwned();
+
+    expect(clipboardHarness.readText("selection")).toBe("previous primary");
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        { command: "wl-copy", args: [], input: "previous clipboard" },
+        { command: "wl-copy", args: ["--primary"], input: "previous primary" },
+        { command: "xclip", args: ["-selection", "clipboard"], input: "previous clipboard" },
+        { command: "xclip", args: ["-selection", "primary"], input: "previous primary" }
+      ])
+    );
+  });
+
   it("restores clipboard selections when cancellation interrupts helper writes", async () => {
     clipboardHarness.writeText("previous clipboard");
     clipboardHarness.writeText("previous primary", "selection");

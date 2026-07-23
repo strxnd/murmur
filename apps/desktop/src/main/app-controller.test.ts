@@ -21,6 +21,7 @@ import {
   AppController,
   computeDurationMs,
   countWords,
+  isSameOutputTarget,
   rendererQueryFromSuffix,
   selectLlmProviderAfterInitialRefresh,
   shouldPersistDictationHistory,
@@ -110,6 +111,7 @@ interface TestController {
   cancelRecording(): Promise<AppStateSnapshot>;
   clearLocalData(): Promise<AppStateSnapshot>;
   completeRecording(payload: { sessionId: string; audio: ArrayBuffer; mimeType: string }): Promise<AppStateSnapshot>;
+  ensureAutomationReadyForUserAction: ReturnType<typeof vi.fn>;
   dispose(): void;
 }
 
@@ -123,10 +125,11 @@ interface ControllerHarness {
   };
   stt: { transcribe: ReturnType<typeof vi.fn> };
   llm: { process: ReturnType<typeof vi.fn> };
-  paste: { insertText: ReturnType<typeof vi.fn> };
+  paste: { copyText: ReturnType<typeof vi.fn>; insertText: ReturnType<typeof vi.fn> };
   codex: { logout: ReturnType<typeof vi.fn> };
   mainWindowSend: ReturnType<typeof vi.fn>;
   setCodexStatus(status: CodexProviderRuntime): void;
+  setCurrentContext(context: typeof capturedContext): void;
 }
 
 function createPersistedState(options: { aiEnabled?: boolean; llmProviders?: LlmProviderConfig[] } = {}) {
@@ -162,6 +165,7 @@ function createControllerHarness(options: {
   const state = createPersistedState(options);
   let codexStatus: CodexProviderRuntime =
     options.codexStatus ?? { status: "connected", message: "Connected", modelAvailable: true };
+  let currentContext = capturedContext;
   const mainWindowSend = vi.fn();
   const storage = {
     backend: "json" as const,
@@ -181,6 +185,7 @@ function createControllerHarness(options: {
     process: vi.fn(async () => ({ text: "processed transcript", providerId: "codex", model: "test-llm" }))
   };
   const paste = {
+    copyText: vi.fn(async () => ({ pasted: false, message: "Automatic paste was skipped; output left on the clipboard." })),
     insertText: vi.fn(async () => ({ pasted: true, message: "" })),
     getDiagnostics: vi.fn(() => [])
   };
@@ -199,7 +204,7 @@ function createControllerHarness(options: {
     closeToTrayNotification: null,
     storage,
     textAutomation: { dispose: vi.fn(), getCapability: vi.fn() },
-    context: { capture: vi.fn(async () => capturedContext), dispose: vi.fn() },
+    context: { capture: vi.fn(async () => currentContext), dispose: vi.fn() },
     paste,
     automationPermissions: {},
     runtimeService: {},
@@ -239,7 +244,8 @@ function createControllerHarness(options: {
     registerHotkeys: vi.fn(async () => undefined),
     unregisterModeSelectorNavigationShortcuts: vi.fn(),
     getSnapshot: vi.fn(() => ({ ...state, session: controller.session }) as unknown as AppStateSnapshot),
-    notifyPasteFallback: vi.fn()
+    notifyPasteFallback: vi.fn(),
+    notifyHistoryPersistenceFailure: vi.fn()
   });
 
   return {
@@ -253,6 +259,9 @@ function createControllerHarness(options: {
     mainWindowSend,
     setCodexStatus(status) {
       codexStatus = status;
+    },
+    setCurrentContext(context) {
+      currentContext = context;
     }
   };
 }
@@ -300,6 +309,18 @@ describe("app-controller utility contracts", () => {
     expect(shouldPersistDictationHistory("onboarding")).toBe(false);
   });
 
+  it("requires a verifiable matching application and window for output delivery", () => {
+    expect(isSameOutputTarget(capturedContext, { ...capturedContext })).toBe(true);
+    expect(isSameOutputTarget(capturedContext, { ...capturedContext, appId: "dev.other.app" })).toBe(false);
+    expect(isSameOutputTarget(capturedContext, { ...capturedContext, windowTitle: "Other Window" })).toBe(false);
+    expect(
+      isSameOutputTarget(
+        { ...capturedContext, appId: undefined, appName: undefined },
+        { ...capturedContext, appId: undefined, appName: undefined }
+      )
+    ).toBe(false);
+  });
+
   it("waits for the initial Codex refresh before selecting an LLM for completed recordings", async () => {
     let finishRefresh!: () => void;
     const initialRefresh = new Promise<void>((resolve) => {
@@ -317,6 +338,52 @@ describe("app-controller utility contracts", () => {
 });
 
 describe("AppController dictation ownership", () => {
+  it("starts recording without Accessibility and defers to clipboard-only delivery", async () => {
+    const harness = createControllerHarness({ aiEnabled: false });
+    harness.controller.ensureAutomationReadyForUserAction.mockReturnValue({
+      ready: false,
+      message: "Accessibility permission is unavailable."
+    });
+
+    const sessionId = await startAndStop(harness.controller);
+    await harness.controller.completeRecording({ sessionId, audio: new ArrayBuffer(1), mimeType: "audio/wav" });
+
+    expect(harness.controller.ensureAutomationReadyForUserAction).toHaveBeenCalledOnce();
+    expect(harness.paste.copyText).toHaveBeenCalledWith("raw transcript", expect.any(AbortSignal));
+    expect(harness.paste.insertText).not.toHaveBeenCalled();
+    expect(harness.controller.session.status).toBe("complete");
+  });
+
+  it("copies output without automation when focus no longer matches the recording target", async () => {
+    const harness = createControllerHarness({ aiEnabled: false });
+    const sessionId = await startAndStop(harness.controller);
+    harness.setCurrentContext({ ...capturedContext, appId: "dev.other.app", appName: "Other App", windowTitle: "Other Window" });
+
+    await harness.controller.completeRecording({ sessionId, audio: new ArrayBuffer(1), mimeType: "audio/wav" });
+
+    expect(harness.controller.ensureAutomationReadyForUserAction).not.toHaveBeenCalled();
+    expect(harness.paste.copyText).toHaveBeenCalledWith("raw transcript", expect.any(AbortSignal));
+    expect(harness.paste.insertText).not.toHaveBeenCalled();
+    expect(harness.storage.addHistory).toHaveBeenCalledOnce();
+    expect(harness.controller.session.status).toBe("complete");
+    expect(harness.controller.session.error).toContain("original app or window is no longer active");
+  });
+
+  it("keeps successful delivery complete when history persistence fails", async () => {
+    const harness = createControllerHarness({ aiEnabled: false });
+    const sessionId = await startAndStop(harness.controller);
+    harness.storage.addHistory.mockImplementationOnce(() => {
+      throw new Error("history disk unavailable");
+    });
+
+    await harness.controller.completeRecording({ sessionId, audio: new ArrayBuffer(1), mimeType: "audio/wav" });
+
+    expect(harness.paste.insertText).toHaveBeenCalledOnce();
+    expect(harness.paste.copyText).not.toHaveBeenCalled();
+    expect(harness.controller.session.status).toBe("complete");
+    expect(harness.controller.session.error).toContain("History was not saved: history disk unavailable");
+  });
+
   it("does not freeze an enabled but unavailable Codex provider into a recording plan", async () => {
     const refresh = deferred<void>();
     const harness = createControllerHarness({

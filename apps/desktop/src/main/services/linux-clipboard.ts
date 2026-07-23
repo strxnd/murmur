@@ -24,54 +24,63 @@ export class LinuxClipboardService {
     this.platform = dependencies.platform ?? process.platform;
   }
 
-  async writeTextForPaste(text: string, signal?: AbortSignal): Promise<void> {
+  async writeTextForPaste(text: string, signal?: AbortSignal): Promise<{ restoreIfOwned(): Promise<void> }> {
     if (signal?.aborted) throw abortError();
     const previousText = clipboard.readText();
     const previousPrimary =
       this.platform === "linux" ? (await this.readPrimaryText()) ?? "" : this.readElectronPrimarySelection() ?? "";
     if (signal?.aborted) throw abortError();
-    let restoreStandard = false;
-    let restorePrimary = false;
-    const restoreElectronClipboard = (): void => {
-      if (clipboard.readText() === text) {
-        restoreStandard = true;
-        clipboard.writeText(previousText);
-      }
-      if (this.readElectronPrimarySelection() === text) {
-        restorePrimary = true;
-        this.writeElectronPrimarySelection(previousPrimary);
-      }
-    };
-    const onAbort = (): void => restoreElectronClipboard();
-    signal?.addEventListener("abort", onAbort, { once: true });
 
-    try {
-      clipboard.writeText(text);
-      if (this.platform !== "linux") {
-        if (signal?.aborted) throw abortError();
-        return;
-      }
-
-      this.writeElectronPrimarySelection(text);
-      await Promise.all([
-        this.writeWlClipboard(text).catch(() => undefined),
-        this.writeWlPrimarySelection(text).catch(() => undefined),
-        this.writeXClipboard(text).catch(() => undefined),
-        this.writeXPrimarySelection(text).catch(() => undefined)
-      ]);
-      if (!signal?.aborted) return;
-
-      restoreElectronClipboard();
-      if (!restorePrimary && (await this.readExternalPrimaryText().catch(() => undefined)) === text) {
-        restorePrimary = true;
-      }
+    const restoreExternalSelections = async (restoreStandard: boolean, restorePrimary: boolean): Promise<void> => {
       await Promise.all([
         restoreStandard ? this.writeWlClipboard(previousText).catch(() => undefined) : Promise.resolve(),
         restorePrimary ? this.writeWlPrimarySelection(previousPrimary).catch(() => undefined) : Promise.resolve(),
         restoreStandard ? this.writeXClipboard(previousText).catch(() => undefined) : Promise.resolve(),
         restorePrimary ? this.writeXPrimarySelection(previousPrimary).catch(() => undefined) : Promise.resolve()
       ]);
-      throw abortError();
+    };
+    const restoreAfterAbort = async (): Promise<void> => {
+      const restoreStandard = clipboard.readText() === text;
+      let restorePrimary = this.readElectronPrimarySelection() === text;
+      if (restoreStandard) clipboard.writeText(previousText);
+      if (restorePrimary) this.writeElectronPrimarySelection(previousPrimary);
+      if (this.platform === "linux" && !restorePrimary && (await this.readExternalPrimaryText().catch(() => undefined)) === text) {
+        restorePrimary = true;
+      }
+      await restoreExternalSelections(restoreStandard, restorePrimary);
+    };
+    const onAbort = (): void => {
+      void restoreAfterAbort();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    try {
+      clipboard.writeText(text);
+      if (this.platform === "linux") {
+        this.writeElectronPrimarySelection(text);
+        await Promise.all([
+          this.writeWlClipboard(text).catch(() => undefined),
+          this.writeWlPrimarySelection(text).catch(() => undefined),
+          this.writeXClipboard(text).catch(() => undefined),
+          this.writeXPrimarySelection(text).catch(() => undefined)
+        ]);
+      }
+      if (signal?.aborted) {
+        await restoreAfterAbort();
+        throw abortError();
+      }
+
+      return {
+        restoreIfOwned: async () => {
+          const restoreStandard = clipboard.readText() === text;
+          let restorePrimary = this.readElectronPrimarySelection() === text;
+          if (this.platform === "linux" && !restorePrimary && (await this.readExternalPrimaryText().catch(() => undefined)) === text) {
+            restorePrimary = true;
+          }
+          if (restorePrimary) this.writeElectronPrimarySelection(previousPrimary);
+          await restoreExternalSelections(restoreStandard, restorePrimary);
+        }
+      };
     } finally {
       signal?.removeEventListener("abort", onAbort);
     }

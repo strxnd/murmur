@@ -3,8 +3,12 @@ import { captureClipboardSnapshot, restoreClipboardSnapshot } from "./clipboard-
 import { LinuxClipboardService } from "./linux-clipboard";
 import { TextAutomationService } from "./text-automation";
 
+export interface ClipboardPasteLease {
+  restoreIfOwned(): Promise<void>;
+}
+
 export interface ClipboardPasteWriter {
-  writeTextForPaste(text: string, signal?: AbortSignal): Promise<void>;
+  writeTextForPaste(text: string, signal?: AbortSignal): Promise<ClipboardPasteLease>;
 }
 
 export class PasteService {
@@ -30,19 +34,32 @@ export class PasteService {
     return this.textAutomation.getCapability().permissionRequired;
   }
 
+  async copyText(text: string, signal?: AbortSignal): Promise<{ pasted: false; message: string }> {
+    await this.textAutomation.runExclusive(async () => {
+      throwIfAborted(signal);
+      await this.linuxClipboard.writeTextForPaste(text, signal);
+      throwIfAborted(signal);
+    }, signal);
+    return { pasted: false, message: "Automatic paste was skipped; output left on the clipboard." };
+  }
+
   async insertText(text: string, signal?: AbortSignal): Promise<{ pasted: boolean; message: string }> {
     return this.textAutomation.runExclusive(async () => {
       throwIfAborted(signal);
       const previousClipboard = captureClipboardSnapshot();
       let pasteDispatchStarted = false;
-      const restoreIfOwned = (): void => {
-        if (!pasteDispatchStarted && clipboard.readText() === text) restoreClipboardSnapshot(previousClipboard);
+      let clipboardLease: ClipboardPasteLease | null = null;
+      const restoreIfOwned = async (): Promise<void> => {
+        await clipboardLease?.restoreIfOwned();
+        if (clipboard.readText() === text) restoreClipboardSnapshot(previousClipboard);
       };
-      const onAbort = (): void => restoreIfOwned();
+      const onAbort = (): void => {
+        if (!pasteDispatchStarted) void restoreIfOwned();
+      };
       signal?.addEventListener("abort", onAbort, { once: true });
 
       try {
-        await this.linuxClipboard.writeTextForPaste(text, signal);
+        clipboardLease = await this.linuxClipboard.writeTextForPaste(text, signal);
         throwIfAborted(signal);
 
         await abortableDelay(this.clipboardSettleDelayMs, signal);
@@ -55,9 +72,11 @@ export class PasteService {
           return { pasted: false, message: result.message };
         }
 
-        return { pasted: true, message: "Paste shortcut sent; output left on clipboard." };
+        await delay(this.clipboardSettleDelayMs);
+        await restoreIfOwned();
+        return { pasted: true, message: "Paste shortcut sent; previous clipboard restored when still owned by Murmur." };
       } catch (error) {
-        if (signal?.aborted) restoreIfOwned();
+        if (signal?.aborted && !pasteDispatchStarted) await restoreIfOwned();
         throw error;
       } finally {
         signal?.removeEventListener("abort", onAbort);
@@ -82,6 +101,10 @@ function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
     };
     signal?.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function throwIfAborted(signal?: AbortSignal): void {

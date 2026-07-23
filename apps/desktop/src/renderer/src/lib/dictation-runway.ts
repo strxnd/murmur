@@ -11,9 +11,9 @@ export function dictationRunwayAction({
   unavailableReason: string | null;
   isActing: boolean;
 }): DictationRunwayAction {
-  if (unavailableReason) return "setup";
+  if (status === "recording") return isActing ? "disabled" : "stop";
   if (isActing || ["transcribing", "processing", "pasting"].includes(status)) return "disabled";
-  return status === "recording" ? "stop" : "start";
+  return unavailableReason ? "setup" : "start";
 }
 
 export async function performDictationRunwayAction(

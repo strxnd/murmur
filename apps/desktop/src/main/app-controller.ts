@@ -1131,18 +1131,6 @@ export class AppController {
     const startGeneration = ++this.dictationStartGeneration;
     const persisted = this.storage.getState();
     const source: RecordingSource = this.onboardingDictationScopeActive ? "onboarding" : "dictation";
-    const automation = source === "dictation" ? this.ensureAutomationReadyForUserAction("dictation") : { ready: true as const };
-    if (!automation.ready) {
-      this.session = {
-        ...defaultSession,
-        id: createId("blocked"),
-        status: "error",
-        modeId: persisted.settings.activeModeId,
-        error: automation.message
-      };
-      this.broadcastState();
-      return this.getSnapshot();
-    }
 
     const sttUsability = getSttUsability(persisted, this.runtimeService, this.paths);
     if (!sttUsability.usable) {
@@ -1391,7 +1379,7 @@ export class AppController {
       const processedWordCount = countWords(processedText);
       const shouldPasteOutput = plan.source !== "onboarding";
       const pasteResult = shouldPasteOutput
-        ? await this.pasteProcessedText(operation, processedText)
+        ? await this.pasteProcessedText(operation, processedText, context)
         : { pasted: true, message: "" };
       this.dictationOwner.assertCurrent(operation);
 
@@ -1422,8 +1410,15 @@ export class AppController {
         rawWordCount,
         processedWordCount
       };
+      let historyFailureMessage: string | undefined;
       if (shouldPersistDictationHistory(plan.source)) {
-        this.storage.addHistory(item);
+        try {
+          this.storage.addHistory(item);
+        } catch (error) {
+          historyFailureMessage = `History was not saved: ${errorMessage(error)}`;
+          console.warn(historyFailureMessage);
+          this.notifyHistoryPersistenceFailure(historyFailureMessage);
+        }
       }
       this.dictationOwner.assertCurrent(operation);
 
@@ -1433,7 +1428,9 @@ export class AppController {
         ...this.session,
         status: "complete",
         transcriptPreview: processedText,
-        error: pasteResult.pasted ? llmFailureMessage : pasteResult.message
+        error: [pasteResult.pasted ? undefined : pasteResult.message, llmFailureMessage, historyFailureMessage]
+          .filter((message): message is string => Boolean(message))
+          .join(" ") || undefined
       };
       this.pushToTalkPressed = false;
       this.pushToTalkSessionId = null;
@@ -1456,12 +1453,32 @@ export class AppController {
 
   private async pasteProcessedText(
     operation: DictationSessionOperation,
-    text: string
+    text: string,
+    originalTarget: ContextSnapshot
   ): Promise<{ pasted: boolean; message: string }> {
     this.dictationOwner.assertCurrent(operation);
     this.session = { ...this.session, status: "pasting" };
     this.broadcastState();
     this.hidePill();
+
+    const currentTarget = await this.context.capture({ selectedText: false, signal: operation.controller.signal });
+    this.dictationOwner.assertCurrent(operation);
+    if (!isSameOutputTarget(originalTarget, currentTarget)) {
+      const result = await this.paste.copyText(text, operation.controller.signal);
+      this.dictationOwner.assertCurrent(operation);
+      const message = "The original app or window is no longer active; output was copied without automatic paste.";
+      this.notifyPasteFallback(message);
+      return { ...result, message };
+    }
+
+    const automation = this.ensureAutomationReadyForUserAction("automatic paste");
+    if (!automation.ready) {
+      const result = await this.paste.copyText(text, operation.controller.signal);
+      this.dictationOwner.assertCurrent(operation);
+      this.notifyPasteFallback(automation.message);
+      return { ...result, message: automation.message };
+    }
+
     const pasteResult = await this.paste.insertText(text, operation.controller.signal);
     this.dictationOwner.assertCurrent(operation);
     if (!pasteResult.pasted) {
@@ -1782,6 +1799,15 @@ export class AppController {
     }).show();
   }
 
+  private notifyHistoryPersistenceFailure(message: string): void {
+    if (!Notification.isSupported()) return;
+    new Notification({
+      title: "Murmur history not saved",
+      body: message,
+      silent: true
+    }).show();
+  }
+
   private configurePillWindow(): void {
     if (!this.pillWindow) return;
     this.pillWindow.setFocusable(false);
@@ -1970,6 +1996,30 @@ export function computeDurationMs(startedAt: string | undefined, stoppedAt: stri
 
 export function shouldPersistDictationHistory(source: RecordingSource): boolean {
   return source !== "onboarding";
+}
+
+export function isSameOutputTarget(original: ContextSnapshot, current: ContextSnapshot): boolean {
+  const originalAppId = normalizeTargetField(original.appId);
+  const currentAppId = normalizeTargetField(current.appId);
+  const originalAppName = normalizeTargetField(original.appName);
+  const currentAppName = normalizeTargetField(current.appName);
+  const originalWindowTitle = normalizeTargetField(original.windowTitle);
+  const currentWindowTitle = normalizeTargetField(current.windowTitle);
+
+  if (originalAppId) {
+    if (currentAppId !== originalAppId) return false;
+  } else if (originalAppName) {
+    if (currentAppName !== originalAppName) return false;
+  } else {
+    return false;
+  }
+
+  return !originalWindowTitle || currentWindowTitle === originalWindowTitle;
+}
+
+function normalizeTargetField(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized || undefined;
 }
 
 function parseIpcPayload<T>(schema: z.ZodType<T>, payload: unknown, channel: string): T {

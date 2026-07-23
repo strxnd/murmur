@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type { AutomationResult, TextAutomationBackend, TextAutomationCapability } from "./text-automation";
 import { TextAutomationService } from "./text-automation";
-import { PasteService } from "./paste";
+import { PasteService, type ClipboardPasteLease } from "./paste";
 
 const clipboardHarness = vi.hoisted(() => {
   const emptyImage = { isEmpty: () => true };
@@ -76,17 +76,25 @@ class FakeBackend implements TextAutomationBackend {
   }
 }
 
+const successMessage = "Paste shortcut sent; previous clipboard restored when still owned by Murmur.";
+
 describe("PasteService", () => {
-  it("treats legacy clipboard-only settings as automatic paste", async () => {
+  it("restores the complete previous clipboard after successful automation", async () => {
+    const image = clipboardHarness.image();
     const backend = new FakeBackend();
     const service = new PasteService(new TextAutomationService(backend), 0, fakeLinuxClipboard());
-    clipboardHarness.set({ text: "previous", html: "<b>previous</b>", rtf: "{\\rtf1 previous}" });
+    clipboardHarness.set({ text: "previous", html: "<b>previous</b>", rtf: "{\\rtf1 previous}", image });
 
     const result = await service.insertText("processed output");
 
-    expect(result).toEqual({ pasted: true, message: "Paste shortcut sent; output left on clipboard." });
+    expect(result).toEqual({ pasted: true, message: successMessage });
     expect(backend.pasteCalls).toBe(1);
-    expect(clipboardHarness.get().text).toBe("processed output");
+    expect(clipboardHarness.get()).toEqual({
+      text: "previous",
+      html: "<b>previous</b>",
+      rtf: "{\\rtf1 previous}",
+      image
+    });
   });
 
   it("does not dispatch paste after the owning dictation is cancelled", async () => {
@@ -101,10 +109,11 @@ describe("PasteService", () => {
       releaseWrite = resolve;
     });
     const service = new PasteService(new TextAutomationService(backend), 0, {
-      async writeTextForPaste(text: string): Promise<void> {
+      async writeTextForPaste(text: string): Promise<ClipboardPasteLease> {
         markWriteStarted();
         await writeBlocked;
         clipboardHarness.api.writeText(text);
+        return fakeLease();
       }
     });
     const controller = new AbortController();
@@ -123,7 +132,7 @@ describe("PasteService", () => {
     });
   });
 
-  it("keeps dictation text on the clipboard when cancellation arrives during paste dispatch", async () => {
+  it("restores the previous clipboard after a confirmed paste even if cancellation arrives during dispatch", async () => {
     const backend = new FakeBackend();
     let releasePaste!: () => void;
     let markPasteStarted!: () => void;
@@ -141,24 +150,26 @@ describe("PasteService", () => {
     const result = service.insertText("processed output", controller.signal);
     await pasteStarted;
     controller.abort();
-
-    expect(clipboardHarness.get().text).toBe("processed output");
     releasePaste();
-    await expect(result).resolves.toEqual({ pasted: true, message: "Paste shortcut sent; output left on clipboard." });
-    expect(clipboardHarness.get().text).toBe("processed output");
+
+    await expect(result).resolves.toEqual({ pasted: true, message: successMessage });
+    expect(clipboardHarness.get()).toMatchObject({
+      text: "previous",
+      html: "<b>previous</b>",
+      rtf: "{\\rtf1 previous}"
+    });
   });
 
-  it("leaves output on the clipboard after successful automation", async () => {
-    const image = clipboardHarness.image();
+  it("does not overwrite clipboard data copied by the user during paste dispatch", async () => {
     const backend = new FakeBackend();
+    backend.pasteStarted = () => clipboardHarness.api.writeText("new user clipboard");
     const service = new PasteService(new TextAutomationService(backend), 0, fakeLinuxClipboard());
-    clipboardHarness.set({ text: "previous", html: "<b>previous</b>", rtf: "{\\rtf1 previous}", image });
+    clipboardHarness.set({ text: "previous", html: "<b>previous</b>" });
 
     const result = await service.insertText("processed output");
 
-    expect(result).toEqual({ pasted: true, message: "Paste shortcut sent; output left on clipboard." });
-    expect(backend.pasteCalls).toBe(1);
-    expect(clipboardHarness.get().text).toBe("processed output");
+    expect(result).toEqual({ pasted: true, message: successMessage });
+    expect(clipboardHarness.get().text).toBe("new user clipboard");
   });
 
   it("leaves output on the clipboard when automation fails", async () => {
@@ -179,6 +190,18 @@ describe("PasteService", () => {
     expect(clipboardHarness.get().text).toBe("processed output");
   });
 
+  it("supports clipboard-only delivery without dispatching automation", async () => {
+    const backend = new FakeBackend();
+    const service = new PasteService(new TextAutomationService(backend), 0, fakeLinuxClipboard());
+    clipboardHarness.set({ text: "previous" });
+
+    const result = await service.copyText("processed output");
+
+    expect(result).toEqual({ pasted: false, message: "Automatic paste was skipped; output left on the clipboard." });
+    expect(backend.pasteCalls).toBe(0);
+    expect(clipboardHarness.get().text).toBe("processed output");
+  });
+
   it("keeps command fallback concerns out of PasteService", () => {
     const source = readFileSync(new URL("./paste.ts", import.meta.url), "utf8");
 
@@ -186,10 +209,15 @@ describe("PasteService", () => {
   });
 });
 
-function fakeLinuxClipboard(): { writeTextForPaste: (text: string) => Promise<void> } {
+function fakeLinuxClipboard(): { writeTextForPaste: (text: string) => Promise<ClipboardPasteLease> } {
   return {
-    async writeTextForPaste(text: string): Promise<void> {
+    async writeTextForPaste(text: string): Promise<ClipboardPasteLease> {
       clipboardHarness.api.writeText(text);
+      return fakeLease();
     }
   };
+}
+
+function fakeLease(): ClipboardPasteLease {
+  return { restoreIfOwned: async () => undefined };
 }
