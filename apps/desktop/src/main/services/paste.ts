@@ -106,7 +106,9 @@ export class PasteService {
     }
 
     const timer = setTimeout(() => {
-      void restoreIfOwned().catch((error) => console.warn(`Clipboard restoration failed: ${errorMessage(error)}`));
+      void this.textAutomation
+        .runExclusive(restoreIfOwned)
+        .catch((error) => console.warn(`Clipboard restoration failed: ${errorMessage(error)}`));
     }, this.clipboardRestoreDelayMs);
     timer.unref();
   }

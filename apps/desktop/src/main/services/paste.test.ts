@@ -184,6 +184,47 @@ describe("PasteService", () => {
     }
   });
 
+  it("serializes delayed restoration with clipboard-based context capture", async () => {
+    vi.useFakeTimers();
+    try {
+      const backend = new FakeBackend();
+      const automation = new TextAutomationService(backend);
+      const service = new PasteService(automation, 0, fakeLinuxClipboard(), 5000);
+      clipboardHarness.set({ text: "previous" }, ["text/plain"]);
+
+      const resultPromise = service.insertText("processed output");
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(resultPromise).resolves.toEqual({ pasted: true, message: successMessage, clipboardRetained: false });
+
+      let releaseCapture!: () => void;
+      let markCaptureStarted!: () => void;
+      const captureStarted = new Promise<void>((resolve) => {
+        markCaptureStarted = resolve;
+      });
+      const captureBlocked = new Promise<void>((resolve) => {
+        releaseCapture = resolve;
+      });
+      const capture = automation.runExclusive(async () => {
+        const staleSnapshot = clipboardHarness.get().text;
+        markCaptureStarted();
+        await captureBlocked;
+        clipboardHarness.api.writeText("murmur-selection");
+        clipboardHarness.api.writeText(staleSnapshot);
+      });
+      await captureStarted;
+
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(clipboardHarness.get().text).toBe("processed output");
+
+      releaseCapture();
+      await capture;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(clipboardHarness.get().text).toBe("previous");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("retains output instead of performing a lossy restore for unsupported formats", async () => {
     const backend = new FakeBackend();
     const service = new PasteService(new TextAutomationService(backend), 0, fakeLinuxClipboard(), 0);
