@@ -2014,7 +2014,7 @@ export function isSameOutputTarget(original: ContextSnapshot, current: ContextSn
     return false;
   }
 
-  return !originalWindowTitle || currentWindowTitle === originalWindowTitle;
+  return Boolean(originalWindowTitle && currentWindowTitle === originalWindowTitle);
 }
 
 function normalizeTargetField(value: string | undefined): string | undefined {

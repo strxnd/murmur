@@ -315,6 +315,13 @@ describe("app-controller utility contracts", () => {
     expect(isSameOutputTarget(capturedContext, { ...capturedContext, windowTitle: "Other Window" })).toBe(false);
     expect(
       isSameOutputTarget(
+        { ...capturedContext, windowTitle: undefined },
+        { ...capturedContext, windowTitle: "Other Window" }
+      )
+    ).toBe(false);
+    expect(isSameOutputTarget(capturedContext, { ...capturedContext, windowTitle: undefined })).toBe(false);
+    expect(
+      isSameOutputTarget(
         { ...capturedContext, appId: undefined, appName: undefined },
         { ...capturedContext, appId: undefined, appName: undefined }
       )
