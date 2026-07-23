@@ -1,4 +1,5 @@
 import { clipboard } from "../electron-api";
+import { clipboardHasOwnershipToken, writeOwnedClipboardText } from "./clipboard-snapshot";
 import { commandExists, execFileText } from "./command";
 
 const clipboardToolTimeoutMs = 800;
@@ -24,11 +25,16 @@ export class LinuxClipboardService {
     this.platform = dependencies.platform ?? process.platform;
   }
 
-  async writeTextForPaste(text: string, signal?: AbortSignal): Promise<{ restoreIfOwned(): Promise<void> }> {
+  async writeTextForPaste(
+    text: string,
+    signal?: AbortSignal,
+    ownershipToken?: string
+  ): Promise<{ restoreIfOwned(): Promise<void> }> {
     if (signal?.aborted) throw abortError();
     const previousText = clipboard.readText();
     const previousPrimary =
       this.platform === "linux" ? (await this.readPrimaryText()) ?? "" : this.readElectronPrimarySelection() ?? "";
+    let primaryOwnershipMarked = false;
     if (signal?.aborted) throw abortError();
 
     const restoreExternalSelections = async (restoreStandard: boolean, restorePrimary: boolean): Promise<void> => {
@@ -64,6 +70,14 @@ export class LinuxClipboardService {
           this.writeXClipboard(text).catch(() => undefined),
           this.writeXPrimarySelection(text).catch(() => undefined)
         ]);
+        if (ownershipToken) {
+          try {
+            writeOwnedClipboardText(text, ownershipToken, "selection");
+            primaryOwnershipMarked = true;
+          } catch {
+            primaryOwnershipMarked = false;
+          }
+        }
       }
       if (signal?.aborted) {
         await restoreAfterAbort();
@@ -72,8 +86,15 @@ export class LinuxClipboardService {
 
       return {
         restoreIfOwned: async () => {
-          let restorePrimary = this.readElectronPrimarySelection() === text;
-          if (this.platform === "linux" && !restorePrimary && (await this.readExternalPrimaryText().catch(() => undefined)) === text) {
+          let restorePrimary = ownershipToken
+            ? primaryOwnershipMarked && clipboardHasOwnershipToken(ownershipToken, "selection")
+            : this.readElectronPrimarySelection() === text;
+          if (
+            !ownershipToken &&
+            this.platform === "linux" &&
+            !restorePrimary &&
+            (await this.readExternalPrimaryText().catch(() => undefined)) === text
+          ) {
             restorePrimary = true;
           }
           if (restorePrimary) this.writeElectronPrimarySelection(previousPrimary);

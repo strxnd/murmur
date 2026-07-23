@@ -16,7 +16,7 @@ export interface ClipboardPasteLease {
 }
 
 export interface ClipboardPasteWriter {
-  writeTextForPaste(text: string, signal?: AbortSignal): Promise<ClipboardPasteLease>;
+  writeTextForPaste(text: string, signal?: AbortSignal, ownershipToken?: string): Promise<ClipboardPasteLease>;
 }
 
 export interface PasteResult {
@@ -75,7 +75,7 @@ export class PasteService {
       const previousClipboard = captureClipboardSnapshot();
       let pasteDispatchStarted = false;
       let clipboardLease: ClipboardPasteLease | null = null;
-      let clipboardOwnershipToken: string | undefined;
+      const clipboardOwnershipToken = randomUUID();
       let ownedClipboard: ClipboardSnapshot | undefined;
       const restoreIfOwned = async (): Promise<void> => {
         await clipboardLease?.restoreIfOwned();
@@ -87,9 +87,8 @@ export class PasteService {
       };
 
       try {
-        clipboardLease = await this.linuxClipboard.writeTextForPaste(text, signal);
+        clipboardLease = await this.linuxClipboard.writeTextForPaste(text, signal, clipboardOwnershipToken);
         throwIfAborted(signal);
-        clipboardOwnershipToken = randomUUID();
         writeOwnedClipboardText(text, clipboardOwnershipToken);
         ownedClipboard = captureClipboardSnapshot();
 

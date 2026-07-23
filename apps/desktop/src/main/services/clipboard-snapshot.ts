@@ -47,16 +47,30 @@ export function captureClipboardSnapshot(): ClipboardSnapshot {
   };
 }
 
-export function writeOwnedClipboardText(text: string, ownershipToken: string): void {
+export function writeOwnedClipboardText(
+  text: string,
+  ownershipToken: string,
+  type?: "selection" | "clipboard"
+): void {
   const marker = `${clipboardOwnershipMarkerPrefix}${ownershipToken}`;
-  clipboard.write({
-    text,
-    html: `<span style="white-space: pre-wrap"><!--${marker}-->${escapeHtml(text)}</span>`
-  });
+  clipboard.write(
+    {
+      text,
+      html: `<span style="white-space: pre-wrap"><!--${marker}-->${escapeHtml(text)}</span>`
+    },
+    type
+  );
 }
 
-export function clipboardHasOwnershipToken(ownershipToken: string): boolean {
-  return clipboard.readHTML().includes(`<!--${clipboardOwnershipMarkerPrefix}${ownershipToken}-->`);
+export function clipboardHasOwnershipToken(
+  ownershipToken: string,
+  type?: "selection" | "clipboard"
+): boolean {
+  try {
+    return clipboard.readHTML(type).includes(`<!--${clipboardOwnershipMarkerPrefix}${ownershipToken}-->`);
+  } catch {
+    return false;
+  }
 }
 
 export function clipboardMatchesSnapshot(snapshot: ClipboardSnapshot): boolean {

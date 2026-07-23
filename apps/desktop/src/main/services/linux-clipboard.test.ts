@@ -4,8 +4,16 @@ import { LinuxClipboardService } from "./linux-clipboard";
 const clipboardHarness = vi.hoisted(() => {
   let text = "";
   let primary = "";
+  let primaryHtml = "";
   let selectionAvailable = true;
   return {
+    readHTML: vi.fn((type?: string) => {
+      if (type === "selection") {
+        if (!selectionAvailable) throw new Error("selection unavailable");
+        return primaryHtml;
+      }
+      return "";
+    }),
     readText: vi.fn((type?: string) => {
       if (type === "selection") {
         if (!selectionAvailable) throw new Error("selection unavailable");
@@ -16,15 +24,26 @@ const clipboardHarness = vi.hoisted(() => {
     reset: () => {
       text = "";
       primary = "";
+      primaryHtml = "";
       selectionAvailable = true;
     },
     setSelectionAvailable: (available: boolean) => {
       selectionAvailable = available;
     },
+    write: vi.fn((data: { html?: string; text?: string }, type?: string) => {
+      if (type === "selection") {
+        if (!selectionAvailable) throw new Error("selection unavailable");
+        primary = data.text ?? "";
+        primaryHtml = data.html ?? "";
+      } else {
+        text = data.text ?? "";
+      }
+    }),
     writeText: vi.fn((value: string, type?: string) => {
       if (type === "selection") {
         if (!selectionAvailable) throw new Error("selection unavailable");
         primary = value;
+        primaryHtml = "";
       } else text = value;
     })
   };
@@ -41,7 +60,9 @@ interface ExecCall {
 describe("LinuxClipboardService", () => {
   beforeEach(() => {
     clipboardHarness.reset();
+    clipboardHarness.readHTML.mockClear();
     clipboardHarness.readText.mockClear();
+    clipboardHarness.write.mockClear();
     clipboardHarness.writeText.mockClear();
   });
 
@@ -76,7 +97,7 @@ describe("LinuxClipboardService", () => {
       tools: ["wl-copy", "xclip"]
     });
 
-    const lease = await service.writeTextForPaste("processed output");
+    const lease = await service.writeTextForPaste("processed output", undefined, "ownership-token");
     await lease.restoreIfOwned();
 
     expect(clipboardHarness.readText()).toBe("processed output");
@@ -92,6 +113,30 @@ describe("LinuxClipboardService", () => {
       command: "xclip",
       args: ["-selection", "clipboard"],
       input: "previous clipboard"
+    });
+  });
+
+  it("does not restore over a same-text user PRIMARY selection", async () => {
+    clipboardHarness.writeText("previous clipboard");
+    clipboardHarness.writeText("previous primary", "selection");
+    const calls: ExecCall[] = [];
+    const service = createService({
+      calls,
+      env: { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-1" },
+      tools: ["wl-copy", "xclip"]
+    });
+
+    const lease = await service.writeTextForPaste("processed output", undefined, "ownership-token");
+    clipboardHarness.writeText("processed output", "selection");
+    calls.length = 0;
+    await lease.restoreIfOwned();
+
+    expect(clipboardHarness.readText("selection")).toBe("processed output");
+    expect(calls).not.toContainEqual({ command: "wl-copy", args: ["--primary"], input: "previous primary" });
+    expect(calls).not.toContainEqual({
+      command: "xclip",
+      args: ["-selection", "primary"],
+      input: "previous primary"
     });
   });
 
