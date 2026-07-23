@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import * as dbusNative from "@homebridge/dbus-native";
-import type { BusConnection, MessageBus } from "@homebridge/dbus-native";
 import { murmurAppId } from "../../shared/app-identity";
+import { DbusSessionConnection, type DbusMessage, type DbusMessageBus } from "./dbus-session-connection";
 import type { AutomationResult, ShortcutAutomationBackend, TextAutomationCapability, TextAutomationShortcut } from "./text-automation";
 
 const portalDestination = "org.freedesktop.portal.Desktop";
@@ -36,25 +36,11 @@ type DbusNativeModule = typeof dbusNative & {
   sessionBus: (options?: Record<string, unknown>) => PortalMessageBus;
 };
 
-type PortalBusConnection = BusConnection & {
-  end?: () => void;
-};
-
-type PortalMessageBus = MessageBus & {
-  connection: PortalBusConnection;
-  name?: string;
-};
+type PortalMessageBus = DbusMessageBus;
 
 type DbusVardict = Array<[string, DbusVariant]>;
 type DbusVariant = [string, unknown];
 type DbusVardictValue = string | number | boolean;
-
-interface DbusMessage {
-  path?: string;
-  interface?: string;
-  member?: string;
-  body?: unknown[];
-}
 
 interface PortalRequestResponse {
   response: number;
@@ -77,7 +63,6 @@ export interface XdgRemoteDesktopKeyboardDependencies {
 const dbus = dbusNative as DbusNativeModule;
 
 export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBackend {
-  private bus: PortalMessageBus | null = null;
   private matchRules = new Set<string>();
   private pendingResponses = new Map<string, PendingRequestResponse>();
   private completedResponses = new Map<string, PortalRequestResponse>();
@@ -85,6 +70,8 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
   private lastBusError: string | null = null;
   private lastPermissionDeniedAt = 0;
   private hostAppRegistered = false;
+  private portalOwner: string | null = null;
+  private restoreToken: string | null = null;
   private capability: TextAutomationCapability = {
     backend: "clipboard_only",
     automationAvailable: false,
@@ -94,14 +81,15 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
 
   private readonly platform: NodeJS.Platform | string;
   private readonly env: NodeJS.ProcessEnv;
-  private readonly createBus: () => PortalMessageBus;
   private readonly now: () => number;
+  private readonly connection: DbusSessionConnection<PortalMessageBus>;
 
   constructor(dependencies: XdgRemoteDesktopKeyboardDependencies = {}) {
     this.platform = dependencies.platform ?? process.platform;
     this.env = dependencies.env ?? process.env;
-    this.createBus = dependencies.createBus ?? (() => dbus.sessionBus({ ReturnLongjs: false }));
+    const createBus = dependencies.createBus ?? (() => dbus.sessionBus({ ReturnLongjs: false }));
     this.now = dependencies.now ?? (() => Date.now());
+    this.connection = new DbusSessionConnection(createBus, this.handleMessage, this.handleConnectionLost);
   }
 
   async initialize(): Promise<void> {
@@ -113,6 +101,8 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
     try {
       const bus = this.getBus();
       await this.waitForUniqueBusName(bus, probeTimeoutMs);
+      this.portalOwner = await this.getNameOwner(bus, portalDestination);
+      await this.addMatch(portalOwnerChangedMatch());
       await this.registerHostApp(bus);
       const availableDeviceTypes = await this.readAvailableDeviceTypes(bus);
       if ((availableDeviceTypes & keyboardDeviceType) !== keyboardDeviceType) {
@@ -144,10 +134,7 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
       }
       this.pendingResponses.clear();
       this.completedResponses.clear();
-      this.bus?.connection.removeListener("message", this.handleMessage);
-      this.bus?.connection.removeListener("error", this.handleBusError);
-      this.bus?.connection.end?.();
-      this.bus = null;
+      this.connection.dispose();
     });
   }
 
@@ -215,6 +202,8 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
 
     const bus = this.getBus();
     const uniqueName = await this.waitForUniqueBusName(bus, probeTimeoutMs);
+    this.portalOwner ??= await this.getNameOwner(bus, portalDestination);
+    await this.addMatch(portalOwnerChangedMatch());
     await this.registerHostApp(bus);
     const createResponse = await this.callPortalRequest({
       bus,
@@ -241,19 +230,21 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
 
     this.sessionHandle = sessionHandle;
 
+    const selectOptions: Record<string, DbusVardictValue> = {
+      handle_token: makeToken("select"),
+      types: keyboardDeviceType,
+      persist_mode: 1
+    };
+    if (this.restoreToken) {
+      selectOptions.restore_token = this.restoreToken;
+      this.restoreToken = null;
+    }
     const selectResponse = await this.callPortalRequest({
       bus,
       uniqueName,
       member: "SelectDevices",
       signature: "oa{sv}",
-      body: [
-        sessionHandle,
-        makeVardict({
-          handle_token: makeToken("select"),
-          types: keyboardDeviceType,
-          persist_mode: 1
-        })
-      ],
+      body: [sessionHandle, makeVardict(selectOptions)],
       timeoutMs: portalRequestTimeoutMs
     });
 
@@ -281,6 +272,7 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
     }
 
     const devices = vardictUint(startResponse.results, "devices") ?? 0;
+    this.restoreToken = vardictString(startResponse.results, "restore_token") ?? null;
     if ((devices & keyboardDeviceType) !== keyboardDeviceType) {
       throw new PortalPermissionError("RemoteDesktop session did not grant keyboard control.");
     }
@@ -315,9 +307,10 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
   }
 
   private notifyKeycode(sessionHandle: string, keycode: number, state: number): Promise<void> {
-    if (!this.bus) throw new Error("No D-Bus session bus is available.");
+    const bus = this.connection.currentBus();
+    if (!bus) throw new Error("No D-Bus session bus is available.");
     return this.invoke<void>({
-      bus: this.bus,
+      bus,
       path: portalPath,
       interfaceName: remoteDesktopInterface,
       member: "NotifyKeyboardKeycode",
@@ -328,13 +321,8 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
   }
 
   private getBus(): PortalMessageBus {
-    if (this.bus) return this.bus;
-
-    const bus = this.createBus();
-    bus.connection.on("message", this.handleMessage);
-    bus.connection.on("error", this.handleBusError);
-    this.bus = bus;
-    return bus;
+    if (!this.connection.currentBus()) this.lastBusError = null;
+    return this.connection.getBus();
   }
 
   private async waitForUniqueBusName(bus: PortalMessageBus, timeoutMs: number): Promise<string> {
@@ -397,7 +385,7 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
   }): Promise<PortalRequestResponse> {
     const token = vardictString(options.body.at(-1), "handle_token") ?? makeToken("request");
     const expectedHandle = requestPathForToken(options.uniqueName, token);
-    await this.addMatch(requestResponseMatch(expectedHandle));
+    await this.addMatch(requestResponseMatch(expectedHandle, this.portalOwner));
 
     const requestHandle = await this.invoke<string>({
       bus: options.bus,
@@ -411,7 +399,7 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
 
     const handle = requestHandle || expectedHandle;
     if (handle !== expectedHandle) {
-      await this.addMatch(requestResponseMatch(handle));
+      await this.addMatch(requestResponseMatch(handle, this.portalOwner));
     }
 
     try {
@@ -420,9 +408,9 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
       await this.closeRequest(handle);
       throw error;
     } finally {
-      await this.removeMatch(requestResponseMatch(expectedHandle));
+      await this.removeMatch(requestResponseMatch(expectedHandle, this.portalOwner));
       if (handle !== expectedHandle) {
-        await this.removeMatch(requestResponseMatch(handle));
+        await this.removeMatch(requestResponseMatch(handle, this.portalOwner));
       }
     }
   }
@@ -436,30 +424,30 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
     body?: unknown[];
     timeoutMs: number;
   }): Promise<T> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(new Error(`Timed out calling ${options.interfaceName}.${options.member}.`));
-      }, options.timeoutMs);
-      timer.unref();
+    return this.connection.invoke<T>({
+      bus: options.bus,
+      message: {
+        destination: options.interfaceName === dbusInterface ? dbusDestination : portalDestination,
+        path: options.path,
+        interface: options.interfaceName,
+        member: options.member,
+        signature: options.signature,
+        body: options.body
+      },
+      timeoutMs: options.timeoutMs,
+      timeoutMessage: `Timed out calling ${options.interfaceName}.${options.member}.`
+    });
+  }
 
-      options.bus.invoke(
-        {
-          destination: options.interfaceName === dbusInterface ? dbusDestination : portalDestination,
-          path: options.path,
-          interface: options.interfaceName,
-          member: options.member,
-          signature: options.signature,
-          body: options.body
-        },
-        (error, value) => {
-          clearTimeout(timer);
-          if (error) {
-            reject(new Error(errorMessage(error)));
-            return;
-          }
-          resolve(value as T);
-        }
-      );
+  private getNameOwner(bus: PortalMessageBus, name: string): Promise<string> {
+    return this.invoke<string>({
+      bus,
+      path: dbusPath,
+      interfaceName: dbusInterface,
+      member: "GetNameOwner",
+      signature: "s",
+      body: [name],
+      timeoutMs: probeTimeoutMs
     });
   }
 
@@ -479,10 +467,11 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
   }
 
   private async removeMatch(rule: string): Promise<void> {
-    if (!this.matchRules.has(rule) || !this.bus) return;
+    const bus = this.connection.currentBus();
+    if (!this.matchRules.has(rule) || !bus) return;
     this.matchRules.delete(rule);
     await this.invoke({
-      bus: this.bus,
+      bus,
       path: dbusPath,
       interfaceName: dbusInterface,
       member: "RemoveMatch",
@@ -515,9 +504,10 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
   }
 
   private async closeRequest(handle: string): Promise<void> {
-    if (!this.bus) return;
+    const bus = this.connection.currentBus();
+    if (!bus) return;
     await this.invoke({
-      bus: this.bus,
+      bus,
       path: handle,
       interfaceName: requestInterface,
       member: "Close",
@@ -528,9 +518,10 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
   private async closeSession(): Promise<void> {
     const sessionHandle = this.sessionHandle;
     this.sessionHandle = null;
-    if (this.bus && sessionHandle) {
+    const bus = this.connection.currentBus();
+    if (bus && sessionHandle) {
       await this.invoke({
-        bus: this.bus,
+        bus,
         path: sessionHandle,
         interfaceName: sessionInterface,
         member: "Close",
@@ -544,11 +535,9 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
     await this.closeSession();
     this.completedResponses.clear();
     this.lastBusError = null;
-    this.bus?.connection.removeListener("message", this.handleMessage);
-    this.bus?.connection.removeListener("error", this.handleBusError);
-    this.bus?.connection.end?.();
-    this.bus = null;
+    this.portalOwner = null;
     this.hostAppRegistered = false;
+    this.connection.reset(new Error("XDG RemoteDesktop portal connection was reset."));
   }
 
   private setUnavailable(diagnostics: string[]): void {
@@ -582,6 +571,14 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
   }
 
   private readonly handleMessage = (message: DbusMessage): void => {
+    if (message.sender === dbusDestination && message.interface === dbusInterface && message.member === "NameOwnerChanged") {
+      const [name, oldOwner, newOwner] = message.body ?? [];
+      if (name === portalDestination && oldOwner === this.portalOwner && newOwner !== this.portalOwner) {
+        this.handleConnectionLost(new Error("XDG Desktop Portal restarted."));
+      }
+      return;
+    }
+    if (message.sender !== this.portalOwner) return;
     if (message.interface !== requestInterface || message.member !== "Response" || !message.path) return;
 
     const [response, results] = message.body ?? [];
@@ -599,14 +596,19 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
     }
   };
 
-  private readonly handleBusError = (error: Error): void => {
+  private readonly handleConnectionLost = (error: Error): void => {
     this.lastBusError = error.message;
     this.sessionHandle = null;
+    this.portalOwner = null;
+    this.hostAppRegistered = false;
+    this.matchRules.clear();
+    this.completedResponses.clear();
     for (const [handle, pending] of this.pendingResponses) {
       clearTimeout(pending.timer);
       this.pendingResponses.delete(handle);
       pending.reject(error);
     }
+    this.connection.reset(error);
   };
 }
 
@@ -678,8 +680,12 @@ function requestPathForToken(uniqueName: string, token: string): string {
   return `/org/freedesktop/portal/desktop/request/${sender}/${token}`;
 }
 
-function requestResponseMatch(handle: string): string {
-  return `type='signal',path='${handle}',interface='${requestInterface}',member='Response'`;
+function requestResponseMatch(handle: string, sender: string | null): string {
+  return `type='signal'${sender ? `,sender='${sender}'` : ""},path='${handle}',interface='${requestInterface}',member='Response'`;
+}
+
+function portalOwnerChangedMatch(): string {
+  return `type='signal',sender='${dbusDestination}',path='${dbusPath}',interface='${dbusInterface}',member='NameOwnerChanged',arg0='${portalDestination}'`;
 }
 
 function makeToken(prefix: string): string {

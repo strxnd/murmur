@@ -71,7 +71,10 @@ import { TranscriptionService } from "./services/stt";
 import { SttRuntimeService } from "./services/stt-runtime";
 import { SttAccelerationProbeService } from "./services/stt-gpu-probe";
 import { resolveAppPaths, type AppPaths } from "./services/app-paths";
-import { NativeDesktopGlobalShortcutService } from "./services/native-global-shortcuts";
+import {
+  NativeDesktopGlobalShortcutService,
+  type NativeDesktopShortcutActionRegistration
+} from "./services/native-global-shortcuts";
 import { TextAutomationService } from "./services/text-automation";
 import { AutomationPermissionService } from "./services/automation-permissions";
 import {
@@ -126,8 +129,12 @@ export class AppController {
   private automationPermissions = new AutomationPermissionService();
   private runtimeService: SttRuntimeService;
   private accelerationProbe = new SttAccelerationProbeService();
-  private portalHotkeys = new XdgGlobalShortcutService();
-  private nativeHotkeys = new NativeDesktopGlobalShortcutService();
+  private portalHotkeys = new XdgGlobalShortcutService({
+    onRegistrationLost: () => this.recoverHotkeyRegistrations()
+  });
+  private nativeHotkeys = new NativeDesktopGlobalShortcutService({
+    onRegistrationLost: () => this.recoverHotkeyRegistrations()
+  });
   private macosReleaseHotkeys = new MacosEventTapReleaseService();
   private paths: AppPaths;
   private rendererSource: RendererSource;
@@ -811,6 +818,13 @@ export class AppController {
     this.broadcastState();
   }
 
+  private recoverHotkeyRegistrations(): void {
+    if (this.isQuitting) return;
+    void this.registerHotkeys()
+      .catch(() => undefined)
+      .then(() => this.broadcastState());
+  }
+
   private registerHotkeys(): Promise<void> {
     const generation = ++this.hotkeyRegistrationGeneration;
     const registration = this.hotkeyRegistrationQueue
@@ -886,11 +900,20 @@ export class AppController {
       return;
     }
 
-    if (portalResult.registered && !(settings.activationMode === "push_to_talk" && !portalResult.actionResults.activation.pushToTalkRelease)) {
+    if (portalResult.actionResults.activation.registered && !(settings.activationMode === "push_to_talk" && !portalResult.actionResults.activation.pushToTalkRelease)) {
       this.hotkeyBackend = "xdg_desktop_portal";
+      const modeSelectorResult = portalResult.actionResults["mode-selector"].registered
+        ? portalResult.actionResults["mode-selector"]
+        : await this.registerModeSelectorFallback(shortcutActions[1], portalResult.actionResults["mode-selector"].diagnostics, true);
+      if (generation !== this.hotkeyRegistrationGeneration) {
+        globalShortcut.unregisterAll();
+        await this.portalHotkeys.unregister();
+        await this.nativeHotkeys.unregister();
+        return;
+      }
       this.applyHotkeyRegistrationResults({
         activation: portalResult.actionResults.activation,
-        modeSelector: portalResult.actionResults["mode-selector"],
+        modeSelector: modeSelectorResult,
         backendDiagnostics: portalResult.diagnostics
       });
       return;
@@ -911,14 +934,23 @@ export class AppController {
     }
 
     if (
-      nativeResult.registered &&
+      nativeResult.actionResults.activation.registered &&
       nativeResult.backend &&
       !(settings.activationMode === "push_to_talk" && !nativeResult.pushToTalkRelease)
     ) {
       this.hotkeyBackend = nativeResult.backend;
+      const modeSelectorResult = nativeResult.actionResults["mode-selector"].registered
+        ? nativeResult.actionResults["mode-selector"]
+        : await this.registerModeSelectorFallback(shortcutActions[1], nativeResult.actionResults["mode-selector"].diagnostics, false);
+      if (generation !== this.hotkeyRegistrationGeneration) {
+        globalShortcut.unregisterAll();
+        await this.portalHotkeys.unregister();
+        await this.nativeHotkeys.unregister();
+        return;
+      }
       this.applyHotkeyRegistrationResults({
         activation: nativeResult.actionResults.activation,
-        modeSelector: nativeResult.actionResults["mode-selector"],
+        modeSelector: modeSelectorResult,
         backendDiagnostics: nativeResult.diagnostics
       });
       return;
@@ -1049,6 +1081,37 @@ export class AppController {
     if (!modeSelectorResult.registered) {
       this.modeSelectorHotkeyDiagnostics.push(`Global mode selector shortcut is not registered: ${settings.modeSelectorHotkey}.`);
     }
+  }
+
+  private async registerModeSelectorFallback(
+    action: NativeDesktopShortcutActionRegistration,
+    priorDiagnostics: string[],
+    tryNative: boolean
+  ): Promise<{ registered: boolean; triggerDescription?: string; diagnostics: string[] }> {
+    const diagnostics = [...priorDiagnostics];
+    if (tryNative) {
+      const nativeResult = await this.nativeHotkeys.register({ actions: [action] });
+      diagnostics.push(...nativeResult.diagnostics, ...nativeResult.actionResults["mode-selector"].diagnostics);
+      if (nativeResult.actionResults["mode-selector"].registered) {
+        return {
+          ...nativeResult.actionResults["mode-selector"],
+          diagnostics
+        };
+      }
+    }
+
+    const electronResult = registerElectronShortcutActions(globalShortcut, [
+      {
+        id: "mode-selector",
+        label: "mode selector",
+        accelerator: action.accelerator,
+        onActivated: action.onActivated
+      }
+    ]).actionResults["mode-selector"];
+    return {
+      registered: electronResult.registered,
+      diagnostics: [...diagnostics, ...electronResult.diagnostics]
+    };
   }
 
   private resetHotkeyCapabilities(): void {

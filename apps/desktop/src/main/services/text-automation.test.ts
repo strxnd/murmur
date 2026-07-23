@@ -14,6 +14,7 @@ interface FakePortalOptions {
   selectResponse?: number;
   startResponse?: number;
   startDevices?: number;
+  startRestoreTokens?: string[];
   portalMissing?: boolean;
   failNotifyAt?: number;
 }
@@ -34,6 +35,7 @@ class FakePortalBus {
   name = ":1.77";
   private notifyCount = 0;
   private requestCount = 0;
+  private startCount = 0;
 
   constructor(private readonly options: FakePortalOptions = {}) {
     this.connection.end = vi.fn();
@@ -41,6 +43,11 @@ class FakePortalBus {
 
   invoke(message: FakeDbusCall, callback: (error: Error | null, value?: unknown) => void): void {
     this.calls.push(message);
+
+    if (message.interface === "org.freedesktop.DBus" && message.member === "GetNameOwner") {
+      callback(null, ":1.10");
+      return;
+    }
 
     if (message.interface === "org.freedesktop.DBus" && (message.member === "AddMatch" || message.member === "RemoveMatch")) {
       callback(null);
@@ -74,6 +81,7 @@ class FakePortalBus {
       callback(null, handle);
       queueMicrotask(() => {
         this.connection.emit("message", {
+          sender: ":1.10",
           path: handle,
           interface: "org.freedesktop.portal.Request",
           member: "Response",
@@ -108,7 +116,14 @@ class FakePortalBus {
     if (member === "SelectDevices") {
       return [this.options.selectResponse ?? 0, []];
     }
-    return [this.options.startResponse ?? 0, [["devices", ["u", this.options.startDevices ?? 1]]]];
+    const restoreToken = this.options.startRestoreTokens?.[this.startCount++];
+    return [
+      this.options.startResponse ?? 0,
+      [
+        ["devices", ["u", this.options.startDevices ?? 1]],
+        ...(restoreToken ? [["restore_token", ["s", restoreToken]]] : [])
+      ]
+    ];
   }
 }
 
@@ -203,6 +218,21 @@ describe("TextAutomationService", () => {
       { keycode: cKeycode, state: 0 },
       { keycode: leftControlKeycode, state: 0 }
     ]);
+  });
+
+  it("reuses and rotates the RemoteDesktop restore token after connection recovery", async () => {
+    const bus = new FakePortalBus({ startRestoreTokens: ["restore-one", "restore-two"] });
+    const service = automationWithBus(bus);
+    await service.initialize();
+
+    await expect(service.pasteClipboard()).resolves.toMatchObject({ success: true });
+    bus.connection.emit("error", new Error("session bus disconnected"));
+    await expect(service.pasteClipboard()).resolves.toMatchObject({ success: true });
+
+    const selectCalls = bus.memberCalls("SelectDevices");
+    expect(selectCalls).toHaveLength(2);
+    expect(selectCalls[0].body?.[1]).not.toContainEqual(["restore_token", ["s", "restore-one"]]);
+    expect(selectCalls[1].body?.[1]).toContainEqual(["restore_token", ["s", "restore-one"]]);
   });
 
   it("attempts to release the modifier after a partial shortcut failure", async () => {

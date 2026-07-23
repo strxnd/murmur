@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
 import * as dbusNative from "@homebridge/dbus-native";
-import type { BusConnection, MessageBus } from "@homebridge/dbus-native";
 import { murmurAppId } from "../../shared/app-identity";
 import type { ActivationMode, GlobalShortcutActionId } from "../../shared/types";
+import { DbusSessionConnection, type DbusMessage, type DbusMessageBus } from "./dbus-session-connection";
 
 const portalDestination = "org.freedesktop.portal.Desktop";
 const portalPath = "/org/freedesktop/portal/desktop";
@@ -15,6 +15,7 @@ const dbusDestination = "org.freedesktop.DBus";
 const dbusPath = "/org/freedesktop/DBus";
 const dbusInterface = "org.freedesktop.DBus";
 const portalTimeoutMs = 3000;
+const interactivePortalTimeoutMs = 60000;
 
 const shortcutActionIds: GlobalShortcutActionId[] = ["activation", "mode-selector"];
 
@@ -47,28 +48,23 @@ export interface XdgGlobalShortcutRegistrationOptions {
   actions: XdgShortcutActionRegistration[];
 }
 
+export interface XdgGlobalShortcutDependencies {
+  platform?: NodeJS.Platform | string;
+  env?: NodeJS.ProcessEnv;
+  createBus?: () => PortalMessageBus;
+  onRegistrationLost?: (reason: string) => void;
+  portalTimeoutMs?: number;
+  interactiveTimeoutMs?: number;
+}
+
 type DbusNativeModule = typeof dbusNative & {
   sessionBus: (options?: Record<string, unknown>) => PortalMessageBus;
 };
 
-type PortalBusConnection = BusConnection & {
-  end?: () => void;
-};
-
-type PortalMessageBus = MessageBus & {
-  connection: PortalBusConnection;
-  name?: string;
-};
+type PortalMessageBus = DbusMessageBus;
 
 type DbusVardict = Array<[string, DbusVariant]>;
 type DbusVariant = [string, unknown];
-
-interface DbusMessage {
-  path?: string;
-  interface?: string;
-  member?: string;
-  body?: unknown[];
-}
 
 interface PortalRequestResponse {
   response: number;
@@ -89,7 +85,6 @@ interface ActiveRegistration {
 const dbus = dbusNative as DbusNativeModule;
 
 export class XdgGlobalShortcutService {
-  private bus: PortalMessageBus | null = null;
   private activeRegistration: ActiveRegistration | null = null;
   private sessionHandle: string | null = null;
   private matchRules = new Set<string>();
@@ -97,6 +92,24 @@ export class XdgGlobalShortcutService {
   private completedResponses = new Map<string, PortalRequestResponse>();
   private lastBusError: string | null = null;
   private hostAppRegistered = false;
+  private portalOwner: string | null = null;
+  private unregistering = false;
+  private readonly platform: NodeJS.Platform | string;
+  private readonly env: NodeJS.ProcessEnv;
+  private readonly onRegistrationLost: (reason: string) => void;
+  private readonly callTimeoutMs: number;
+  private readonly interactiveTimeoutMs: number;
+  private readonly connection: DbusSessionConnection<PortalMessageBus>;
+
+  constructor(dependencies: XdgGlobalShortcutDependencies = {}) {
+    this.platform = dependencies.platform ?? process.platform;
+    this.env = dependencies.env ?? process.env;
+    this.onRegistrationLost = dependencies.onRegistrationLost ?? (() => undefined);
+    this.callTimeoutMs = dependencies.portalTimeoutMs ?? portalTimeoutMs;
+    this.interactiveTimeoutMs = dependencies.interactiveTimeoutMs ?? interactivePortalTimeoutMs;
+    const createBus = dependencies.createBus ?? (() => dbus.sessionBus({ ReturnLongjs: false }));
+    this.connection = new DbusSessionConnection(createBus, this.handleMessage, this.handleConnectionLost);
+  }
 
   async register(options: XdgGlobalShortcutRegistrationOptions): Promise<XdgShortcutRegistrationResult> {
     await this.unregister();
@@ -112,12 +125,12 @@ export class XdgGlobalShortcutService {
       actionResults: patch.actionResults ?? actionResults
     });
 
-    if (process.platform !== "linux") {
+    if (this.platform !== "linux") {
       diagnostics.push("XDG Desktop Portal global shortcuts are only available on Linux.");
       return result({});
     }
 
-    if (!process.env.DBUS_SESSION_BUS_ADDRESS) {
+    if (!this.env.DBUS_SESSION_BUS_ADDRESS) {
       diagnostics.push("No D-Bus session bus is available for XDG Desktop Portal global shortcuts.");
       return result({});
     }
@@ -143,6 +156,8 @@ export class XdgGlobalShortcutService {
     try {
       const bus = this.getBus();
       const uniqueName = await this.waitForUniqueBusName(bus);
+      this.portalOwner = await this.getNameOwner(bus, portalDestination);
+      await this.addMatch(portalOwnerChangedMatch());
       await this.registerHostApp(bus, diagnostics);
       const globalShortcutsVersion = await this.readGlobalShortcutsVersion(bus, diagnostics);
       const createResponse = await this.callPortalRequest({
@@ -155,7 +170,8 @@ export class XdgGlobalShortcutService {
             handle_token: makeToken("create"),
             session_handle_token: makeToken("session")
           })
-        ]
+        ],
+        responseTimeoutMs: this.callTimeoutMs
       });
 
       if (createResponse.response !== 0) {
@@ -187,7 +203,8 @@ export class XdgGlobalShortcutService {
           makeVardict({
             handle_token: makeToken("bind")
           })
-        ]
+        ],
+        responseTimeoutMs: this.interactiveTimeoutMs
       });
 
       if (bindResponse.response !== 0) {
@@ -220,12 +237,13 @@ export class XdgGlobalShortcutService {
       }
 
       const activationResult = actionResults.activation;
-      if (!activationResult.registered) {
+      if (activeActions.size === 0) {
         await this.unregister();
         return result({ attempted: true });
       }
 
-      await this.addMatch("type='signal',path='/org/freedesktop/portal/desktop',interface='org.freedesktop.portal.GlobalShortcuts'");
+      await this.addMatch(globalShortcutsSignalMatch(this.portalOwner));
+      await this.addMatch(sessionClosedMatch(sessionHandle, this.portalOwner));
       this.activeRegistration = {
         actions: activeActions,
         sessionHandle
@@ -247,52 +265,48 @@ export class XdgGlobalShortcutService {
   }
 
   async unregister(): Promise<void> {
-    this.activeRegistration = null;
-    this.completedResponses.clear();
-    for (const pending of this.pendingResponses.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(new Error("XDG Desktop Portal shortcut registration was cancelled."));
-    }
-    this.pendingResponses.clear();
+    this.unregistering = true;
+    try {
+      this.activeRegistration = null;
+      this.completedResponses.clear();
+      for (const pending of this.pendingResponses.values()) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error("XDG Desktop Portal shortcut registration was cancelled."));
+      }
+      this.pendingResponses.clear();
 
-    const sessionHandle = this.sessionHandle;
-    this.sessionHandle = null;
-    if (this.bus && sessionHandle) {
-      await this.invoke({
-        bus: this.bus,
-        path: sessionHandle,
-        interfaceName: sessionInterface,
-        member: "Close"
-      }).catch(() => undefined);
-    }
+      const sessionHandle = this.sessionHandle;
+      this.sessionHandle = null;
+      const bus = this.connection.currentBus();
+      if (bus && sessionHandle) {
+        await this.invoke({
+          bus,
+          path: sessionHandle,
+          interfaceName: sessionInterface,
+          member: "Close"
+        }).catch(() => undefined);
+      }
 
-    await this.removeAllMatches();
+      await this.removeAllMatches();
+    } finally {
+      this.unregistering = false;
+    }
   }
 
   dispose(): void {
-    void this.unregister().finally(() => {
-      this.bus?.connection.removeListener("message", this.handleMessage);
-      this.bus?.connection.removeListener("error", this.handleBusError);
-      this.bus?.connection.end?.();
-      this.bus = null;
-    });
+    void this.unregister().finally(() => this.connection.dispose());
   }
 
   private getBus(): PortalMessageBus {
-    if (this.bus) return this.bus;
-
-    const bus = dbus.sessionBus({ ReturnLongjs: false });
-    bus.connection.on("message", this.handleMessage);
-    bus.connection.on("error", this.handleBusError);
-    this.bus = bus;
-    return bus;
+    if (!this.connection.currentBus()) this.lastBusError = null;
+    return this.connection.getBus();
   }
 
   private async waitForUniqueBusName(bus: PortalMessageBus): Promise<string> {
     const startedAt = Date.now();
     while (!bus.name) {
       if (this.lastBusError) throw new Error(this.lastBusError);
-      if (Date.now() - startedAt > portalTimeoutMs) {
+      if (Date.now() - startedAt > this.callTimeoutMs) {
         throw new Error("Timed out waiting for the D-Bus session bus.");
       }
       await delay(20);
@@ -306,10 +320,11 @@ export class XdgGlobalShortcutService {
     member: string;
     signature: string;
     body: unknown[];
+    responseTimeoutMs: number;
   }): Promise<PortalRequestResponse> {
     const token = vardictString(options.body.at(-1), "handle_token") ?? makeToken("request");
     const expectedHandle = requestPathForToken(options.uniqueName, token);
-    await this.addMatch(requestResponseMatch(expectedHandle));
+    await this.addMatch(requestResponseMatch(expectedHandle, this.portalOwner));
 
     const requestHandle = await this.invoke<string>({
       bus: options.bus,
@@ -322,18 +337,18 @@ export class XdgGlobalShortcutService {
 
     const handle = requestHandle || expectedHandle;
     if (handle !== expectedHandle) {
-      await this.addMatch(requestResponseMatch(handle));
+      await this.addMatch(requestResponseMatch(handle, this.portalOwner));
     }
 
     try {
-      return await this.waitForRequestResponse(handle);
+      return await this.waitForRequestResponse(handle, options.responseTimeoutMs);
     } catch (error) {
       await this.closeRequest(handle);
       throw error;
     } finally {
-      await this.removeMatch(requestResponseMatch(expectedHandle));
+      await this.removeMatch(requestResponseMatch(expectedHandle, this.portalOwner));
       if (handle !== expectedHandle) {
-        await this.removeMatch(requestResponseMatch(handle));
+        await this.removeMatch(requestResponseMatch(handle, this.portalOwner));
       }
     }
   }
@@ -388,30 +403,29 @@ export class XdgGlobalShortcutService {
     signature?: string;
     body?: unknown[];
   }): Promise<T> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(new Error(`Timed out calling ${options.interfaceName}.${options.member}.`));
-      }, portalTimeoutMs);
-      timer.unref();
+    return this.connection.invoke<T>({
+      bus: options.bus,
+      message: {
+        destination: options.interfaceName === dbusInterface ? dbusDestination : portalDestination,
+        path: options.path,
+        interface: options.interfaceName,
+        member: options.member,
+        signature: options.signature,
+        body: options.body
+      },
+      timeoutMs: this.callTimeoutMs,
+      timeoutMessage: `Timed out calling ${options.interfaceName}.${options.member}.`
+    });
+  }
 
-      options.bus.invoke(
-        {
-          destination: options.interfaceName === dbusInterface ? dbusDestination : portalDestination,
-          path: options.path,
-          interface: options.interfaceName,
-          member: options.member,
-          signature: options.signature,
-          body: options.body
-        },
-        (error, value) => {
-          clearTimeout(timer);
-          if (error) {
-            reject(new Error(`${error.name}: ${String(error.message)}`));
-            return;
-          }
-          resolve(value as T);
-        }
-      );
+  private getNameOwner(bus: PortalMessageBus, name: string): Promise<string> {
+    return this.invoke<string>({
+      bus,
+      path: dbusPath,
+      interfaceName: dbusInterface,
+      member: "GetNameOwner",
+      signature: "s",
+      body: [name]
     });
   }
 
@@ -430,10 +444,11 @@ export class XdgGlobalShortcutService {
   }
 
   private async removeMatch(rule: string): Promise<void> {
-    if (!this.matchRules.has(rule) || !this.bus) return;
+    const bus = this.connection.currentBus();
+    if (!this.matchRules.has(rule) || !bus) return;
     this.matchRules.delete(rule);
     await this.invoke({
-      bus: this.bus,
+      bus,
       path: dbusPath,
       interfaceName: dbusInterface,
       member: "RemoveMatch",
@@ -447,7 +462,7 @@ export class XdgGlobalShortcutService {
     await Promise.all(rules.map((rule) => this.removeMatch(rule)));
   }
 
-  private waitForRequestResponse(handle: string): Promise<PortalRequestResponse> {
+  private waitForRequestResponse(handle: string, timeoutMs: number): Promise<PortalRequestResponse> {
     const completed = this.completedResponses.get(handle);
     if (completed) {
       this.completedResponses.delete(handle);
@@ -458,16 +473,17 @@ export class XdgGlobalShortcutService {
       const timer = setTimeout(() => {
         this.pendingResponses.delete(handle);
         reject(new Error(`Timed out waiting for XDG Desktop Portal request response: ${handle}.`));
-      }, portalTimeoutMs);
+      }, timeoutMs);
       timer.unref();
       this.pendingResponses.set(handle, { reject, resolve, timer });
     });
   }
 
   private async closeRequest(handle: string): Promise<void> {
-    if (!this.bus) return;
+    const bus = this.connection.currentBus();
+    if (!bus) return;
     await this.invoke({
-      bus: this.bus,
+      bus,
       path: handle,
       interfaceName: requestInterface,
       member: "Close"
@@ -475,6 +491,16 @@ export class XdgGlobalShortcutService {
   }
 
   private readonly handleMessage = (message: DbusMessage): void => {
+    if (message.sender === dbusDestination && message.interface === dbusInterface && message.member === "NameOwnerChanged") {
+      const [name, oldOwner, newOwner] = message.body ?? [];
+      if (name === portalDestination && oldOwner === this.portalOwner && newOwner !== this.portalOwner) {
+        this.loseRegistration("XDG Desktop Portal restarted.");
+      }
+      return;
+    }
+
+    if (message.sender !== this.portalOwner) return;
+
     if (message.interface === requestInterface && message.member === "Response" && message.path) {
       const [response, results] = message.body ?? [];
       const parsed = {
@@ -489,6 +515,11 @@ export class XdgGlobalShortcutService {
       } else {
         this.completedResponses.set(message.path, parsed);
       }
+      return;
+    }
+
+    if (message.interface === sessionInterface && message.member === "Closed" && message.path === this.sessionHandle) {
+      this.loseRegistration("XDG Desktop Portal shortcut session closed.");
       return;
     }
 
@@ -508,14 +539,27 @@ export class XdgGlobalShortcutService {
     }
   };
 
-  private readonly handleBusError = (error: Error): void => {
+  private readonly handleConnectionLost = (error: Error): void => {
     this.lastBusError = error.message;
+    this.loseRegistration(`D-Bus session connection failed: ${error.message}`);
+  };
+
+  private loseRegistration(reason: string): void {
+    const wasRegistered = this.activeRegistration !== null;
+    this.activeRegistration = null;
+    this.sessionHandle = null;
+    this.portalOwner = null;
+    this.hostAppRegistered = false;
+    this.matchRules.clear();
+    this.completedResponses.clear();
     for (const [handle, pending] of this.pendingResponses) {
       clearTimeout(pending.timer);
       this.pendingResponses.delete(handle);
-      pending.reject(error);
+      pending.reject(new Error(reason));
     }
-  };
+    this.connection.reset(new Error(reason));
+    if (wasRegistered && !this.unregistering) this.onRegistrationLost(reason);
+  }
 }
 
 export function shortcutDescriptionForActivationMode(mode: ActivationMode): string {
@@ -726,8 +770,20 @@ function requestPathForToken(uniqueName: string, token: string): string {
   return `/org/freedesktop/portal/desktop/request/${sender}/${token}`;
 }
 
-function requestResponseMatch(handle: string): string {
-  return `type='signal',path='${handle}',interface='${requestInterface}',member='Response'`;
+function requestResponseMatch(handle: string, sender: string | null): string {
+  return `type='signal'${sender ? `,sender='${sender}'` : ""},path='${handle}',interface='${requestInterface}',member='Response'`;
+}
+
+function globalShortcutsSignalMatch(sender: string | null): string {
+  return `type='signal'${sender ? `,sender='${sender}'` : ""},path='${portalPath}',interface='${globalShortcutsInterface}'`;
+}
+
+function sessionClosedMatch(sessionHandle: string, sender: string | null): string {
+  return `type='signal'${sender ? `,sender='${sender}'` : ""},path='${sessionHandle}',interface='${sessionInterface}',member='Closed'`;
+}
+
+function portalOwnerChangedMatch(): string {
+  return `type='signal',sender='${dbusDestination}',path='${dbusPath}',interface='${dbusInterface}',member='NameOwnerChanged',arg0='${portalDestination}'`;
 }
 
 function makeToken(prefix: string): string {

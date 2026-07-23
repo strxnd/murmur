@@ -18,7 +18,7 @@ export const defaultSettings: AppSettings = {
   selectedTextCapture: "enabled",
   activeModeId: "default",
   activationMode: "toggle",
-  activationHotkey: "Alt+Space",
+  activationHotkey: "Alt+Shift+R",
   modeSelectorHotkey: "Alt+Shift+K",
   recordingPillPosition: "bottom_center",
   typingBaselineWpm: 40
