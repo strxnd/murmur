@@ -27,6 +27,7 @@ describe("DbusSessionConnection", () => {
     await expect(pending).rejects.toThrow("disconnected");
     expect(bus.connection.end).toHaveBeenCalledOnce();
     expect(onLost).toHaveBeenCalledWith(expect.objectContaining({ message: "disconnected" }));
+    expect(() => bus.connection.emit("error", new Error("late transport error"))).not.toThrow();
   });
 
   it("closes a no-reply bus on timeout so dbus-native reply cookies cannot accumulate", async () => {

@@ -17,6 +17,8 @@ export interface DbusMessage {
   body?: unknown[];
 }
 
+const swallowClosedConnectionError = (): void => undefined;
+
 interface PendingInvocation {
   reject: (error: Error) => void;
 }
@@ -99,6 +101,7 @@ export class DbusSessionConnection<TBus extends DbusMessageBus = DbusMessageBus>
     this.bus = null;
     bus.connection.removeListener("message", this.handleMessage);
     bus.connection.removeListener("error", this.handleError);
+    bus.connection.on("error", swallowClosedConnectionError);
     for (const pending of [...this.pendingInvocations]) pending.reject(error);
     bus.connection.end?.();
     if (notify) this.onConnectionLost(error);
