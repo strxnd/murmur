@@ -50,7 +50,7 @@ export class LinuxClipboardService {
       await restoreExternalSelections(restoreStandard, restorePrimary);
     };
     const onAbort = (): void => {
-      void restoreAfterAbort();
+      void restoreAfterAbort().catch(() => undefined);
     };
     signal?.addEventListener("abort", onAbort, { once: true });
 

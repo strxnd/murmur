@@ -53,10 +53,6 @@ export class PasteService {
         await clipboardLease?.restoreIfOwned();
         if (clipboard.readText() === text) restoreClipboardSnapshot(previousClipboard);
       };
-      const onAbort = (): void => {
-        if (!pasteDispatchStarted) void restoreIfOwned();
-      };
-      signal?.addEventListener("abort", onAbort, { once: true });
 
       try {
         clipboardLease = await this.linuxClipboard.writeTextForPaste(text, signal);
@@ -66,7 +62,6 @@ export class PasteService {
         throwIfAborted(signal);
 
         pasteDispatchStarted = true;
-        signal?.removeEventListener("abort", onAbort);
         const result = await this.textAutomation.pasteClipboard();
         if (!result.success) {
           return { pasted: false, message: result.message };
@@ -78,8 +73,6 @@ export class PasteService {
       } catch (error) {
         if (signal?.aborted && !pasteDispatchStarted) await restoreIfOwned();
         throw error;
-      } finally {
-        signal?.removeEventListener("abort", onAbort);
       }
     }, signal);
   }
