@@ -66,7 +66,7 @@ describe("LinuxClipboardService", () => {
     );
   });
 
-  it("restores owned clipboard selections after a successful paste", async () => {
+  it("leaves standard clipboard restoration to the full snapshot after a successful paste", async () => {
     clipboardHarness.writeText("previous clipboard");
     clipboardHarness.writeText("previous primary", "selection");
     const calls: ExecCall[] = [];
@@ -79,15 +79,20 @@ describe("LinuxClipboardService", () => {
     const lease = await service.writeTextForPaste("processed output");
     await lease.restoreIfOwned();
 
+    expect(clipboardHarness.readText()).toBe("processed output");
     expect(clipboardHarness.readText("selection")).toBe("previous primary");
     expect(calls).toEqual(
       expect.arrayContaining([
-        { command: "wl-copy", args: [], input: "previous clipboard" },
         { command: "wl-copy", args: ["--primary"], input: "previous primary" },
-        { command: "xclip", args: ["-selection", "clipboard"], input: "previous clipboard" },
         { command: "xclip", args: ["-selection", "primary"], input: "previous primary" }
       ])
     );
+    expect(calls).not.toContainEqual({ command: "wl-copy", args: [], input: "previous clipboard" });
+    expect(calls).not.toContainEqual({
+      command: "xclip",
+      args: ["-selection", "clipboard"],
+      input: "previous clipboard"
+    });
   });
 
   it("restores clipboard selections when cancellation interrupts helper writes", async () => {

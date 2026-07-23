@@ -72,13 +72,12 @@ export class LinuxClipboardService {
 
       return {
         restoreIfOwned: async () => {
-          const restoreStandard = clipboard.readText() === text;
           let restorePrimary = this.readElectronPrimarySelection() === text;
           if (this.platform === "linux" && !restorePrimary && (await this.readExternalPrimaryText().catch(() => undefined)) === text) {
             restorePrimary = true;
           }
           if (restorePrimary) this.writeElectronPrimarySelection(previousPrimary);
-          await restoreExternalSelections(restoreStandard, restorePrimary);
+          await restoreExternalSelections(false, restorePrimary);
         }
       };
     } finally {
