@@ -1289,7 +1289,8 @@ export class AppController {
   private async captureRecordingContext(operation: DictationSessionOperation): Promise<ContextSnapshot> {
     this.dictationOwner.assertCurrent(operation);
     return this.context.capture({
-      selectedText: operation.plan.settings.selectedTextCapture !== "disabled"
+      selectedText: operation.plan.settings.selectedTextCapture !== "disabled",
+      signal: operation.controller.signal
     });
   }
 
