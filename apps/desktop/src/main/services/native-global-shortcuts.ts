@@ -1257,7 +1257,7 @@ export function isTrustedDesktopShortcutProcessChain(chain: DesktopShortcutProce
 }
 
 export function nativeShortcutCallbackCommand(method: "Activate" | "Deactivate" | "ModeSelector"): string {
-  return `dbus-send --session --type=method_call --dest=${dbusServiceName} ${dbusObjectPath} ${dbusCallbackInterface}.${method}`;
+  return `dbus-send --session --type=method_call --print-reply --reply-timeout=${nativeTimeoutMs} --dest=${dbusServiceName} ${dbusObjectPath} ${dbusCallbackInterface}.${method}`;
 }
 
 const trustedDesktopShortcutExecutables = new Set(["gnome-settings-daemon", "gnome-shell", "gsd-media-keys", "hyprland"]);

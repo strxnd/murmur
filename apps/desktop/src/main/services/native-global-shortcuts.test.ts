@@ -90,7 +90,7 @@ describe("acceleratorToHyprlandBinding", () => {
 describe("native shortcut callback authorization", () => {
   it("keeps authentication material out of readable compositor commands", () => {
     expect(nativeShortcutCallbackCommand("Activate")).toBe(
-      "dbus-send --session --type=method_call --dest=dev.murmur.App /dev/murmur/App dev.murmur.App.Activate"
+      "dbus-send --session --type=method_call --print-reply --reply-timeout=3000 --dest=dev.murmur.App /dev/murmur/App dev.murmur.App.Activate"
     );
   });
 
