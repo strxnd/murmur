@@ -32,7 +32,14 @@ import type {
   VocabularyEntry
 } from "../../shared/types";
 import { ensureOwnerOnlyDirectory, ensureOwnerOnlyFile, ownerOnlyFileMode, type AppPaths } from "./app-paths";
-import { ProviderSecretStore, secretIdForProvider, type ProviderSecretCodec, type ProviderSecretKind } from "./provider-secrets";
+import {
+  ProviderSecretStore,
+  secretIdForProvider,
+  type ProviderSecretCodec,
+  type ProviderSecretKind,
+  type ProviderSecretMutation,
+  type ProviderSecretProtectionStatus
+} from "./provider-secrets";
 
 interface PersistedConfigState {
   settings: AppSettings;
@@ -47,6 +54,10 @@ interface PersistedConfigState {
 
 interface PersistedState extends PersistedConfigState {
   history: DictationHistoryItem[];
+}
+
+interface ProviderMutationJournal {
+  version: 1;
 }
 
 type LegacyModeConfig = Partial<ModeConfig> & {
@@ -142,6 +153,7 @@ export class StorageService {
     ensureOwnerOnlyDirectory(paths.cacheDir);
     ensureOwnerOnlyDirectory(paths.tempDir);
     ensureOwnerOnlyDirectory(paths.audioDir);
+    this.recoverProviderMutation();
     this.open();
     this.migrateProviderSecrets();
   }
@@ -150,7 +162,13 @@ export class StorageService {
     return this.backendDiagnostic ? [this.backendDiagnostic] : [];
   }
 
+  getProviderSecretProtectionStatus(): ProviderSecretProtectionStatus {
+    this.recoverProviderMutationIfNeeded();
+    return this.providerSecrets.protectionStatus();
+  }
+
   getState(): PersistedState {
+    this.recoverProviderMutationIfNeeded();
     const state = this.normalizeState(this.readState());
     const retention = this.applyTextRetention(state);
     if (retention.removed.length > 0) {
@@ -195,30 +213,30 @@ export class StorageService {
   }
 
   setTranscriptionProviders(providers: TranscriptionProviderConfig[]): PersistedState {
-    const state = this.getState();
-    state.transcriptionProviders = this.redactTranscriptionProviderSecrets(this.normalizeTranscriptionProviders(providers));
-    this.providerSecrets.pruneKind(
+    const previousState = this.getState();
+    const prepared = this.prepareProviderSecrets(
       "stt",
-      new Set(state.transcriptionProviders.map((provider) => provider.apiKeySecretId ?? secretIdForProvider("stt", provider.id)))
+      this.normalizeTranscriptionProviders(providers),
+      previousState.transcriptionProviders
     );
-    return this.writeState(state);
+    const nextState = { ...previousState, transcriptionProviders: prepared.providers as TranscriptionProviderConfig[] };
+    return this.commitProviderMutation(nextState, "stt", prepared.mutations);
   }
 
   setLlmProviders(providers: LlmProviderConfig[]): PersistedState {
-    const state = this.getState();
-    state.llmProviders = this.redactLlmProviderSecrets(this.normalizeLlmProviders(providers));
-    this.providerSecrets.pruneKind(
-      "llm",
-      new Set(state.llmProviders.map((provider) => provider.apiKeySecretId ?? secretIdForProvider("llm", provider.id)))
-    );
-    return this.writeState(state);
+    const previousState = this.getState();
+    const prepared = this.prepareProviderSecrets("llm", this.normalizeLlmProviders(providers), previousState.llmProviders);
+    const nextState = { ...previousState, llmProviders: prepared.providers as LlmProviderConfig[] };
+    return this.commitProviderMutation(nextState, "llm", prepared.mutations);
   }
 
   resolveTranscriptionProviderSecret(provider: TranscriptionProviderConfig): TranscriptionProviderConfig {
+    this.recoverProviderMutationIfNeeded();
     return this.resolveProviderSecret("stt", provider);
   }
 
   resolveLlmProviderSecret(provider: LlmProviderConfig): LlmProviderConfig {
+    this.recoverProviderMutationIfNeeded();
     return this.resolveProviderSecret("llm", provider);
   }
 
@@ -468,71 +486,207 @@ export class StorageService {
 
   private migrateProviderSecrets(): void {
     const config = this.readConfig();
-    this.deleteLegacyCodexProviderSecrets(config.llmProviders);
+    if (!config.transcriptionProviders && !config.llmProviders) return;
+
     const modes = this.normalizeModes(config.modes);
+    const normalizedStt = this.normalizeTranscriptionProviders(config.transcriptionProviders);
+    const normalizedLlm = this.normalizeLlmProviders(config.llmProviders);
+    const preparedStt = this.prepareProviderSecrets("stt", normalizedStt, this.redactTranscriptionProviderSecrets(normalizedStt));
+    const preparedLlm = this.prepareProviderSecrets("llm", normalizedLlm, this.redactLlmProviderSecrets(normalizedLlm));
+    const legacyCodexMutations = this.legacyCodexSecretMutations(config.llmProviders);
     const nextConfig: PersistedConfigState = {
       settings: this.normalizeSettings(config.settings, modes),
       modes,
-      transcriptionProviders: this.redactTranscriptionProviderSecrets(this.normalizeTranscriptionProviders(config.transcriptionProviders)),
-      llmProviders: this.redactLlmProviderSecrets(this.normalizeLlmProviders(config.llmProviders)),
+      transcriptionProviders: preparedStt.providers,
+      llmProviders: preparedLlm.providers,
       autoModeRules: this.normalizeAutoModeRules(config.autoModeRules ?? defaultAutoModeRules, modes),
       vocabulary: config.vocabulary ?? [],
       modelLibrary: this.normalizeModelLibrary(config.modelLibrary),
       releaseNotes: this.normalizeReleaseNotes(config.releaseNotes)
     };
 
-    if (config.transcriptionProviders || config.llmProviders) {
-      this.writeConfig(nextConfig);
-    }
+    this.commitProviderConfigMutation(nextConfig, [
+      ...preparedStt.mutations,
+      ...preparedLlm.mutations,
+      ...legacyCodexMutations
+    ]);
   }
 
-  private deleteLegacyCodexProviderSecrets(providers: Array<Partial<LlmProviderConfig>> | undefined): void {
+  private legacyCodexSecretMutations(providers: Array<Partial<LlmProviderConfig>> | undefined): ProviderSecretMutation[] {
+    const mutations: ProviderSecretMutation[] = [];
     for (const provider of providers ?? []) {
       if (provider.type !== "codex") continue;
-      this.providerSecrets.delete(provider.apiKeySecretId);
-      if (isNonEmptyString(provider.id)) {
-        this.providerSecrets.delete(secretIdForProvider("llm", provider.id));
+      if (provider.apiKeySecretId) mutations.push({ secretId: provider.apiKeySecretId });
+      if (isNonEmptyString(provider.id)) mutations.push({ secretId: secretIdForProvider("llm", provider.id) });
+    }
+    return mutations;
+  }
+
+  private redactTranscriptionProviderSecrets(providers: TranscriptionProviderConfig[]): TranscriptionProviderConfig[] {
+    return providers.map((provider) => this.providerSnapshot("stt", provider));
+  }
+
+  private redactLlmProviderSecrets(providers: LlmProviderConfig[]): LlmProviderConfig[] {
+    return providers.map((provider) => (provider.type === "codex" ? { ...codexProviderDefaults } : this.providerSnapshot("llm", provider)));
+  }
+
+  private providerSnapshot<T extends TranscriptionProviderConfig | LlmProviderConfig>(kind: ProviderSecretKind, provider: T): T {
+    const secretId = provider.apiKeySecretId ?? secretIdForProvider(kind, provider.id);
+    const snapshot = {
+      ...provider,
+      hasStoredSecret: Boolean(this.providerSecrets.get(secretId)),
+      hasSecretRecord: this.providerSecrets.has(secretId)
+    };
+    delete snapshot.apiKey;
+    delete snapshot.apiKeyIntent;
+    return snapshot;
+  }
+
+  private prepareProviderSecrets<T extends TranscriptionProviderConfig | LlmProviderConfig>(
+    kind: ProviderSecretKind,
+    providers: T[],
+    previousProviders: T[]
+  ): { providers: T[]; mutations: ProviderSecretMutation[] } {
+    const mutations: ProviderSecretMutation[] = [];
+    const prepared = providers.map((provider) => {
+      if ("type" in provider && provider.type === "codex") return { ...codexProviderDefaults } as T;
+
+      const previous = previousProviders.find((candidate) => candidate.id === provider.id);
+      const secretId = previous?.apiKeySecretId ?? provider.apiKeySecretId ?? secretIdForProvider(kind, provider.id);
+      const apiKey = provider.apiKey?.trim();
+      if (
+        previous?.hasSecretRecord &&
+        providerCredentialScopeChanged(previous, provider) &&
+        provider.apiKeyIntent === undefined &&
+        !apiKey
+      ) {
+        throw new Error(`Provider "${provider.name}" must explicitly keep, replace, or remove its stored credential after changing the connection.`);
+      }
+      const intent = provider.apiKeyIntent ?? (apiKey ? "replace" : provider.apiKey === "" ? "remove" : "keep");
+      const next = { ...provider };
+      delete next.apiKey;
+      delete next.apiKeyIntent;
+      delete next.hasStoredSecret;
+      delete next.hasSecretRecord;
+
+      if (intent === "replace") {
+        if (!apiKey) throw new Error(`Provider "${provider.name}" needs a non-empty API key to replace its stored credential.`);
+        mutations.push({ secretId, value: apiKey });
+        next.apiKeySecretId = secretId;
+        return next;
+      }
+
+      if (intent === "remove") {
+        mutations.push({ secretId });
+        delete next.apiKeySecretId;
+        return next;
+      }
+
+      if (this.providerSecrets.has(secretId)) next.apiKeySecretId = secretId;
+      else delete next.apiKeySecretId;
+      return next;
+    });
+
+    return { providers: prepared, mutations };
+  }
+
+  private commitProviderMutation(
+    nextState: PersistedState,
+    kind: ProviderSecretKind,
+    mutations: ProviderSecretMutation[]
+  ): PersistedState {
+    const providers = kind === "stt" ? nextState.transcriptionProviders : nextState.llmProviders;
+    const activeSecretIds = new Set(
+      providers.flatMap((provider) => (provider.apiKeySecretId ? [provider.apiKeySecretId] : []))
+    );
+    this.commitProviderConfigMutation(toConfigState(nextState), mutations, { kind, activeSecretIds });
+    return this.normalizeState(nextState);
+  }
+
+  private commitProviderConfigMutation(
+    nextConfig: PersistedConfigState,
+    mutations: ProviderSecretMutation[],
+    prune?: { kind: ProviderSecretKind; activeSecretIds: Set<string> }
+  ): void {
+    this.providerSecrets.prepareApply(mutations, prune);
+    try {
+      writeJsonAtomic(this.providerMutationConfigPath(), nextConfig);
+      writeJsonAtomic(this.providerMutationJournalPath(), { version: 1 } satisfies ProviderMutationJournal);
+    } catch (error) {
+      this.discardProviderMutation();
+      throw error;
+    }
+
+    try {
+      this.applyPreparedProviderMutation();
+    } catch (error) {
+      try {
+        this.recoverProviderMutation();
+      } catch {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Provider configuration transaction is pending recovery: ${message}`);
       }
     }
   }
 
-  private redactTranscriptionProviderSecrets(providers: TranscriptionProviderConfig[]): TranscriptionProviderConfig[] {
-    return providers.map((provider) => this.redactProviderSecret("stt", provider));
+  private recoverProviderMutationIfNeeded(): void {
+    if (existsSync(this.providerMutationJournalPath())) this.recoverProviderMutation();
   }
 
-  private redactLlmProviderSecrets(providers: LlmProviderConfig[]): LlmProviderConfig[] {
-    return providers.map((provider) => {
-      if (provider.type !== "codex") return this.redactProviderSecret("llm", provider);
-      this.providerSecrets.delete(provider.apiKeySecretId);
-      this.providerSecrets.delete(secretIdForProvider("llm", provider.id));
-      return provider;
-    });
+  private recoverProviderMutation(): void {
+    if (!existsSync(this.providerMutationJournalPath())) {
+      this.discardProviderMutation();
+      return;
+    }
+
+    const journal = readJsonStrict(this.providerMutationJournalPath(), "Provider configuration transaction");
+    if (!isProviderMutationJournal(journal)) {
+      throw new Error(`Provider configuration transaction is malformed: ${this.providerMutationJournalPath()}`);
+    }
+    if (!existsSync(this.providerMutationConfigPath()) || !this.providerSecrets.hasPrepared()) {
+      throw new Error("Provider configuration transaction is missing prepared state.");
+    }
+
+    this.applyPreparedProviderMutation();
   }
 
-  private redactProviderSecret<T extends TranscriptionProviderConfig | LlmProviderConfig>(kind: ProviderSecretKind, provider: T): T {
-    const secretId = provider.apiKeySecretId ?? secretIdForProvider(kind, provider.id);
-    const apiKey = typeof provider.apiKey === "string" ? provider.apiKey.trim() : undefined;
-
-    if (apiKey) {
-      this.providerSecrets.set(secretId, apiKey);
-      const redacted = { ...provider, apiKeySecretId: secretId };
-      delete redacted.apiKey;
-      return redacted;
+  private applyPreparedProviderMutation(): void {
+    const config = readJsonStrict(this.providerMutationConfigPath(), "Provider configuration transaction state");
+    if (!isPersistedConfigState(config)) {
+      throw new Error(`Provider configuration transaction state is malformed: ${this.providerMutationConfigPath()}`);
     }
 
-    if (provider.apiKey === "" && !provider.apiKeySecretId) {
-      this.providerSecrets.delete(secretId);
+    this.writeConfig(config);
+    this.providerSecrets.commitPrepared();
+    removeDurable(this.providerMutationJournalPath());
+    try {
+      this.discardProviderMutation();
+    } catch {
+      // The commit marker is durably gone, so leftover prepared files are harmless and cleaned on restart.
     }
+  }
 
-    const redacted = { ...provider };
-    delete redacted.apiKey;
-    return redacted;
+  private discardProviderMutation(): void {
+    removeDurable(this.providerMutationConfigPath());
+    this.providerSecrets.discardPrepared();
+  }
+
+  private providerMutationJournalPath(): string {
+    return `${this.paths.configPath}.provider-transaction`;
+  }
+
+  private providerMutationConfigPath(): string {
+    return `${this.paths.configPath}.provider-transaction.next`;
   }
 
   private resolveProviderSecret<T extends TranscriptionProviderConfig | LlmProviderConfig>(kind: ProviderSecretKind, provider: T): T {
     if (provider.apiKey?.trim()) return provider;
-    const apiKey = this.providerSecrets.get(provider.apiKeySecretId ?? secretIdForProvider(kind, provider.id));
-    return apiKey ? { ...provider, apiKey } : provider;
+    const secretId = provider.apiKeySecretId ?? secretIdForProvider(kind, provider.id);
+    const apiKey = this.providerSecrets.get(secretId);
+    const hasSecretRecord = this.providerSecrets.has(secretId);
+    return apiKey
+      ? { ...provider, apiKey, hasStoredSecret: true, hasSecretRecord }
+      : { ...provider, hasStoredSecret: false, hasSecretRecord };
   }
 
   private closeDatabase(): void {
@@ -838,6 +992,33 @@ function retainHistoryItems(
   return { retained, removed };
 }
 
+function readJsonStrict(path: string, label: string): unknown {
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as unknown;
+  } catch {
+    throw new Error(`${label} is malformed: ${path}`);
+  }
+}
+
+function isProviderMutationJournal(value: unknown): value is ProviderMutationJournal {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value) && (value as ProviderMutationJournal).version === 1);
+}
+
+function isPersistedConfigState(value: unknown): value is PersistedConfigState {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<PersistedConfigState>;
+  return (
+    Boolean(candidate.settings && typeof candidate.settings === "object" && !Array.isArray(candidate.settings)) &&
+    Array.isArray(candidate.modes) &&
+    Array.isArray(candidate.transcriptionProviders) &&
+    Array.isArray(candidate.llmProviders) &&
+    Array.isArray(candidate.autoModeRules) &&
+    Array.isArray(candidate.vocabulary) &&
+    Boolean(candidate.modelLibrary && typeof candidate.modelLibrary === "object" && !Array.isArray(candidate.modelLibrary)) &&
+    Array.isArray(candidate.releaseNotes)
+  );
+}
+
 function writeJsonAtomic(path: string, value: unknown): void {
   const dir = dirname(path);
   const tempPath = join(dir, `.${basename(path)}.${process.pid}.${Date.now()}.tmp`);
@@ -865,6 +1046,12 @@ function writeJsonAtomic(path: string, value: unknown): void {
   }
 }
 
+function removeDurable(path: string): void {
+  if (!existsSync(path)) return;
+  rmSync(path);
+  fsyncDirectory(dirname(path));
+}
+
 function fsyncDirectory(path: string): void {
   let fd: number | null = null;
   try {
@@ -881,13 +1068,35 @@ function toConfigState(state: PersistedState): PersistedConfigState {
   return {
     settings: state.settings,
     modes: state.modes,
-    transcriptionProviders: state.transcriptionProviders,
-    llmProviders: state.llmProviders,
+    transcriptionProviders: state.transcriptionProviders.map(persistedProviderConfig),
+    llmProviders: state.llmProviders.map(persistedProviderConfig),
     autoModeRules: state.autoModeRules,
     vocabulary: state.vocabulary,
     modelLibrary: state.modelLibrary,
     releaseNotes: state.releaseNotes
   };
+}
+
+function providerCredentialScopeChanged(
+  previous: TranscriptionProviderConfig | LlmProviderConfig,
+  next: TranscriptionProviderConfig | LlmProviderConfig
+): boolean {
+  return (
+    previous.type !== next.type ||
+    previous.baseUrl !== next.baseUrl ||
+    previous.isCloud !== next.isCloud ||
+    ("endpointPath" in previous ? previous.endpointPath : undefined) !==
+      ("endpointPath" in next ? next.endpointPath : undefined)
+  );
+}
+
+function persistedProviderConfig<T extends TranscriptionProviderConfig | LlmProviderConfig>(provider: T): T {
+  const persisted = { ...provider };
+  delete persisted.apiKey;
+  delete persisted.apiKeyIntent;
+  delete persisted.hasStoredSecret;
+  delete persisted.hasSecretRecord;
+  return persisted;
 }
 
 function isPathBelow(path: string, parent: string): boolean {
@@ -969,6 +1178,12 @@ function normalizeTranscriptionProvider(
     endpointPath: isNonEmptyString(source.endpointPath) ? source.endpointPath : defaultProvider?.endpointPath,
     apiKeySecretId: isNonEmptyString(source.apiKeySecretId) ? source.apiKeySecretId : defaultProvider?.apiKeySecretId,
     apiKey: typeof source.apiKey === "string" ? source.apiKey : defaultProvider?.apiKey,
+    apiKeyIntent:
+      source.apiKeyIntent === "keep" || source.apiKeyIntent === "replace" || source.apiKeyIntent === "remove"
+        ? source.apiKeyIntent
+        : defaultProvider?.apiKeyIntent,
+    hasStoredSecret: typeof source.hasStoredSecret === "boolean" ? source.hasStoredSecret : defaultProvider?.hasStoredSecret,
+    hasSecretRecord: typeof source.hasSecretRecord === "boolean" ? source.hasSecretRecord : defaultProvider?.hasSecretRecord,
     isCloud: typeof source.isCloud === "boolean" ? source.isCloud : Boolean(defaultProvider?.isCloud),
     isLocal: typeof source.isLocal === "boolean" ? source.isLocal : !Boolean(defaultProvider?.isCloud),
     defaultModel: isNonEmptyString(source.defaultModel) ? source.defaultModel : defaultProvider?.defaultModel,
@@ -1011,6 +1226,12 @@ function normalizeLlmProvider(
     baseUrl: isNonEmptyString(source.baseUrl) ? source.baseUrl : defaultProvider?.baseUrl,
     apiKeySecretId: isNonEmptyString(source.apiKeySecretId) ? source.apiKeySecretId : defaultProvider?.apiKeySecretId,
     apiKey: typeof source.apiKey === "string" ? source.apiKey : defaultProvider?.apiKey,
+    apiKeyIntent:
+      source.apiKeyIntent === "keep" || source.apiKeyIntent === "replace" || source.apiKeyIntent === "remove"
+        ? source.apiKeyIntent
+        : defaultProvider?.apiKeyIntent,
+    hasStoredSecret: typeof source.hasStoredSecret === "boolean" ? source.hasStoredSecret : defaultProvider?.hasStoredSecret,
+    hasSecretRecord: typeof source.hasSecretRecord === "boolean" ? source.hasSecretRecord : defaultProvider?.hasSecretRecord,
     isCloud: typeof source.isCloud === "boolean" ? source.isCloud : Boolean(defaultProvider?.isCloud),
     defaultModel: isOpenAiCompatible ? undefined : isNonEmptyString(source.defaultModel) ? source.defaultModel : defaultProvider?.defaultModel,
     models: isOpenAiCompatible ? normalizeProviderModelIds([source.models, source.defaultModel]) : undefined,

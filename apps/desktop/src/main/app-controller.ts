@@ -1909,8 +1909,18 @@ export class AppController {
   }
 
   private getProviderRuntime(): ProviderRuntimeSnapshot {
+    const secretStorageStatus = this.storage.getProviderSecretProtectionStatus?.() ?? "plaintext";
     return {
-      codex: this.codex.getStatus()
+      codex: this.codex.getStatus(),
+      secretStorage: {
+        status: secretStorageStatus,
+        message:
+          secretStorageStatus === "encrypted"
+            ? "Provider credentials are encrypted with the operating system's secure storage."
+            : secretStorageStatus === "plaintext"
+              ? "Secure storage is unavailable, so provider credentials are stored locally without operating-system encryption."
+              : "Encrypted provider credentials are present, but secure storage is currently unavailable."
+      }
     };
   }
 

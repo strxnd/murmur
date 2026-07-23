@@ -216,6 +216,53 @@ describe("CodexOAuthService", () => {
     expect(service.getStatus()).toMatchObject({ status: "signed_out", modelAvailable: false });
   });
 
+  it("prevents a delayed refresh from restoring credentials after logout", async () => {
+    const store = connectedStore();
+    store.tokens = { ...store.tokens!, expiresAt: Date.now() - 1 };
+    const refreshResponse = deferred<Response>();
+    const fetchMock = vi.fn<typeof fetch>(() => refreshResponse.promise);
+    const service = new CodexOAuthService({ authStore: store, fetch: fetchMock });
+
+    const refresh = service.refreshStatus();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    const logout = service.logout();
+    const refreshDuringLogout = service.refreshStatus();
+    await expect(service.startLogin()).rejects.toThrow("Codex logout is in progress.");
+    await expect(service.processCleanup({ prompt: "cleanup", model: "gpt-5.6-luna" })).rejects.toThrow(
+      "Codex logout is in progress."
+    );
+    refreshResponse.resolve(jsonResponse({ access_token: accountToken(), refresh_token: "refresh-2", expires_in: 3600 }));
+
+    await expect(logout).resolves.toMatchObject({ status: "signed_out" });
+    await expect(refreshDuringLogout).resolves.toMatchObject({ status: "signed_out" });
+    await expect(refresh).resolves.toMatchObject({ modelAvailable: false });
+    expect(service.getStatus()).toMatchObject({ status: "signed_out", modelAvailable: false });
+    expect(store.tokens).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("aborts and awaits active cleanup before completing logout", async () => {
+    const store = connectedStore();
+    const cleanupResponse = deferred<Response>();
+    const fetchMock = vi.fn<typeof fetch>(() => cleanupResponse.promise);
+    const service = new CodexOAuthService({ authStore: store, fetch: fetchMock });
+
+    const cleanup = service.processCleanup({ prompt: "cleanup", model: "gpt-5.6-luna" });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    const logout = service.logout();
+    cleanupResponse.resolve(
+      eventStream([
+        { type: "response.output_text.delta", delta: "Stale output" },
+        { type: "response.completed", response: { output: null } }
+      ])
+    );
+
+    await expect(logout).resolves.toMatchObject({ status: "signed_out" });
+    await expect(cleanup).rejects.toMatchObject({ name: "AbortError" });
+    expect(store.tokens).toBeUndefined();
+    expect(service.getStatus()).toMatchObject({ status: "signed_out", modelAvailable: false });
+  });
+
   it("sends direct Codex Responses requests and reads completed streamed output", async () => {
     const store = connectedStore();
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(

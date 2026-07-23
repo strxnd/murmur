@@ -10,6 +10,7 @@ const originalIdleTimeout = process.env.MURMUR_PROVIDER_RESPONSE_IDLE_TIMEOUT_MS
 
 afterEach(async () => {
   restoreTimeoutEnv();
+  vi.unstubAllGlobals();
   await Promise.all(servers.splice(0).map((close) => close()));
 });
 
@@ -35,6 +36,34 @@ describe("LlmService", () => {
     const service = new LlmService();
 
     await expect(service.process({ provider: ollamaProvider(url), prompt: "clean this up" })).rejects.toThrow(/Ollama response/);
+  });
+
+  it("sends Google API keys in headers without placing them in request URLs", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "Clean this." }] } }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = new LlmService();
+    const provider: LlmProviderConfig = {
+      id: "google",
+      type: "google",
+      name: "Google Gemini",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      apiKey: "google-secret",
+      isCloud: true,
+      defaultModel: "gemini-2.5-flash",
+      enabled: true
+    };
+
+    await expect(service.process({ provider, prompt: "clean this" })).resolves.toMatchObject({ text: "Clean this." });
+
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(String(url)).not.toContain("google-secret");
+    expect(String(url)).not.toContain("?key=");
+    expect(init?.headers).toMatchObject({ "x-goog-api-key": "google-secret" });
   });
 
   it("dispatches Codex cleanup and validation through the OAuth client", async () => {

@@ -9,7 +9,7 @@ import type {
 interface CloudCredentialGate {
   isCloud: boolean;
   apiKey?: string;
-  apiKeySecretId?: string;
+  hasStoredSecret?: boolean;
 }
 
 const providerLabels: Record<ModelProvider, string> = {
@@ -38,7 +38,7 @@ export function modelName(item: ModelCatalogItem): string | undefined {
 }
 
 export function hasUsableCloudCredentials(provider: CloudCredentialGate): boolean {
-  return !provider.isCloud || hasNonEmptyString(provider.apiKey) || hasNonEmptyString(provider.apiKeySecretId);
+  return !provider.isCloud || hasNonEmptyString(provider.apiKey) || provider.hasStoredSecret === true;
 }
 
 export function isTranscriptionProviderUsable(provider: TranscriptionProviderConfig): boolean {
@@ -66,10 +66,14 @@ export function isModelProviderUsable(
   }
 ): boolean {
   if (item.kind === "voice") {
+    const providerId = sttProviderId(item);
+    if (!state.transcriptionProviders.some((provider) => provider.id === providerId)) return false;
     const provider = transcriptionProviderFromModel(item, state.transcriptionProviders);
     return Boolean(provider && isTranscriptionProviderUsable(provider));
   }
 
+  const providerId = item.defaultProviderConfig?.providerId ?? item.discovery?.providerId ?? llmProviderId(item);
+  if (!state.llmProviders.some((provider) => provider.id === providerId)) return false;
   const provider = llmProviderFromModel(item, state.llmProviders);
   return Boolean(provider && isLlmProviderUsable(provider, state.providerRuntime));
 }
@@ -83,19 +87,24 @@ export function transcriptionProviderFromModel(
 
   const providerId = sttProviderId(item);
   const existing = providers.find((provider) => provider.id === providerId);
+  if (existing) {
+    return {
+      ...existing,
+      defaultModel: modelName(item) ?? existing.defaultModel
+    };
+  }
+
   return {
-    id: existing?.id ?? providerId,
+    id: providerId,
     type: config.sttProviderType,
-    name: existing?.name || sttProviderName(item),
-    baseUrl: config.baseUrl ?? existing?.baseUrl ?? "",
-    endpointPath: config.endpointPath ?? existing?.endpointPath,
-    apiKeySecretId: existing?.apiKeySecretId,
-    apiKey: existing?.apiKey,
+    name: sttProviderName(item),
+    baseUrl: config.baseUrl ?? "",
+    endpointPath: config.endpointPath,
     isCloud: item.isCloud,
     isLocal: !item.isCloud,
-    defaultModel: modelName(item) ?? existing?.defaultModel,
-    defaultLanguage: existing?.defaultLanguage ?? "auto",
-    streamingMode: existing?.streamingMode ?? "none",
+    defaultModel: modelName(item),
+    defaultLanguage: "auto",
+    streamingMode: "none",
     enabled: true
   };
 }
@@ -106,15 +115,20 @@ export function llmProviderFromModel(item: ModelCatalogItem, providers: LlmProvi
 
   const providerId = config.providerId ?? item.discovery?.providerId ?? llmProviderId(item);
   const existing = providers.find((provider) => provider.id === providerId);
+  if (existing) {
+    return {
+      ...existing,
+      defaultModel: modelName(item) ?? existing.defaultModel
+    };
+  }
+
   return {
-    id: existing?.id ?? providerId,
+    id: providerId,
     type: config.llmProviderType,
-    name: existing?.name || llmProviderName(item),
-    baseUrl: config.baseUrl ?? existing?.baseUrl,
-    apiKeySecretId: existing?.apiKeySecretId,
-    apiKey: existing?.apiKey,
+    name: llmProviderName(item),
+    baseUrl: config.baseUrl,
     isCloud: item.isCloud,
-    defaultModel: modelName(item) ?? existing?.defaultModel,
+    defaultModel: modelName(item),
     enabled: true
   };
 }

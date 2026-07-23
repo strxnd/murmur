@@ -42,12 +42,15 @@ import {
   customTranscriptionProviderTypes,
   hasCloudCredentialChanges,
   hasProvidersFormChanges,
+  hasUnconfirmedProviderCredentialIntent,
+  invalidateStoredCredentialIntent,
   isCloudCredentialLlmProvider,
   isCloudCredentialTranscriptionProvider,
   isDefaultLlmProvider,
   isDefaultTranscriptionProvider,
   llmProviderTypeLabel,
   normalizeProvidersFormValues,
+  providersFormValuesAfterSave,
   providersFormValuesFromState,
   transcriptionProviderTypeLabel,
   type CloudCredentialProviderId
@@ -165,7 +168,13 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
       return;
     }
 
-    const values = normalizeProvidersFormValues(form.getValues());
+    const draftValues = form.getValues();
+    if (hasUnconfirmedProviderCredentialIntent(draftValues)) {
+      setSaveError("Choose whether to keep, replace, or remove the stored credential after changing its provider connection.");
+      return;
+    }
+
+    const values = normalizeProvidersFormValues(draftValues);
     const persistedValues = normalizeProvidersFormValues(persistedValuesRef.current);
     const shouldSaveStt = !sameValue(values.transcriptionProviders, persistedValues.transcriptionProviders);
     const shouldSaveLlm = !sameValue(values.llmProviders, persistedValues.llmProviders);
@@ -181,8 +190,9 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
       if (shouldSaveStt) await setSttProviders(values.transcriptionProviders);
       if (shouldSaveLlm) await setLlmProviders(values.llmProviders);
 
-      persistedValuesRef.current = cloneProvidersFormValues(values);
-      form.reset(cloneProvidersFormValues(values));
+      const savedValues = providersFormValuesAfterSave(values);
+      persistedValuesRef.current = cloneProvidersFormValues(savedValues);
+      form.reset(cloneProvidersFormValues(savedValues));
     } catch (error) {
       setSaveError(`Could not save providers: ${errorMessage(error)}`);
     } finally {
@@ -415,6 +425,7 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
 
         <CloudCredentialsSection
           values={currentValues}
+          secretStorage={state.providerRuntime.secretStorage}
           persistedValues={persistedValuesRef.current}
           validationByProvider={cloudValidationByProvider}
           canSaveKey={(providerId) => hasPendingCloudCredentialKey(providerId, currentValues, persistedValuesRef.current)}
@@ -654,6 +665,7 @@ function codexStatusLabel(runtime: CodexProviderRuntime): string {
 
 function CloudCredentialsSection({
   values,
+  secretStorage,
   persistedValues,
   validationByProvider,
   canSaveKey,
@@ -664,6 +676,7 @@ function CloudCredentialsSection({
   onDismissValidation
 }: {
   values: ProvidersFormValues;
+  secretStorage?: AppStateSnapshot["providerRuntime"]["secretStorage"];
   persistedValues: ProvidersFormValues;
   validationByProvider: Partial<Record<CloudCredentialProviderId, ValidationState>>;
   canSaveKey: (providerId: CloudCredentialProviderId) => boolean;
@@ -679,8 +692,11 @@ function CloudCredentialsSection({
         <div className="min-w-0">
           <h2 className="m-0 text-sm font-semibold text-foreground">Cloud credentials</h2>
           <p className="m-0 mt-1 text-xs text-muted-foreground">Save one API key for each cloud service you want Murmur to use.</p>
+          {secretStorage && <p className="m-0 mt-1 text-xs text-muted-foreground">{secretStorage.message}</p>}
         </div>
-        <Badge tone="cloud">API key only</Badge>
+        <Badge tone={secretStorage?.status === "encrypted" ? "success" : "warning"}>
+          {secretStorage?.status === "encrypted" ? "OS encrypted" : "Local storage"}
+        </Badge>
       </header>
 
       <div className="divide-y divide-border rounded-md border border-border bg-surface">
@@ -959,10 +975,14 @@ function TranscriptionProviderEditor({
                   items={sttTypeItems}
                   value={field.value as (typeof customTranscriptionProviderTypes)[number]}
                   onValueChange={(value) => {
-                    form.setValue(`transcriptionProviders.${index}`, applyTranscriptionProviderType(provider, value), {
-                      shouldDirty: true,
-                      shouldValidate: true
-                    });
+                    form.setValue(
+                      `transcriptionProviders.${index}`,
+                      invalidateStoredCredentialIntent(applyTranscriptionProviderType(provider, value)),
+                      {
+                        shouldDirty: true,
+                        shouldValidate: true
+                      }
+                    );
                   }}
                 />
               )}
@@ -972,7 +992,9 @@ function TranscriptionProviderEditor({
 
         <Field label="Base URL" error={errors?.baseUrl?.message}>
           <Input
-            {...form.register(`transcriptionProviders.${index}.baseUrl`)}
+            {...form.register(`transcriptionProviders.${index}.baseUrl`, {
+              onChange: () => invalidateProviderCredentialIntent(form, "stt", index, provider)
+            })}
             disabled={isRuntimeProvider}
             readOnly={isRuntimeProvider}
             spellCheck={false}
@@ -980,12 +1002,16 @@ function TranscriptionProviderEditor({
         </Field>
 
         <Field label="Endpoint path" error={errors?.endpointPath?.message}>
-          <Input {...form.register(`transcriptionProviders.${index}.endpointPath`)} disabled={provider.type === "sherpa_onnx"} spellCheck={false} />
+          <Input
+            {...form.register(`transcriptionProviders.${index}.endpointPath`, {
+              onChange: () => invalidateProviderCredentialIntent(form, "stt", index, provider)
+            })}
+            disabled={provider.type === "sherpa_onnx"}
+            spellCheck={false}
+          />
         </Field>
 
-        <Field label="API key" description="Keys are stored locally on this device." error={errors?.apiKey?.message}>
-          <Input type="password" autoComplete="off" spellCheck={false} {...form.register(`transcriptionProviders.${index}.apiKey`)} />
-        </Field>
+        <ProviderCredentialField form={form} kind="stt" index={index} provider={provider} error={errors?.apiKey?.message} />
 
         <Field label="Model ID" error={errors?.defaultModel?.message}>
           <Input {...form.register(`transcriptionProviders.${index}.defaultModel`)} spellCheck={false} />
@@ -1085,10 +1111,14 @@ function LlmProviderEditor({
                   items={llmTypeItems}
                   value={field.value as (typeof customLlmProviderTypes)[number]}
                   onValueChange={(value) => {
-                    form.setValue(`llmProviders.${index}`, applyLlmProviderType(provider, value), {
-                      shouldDirty: true,
-                      shouldValidate: true
-                    });
+                    form.setValue(
+                      `llmProviders.${index}`,
+                      invalidateStoredCredentialIntent(applyLlmProviderType(provider, value)),
+                      {
+                        shouldDirty: true,
+                        shouldValidate: true
+                      }
+                    );
                   }}
                 />
               )}
@@ -1097,19 +1127,25 @@ function LlmProviderEditor({
         </Field>
 
         <Field label="Base URL" error={errors?.baseUrl?.message}>
-          <Input {...form.register(`llmProviders.${index}.baseUrl`)} spellCheck={false} />
+          <Input
+            {...form.register(`llmProviders.${index}.baseUrl`, {
+              onChange: () => invalidateProviderCredentialIntent(form, "llm", index, provider)
+            })}
+            spellCheck={false}
+          />
         </Field>
 
         {apiKeyField && (
-          <Field label={apiKeyField.label} description={apiKeyField.description} error={errors?.apiKey?.message}>
-            <Input
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder={apiKeyField.placeholder}
-              {...form.register(`llmProviders.${index}.apiKey`)}
-            />
-          </Field>
+          <ProviderCredentialField
+            form={form}
+            kind="llm"
+            index={index}
+            provider={provider}
+            error={errors?.apiKey?.message}
+            label={apiKeyField.label}
+            description={apiKeyField.description}
+            placeholder={apiKeyField.placeholder}
+          />
         )}
 
         {provider.type === "custom_openai_compatible" && (
@@ -1149,6 +1185,111 @@ function LlmProviderEditor({
       <ValidationMessage state={validation} onDismiss={onDismissValidation} />
     </>
   );
+}
+
+function ProviderCredentialField({
+  form,
+  kind,
+  index,
+  provider,
+  error,
+  label = "API key",
+  description = "Keys are stored locally on this device.",
+  placeholder = "Enter API key"
+}: {
+  form: UseFormReturn<ProvidersFormValues>;
+  kind: ProviderKind;
+  index: number;
+  provider: TranscriptionProviderConfig | LlmProviderConfig;
+  error?: string;
+  label?: string;
+  description?: string;
+  placeholder?: string;
+}): JSX.Element {
+  const fieldName = (kind === "stt" ? `transcriptionProviders.${index}.apiKey` : `llmProviders.${index}.apiKey`) as Path<ProvidersFormValues>;
+  const intentName = (kind === "stt"
+    ? `transcriptionProviders.${index}.apiKeyIntent`
+    : `llmProviders.${index}.apiKeyIntent`) as Path<ProvidersFormValues>;
+  const intent = provider.apiKeyIntent;
+  const hasSecretRecord = provider.hasSecretRecord === true;
+  const intentDescription =
+    intent === "replace"
+      ? "The entered key will replace the stored credential."
+      : intent === "remove"
+        ? hasSecretRecord
+          ? "The stored credential will be removed when you save."
+          : description
+        : intent === "keep"
+          ? "The currently stored credential will stay attached to this provider."
+          : "The connection changed. Choose whether to keep or remove the stored credential, or enter a replacement key.";
+
+  const setIntent = (nextIntent: "keep" | "replace" | "remove" | undefined): void => {
+    form.setValue(intentName, nextIntent, { shouldDirty: true, shouldValidate: true });
+  };
+
+  return (
+    <Field label={label} description={intentDescription} error={error}>
+      <div className="flex flex-col gap-2">
+        <Controller
+          control={form.control}
+          name={fieldName}
+          render={({ field }) => (
+            <Input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={hasSecretRecord && intent !== "replace" ? "Stored key attached" : placeholder}
+              value={typeof field.value === "string" ? field.value : ""}
+              onBlur={field.onBlur}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                field.onChange(value);
+                setIntent(value.trim() ? "replace" : hasSecretRecord ? undefined : "remove");
+              }}
+            />
+          )}
+        />
+        {hasSecretRecord && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant={intent === "keep" ? "secondary" : "ghost"}
+              onClick={() => {
+                form.setValue(fieldName, "", { shouldDirty: true, shouldValidate: true });
+                setIntent("keep");
+              }}
+            >
+              Keep stored key
+            </Button>
+            <Button
+              size="sm"
+              variant={intent === "remove" ? "secondary" : "ghost"}
+              onClick={() => {
+                form.setValue(fieldName, "", { shouldDirty: true, shouldValidate: true });
+                setIntent("remove");
+              }}
+            >
+              Remove stored key
+            </Button>
+            {intent === undefined && <Badge tone="warning">Confirmation required</Badge>}
+          </div>
+        )}
+      </div>
+    </Field>
+  );
+}
+
+function invalidateProviderCredentialIntent(
+  form: UseFormReturn<ProvidersFormValues>,
+  kind: ProviderKind,
+  index: number,
+  provider: TranscriptionProviderConfig | LlmProviderConfig
+): void {
+  if (!provider.hasSecretRecord || provider.apiKeyIntent !== "keep") return;
+  const intentName = (kind === "stt"
+    ? `transcriptionProviders.${index}.apiKeyIntent`
+    : `llmProviders.${index}.apiKeyIntent`) as Path<ProvidersFormValues>;
+  form.setValue(intentName, undefined, { shouldDirty: true, shouldValidate: true });
 }
 
 function ProviderGlyph({ kind, active = false }: { kind: ProviderKind; active?: boolean }): JSX.Element {

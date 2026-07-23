@@ -12,6 +12,8 @@ import {
   customLlmProviderTypes,
   customTranscriptionProviderTypes,
   hasCloudCredentialChanges,
+  hasUnconfirmedProviderCredentialIntent,
+  invalidateStoredCredentialIntent,
   isCloudCredentialLlmProvider,
   isCloudCredentialTranscriptionProvider,
   isDefaultLlmProvider,
@@ -247,10 +249,10 @@ describe("provider form helpers", () => {
   it("detects unsaved cloud credential removal from stored secret references", () => {
     const persistedValues = {
       transcriptionProviders: defaultTranscriptionProviders.map((provider) =>
-        provider.id === "openai-stt" ? { ...provider, enabled: true, apiKeySecretId: "provider-secret:stt:test" } : provider
+        provider.id === "openai-stt" ? { ...provider, enabled: true, apiKeySecretId: "provider-secret:stt:test", hasStoredSecret: true, hasSecretRecord: true, apiKeyIntent: "keep" as const } : provider
       ),
       llmProviders: defaultLlmProviders.map((provider) =>
-        provider.id === "openai-llm" ? { ...provider, enabled: true, apiKeySecretId: "provider-secret:llm:test" } : provider
+        provider.id === "openai-llm" ? { ...provider, enabled: true, apiKeySecretId: "provider-secret:llm:test", hasStoredSecret: true, hasSecretRecord: true, apiKeyIntent: "keep" as const } : provider
       )
     };
     const values = applyCloudCredentialApiKey(persistedValues, "openai", "");
@@ -263,7 +265,7 @@ describe("provider form helpers", () => {
   it("treats stored secret references as configured credentials without exposing a key", () => {
     const values = {
       transcriptionProviders: defaultTranscriptionProviders.map((provider) =>
-        provider.id === "openai-stt" ? { ...provider, enabled: true, apiKeySecretId: "provider-secret:stt:test" } : provider
+        provider.id === "openai-stt" ? { ...provider, enabled: true, apiKeySecretId: "provider-secret:stt:test", hasStoredSecret: true, hasSecretRecord: true, apiKeyIntent: "keep" as const } : provider
       ),
       llmProviders: defaultLlmProviders
     };
@@ -274,6 +276,27 @@ describe("provider form helpers", () => {
       id: "openai-stt",
       apiKeySecretId: "provider-secret:stt:test"
     });
+  });
+
+  it("requires explicit credential intent after changing an endpoint with a stored key", () => {
+    const provider = {
+      ...createCustomLlmProvider("custom-llm"),
+      baseUrl: "https://old.example.test/v1",
+      hasStoredSecret: true,
+      hasSecretRecord: true,
+      apiKeySecretId: "provider-secret:llm:custom",
+      apiKeyIntent: "keep" as const
+    };
+
+    const changed = invalidateStoredCredentialIntent({ ...provider, baseUrl: "https://new.example.test/v1" });
+    const values = { transcriptionProviders: [], llmProviders: [changed] };
+
+    expect(changed.apiKeyIntent).toBeUndefined();
+    expect(hasUnconfirmedProviderCredentialIntent(values)).toBe(true);
+    expect(hasUnconfirmedProviderCredentialIntent({
+      ...values,
+      llmProviders: [{ ...changed, apiKeyIntent: "keep" as const }]
+    })).toBe(false);
   });
 
   it("upserts missing default cloud provider records", () => {

@@ -50,6 +50,11 @@ describe("SttSetupService", () => {
       localPath: join(paths.modelDir, "ggml-tiny.en.bin"),
       favorite: false
     });
+    storage.setTranscriptionProviders(
+      storage.getState().transcriptionProviders.map((provider) =>
+        provider.id === "local-whisper-cpp" ? { ...provider, enabled: true } : provider
+      )
+    );
     storage.setActiveModel("voice", "whisper-tiny-en");
     await modelLibrary.getLibrary();
 
