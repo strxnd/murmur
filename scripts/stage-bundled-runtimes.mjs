@@ -69,10 +69,10 @@ function validateStagingRoot(input) {
   }
 
   const requestedDefault = requestedRoot === defaultStagingRoot;
-  if (requestedDefault && !isPathWithin(repoRoot, root)) {
-    throw new Error(`Default runtime staging root escapes the repository: ${root}`);
+  if (requestedDefault && root !== defaultStagingRoot) {
+    throw new Error(`Default runtime staging root must not contain symbolic links: ${root}`);
   }
-  const isDefault = requestedDefault && root === canonicalizePath(defaultStagingRoot);
+  const isDefault = requestedDefault;
   const parentMarkerPath = join(parent, stagingParentMarkerName);
   const parentMarkerEntry = lstatIfExists(parentMarkerPath);
 
