@@ -497,7 +497,18 @@ export class StorageService {
     };
 
     this.writeConfig(nextConfig);
-    this.providerSecrets.apply([...preparedStt.mutations, ...preparedLlm.mutations, ...legacyCodexMutations]);
+    try {
+      this.providerSecrets.apply([...preparedStt.mutations, ...preparedLlm.mutations, ...legacyCodexMutations]);
+    } catch (error) {
+      try {
+        writeJsonAtomic(this.paths.configPath, config);
+        ensureOwnerOnlyFile(this.paths.configPath);
+      } catch {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Provider secret migration failed and the legacy configuration could not be restored: ${message}`);
+      }
+      throw error;
+    }
   }
 
   private legacyCodexSecretMutations(providers: Array<Partial<LlmProviderConfig>> | undefined): ProviderSecretMutation[] {

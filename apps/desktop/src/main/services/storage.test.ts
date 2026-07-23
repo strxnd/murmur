@@ -492,6 +492,32 @@ describe("StorageService", () => {
     expect(recoveredProvider ? recoveredStorage.resolveLlmProviderSecret(recoveredProvider).apiKey : undefined).toBe("sk-encrypted");
   });
 
+  it("restores the legacy config when provider secret migration fails", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        llmProviders: defaultLlmProviders.map((provider) =>
+          provider.id === "openai-llm" ? { ...provider, enabled: true, apiKey: "sk-legacy" } : provider
+        )
+      })
+    );
+    const now = 975318642;
+    const secretTempPath = join(paths.configDir, `.murmur-provider-secrets.json.${process.pid}.${now}.tmp`);
+    mkdirSync(secretTempPath);
+    vi.spyOn(Date, "now").mockReturnValue(now);
+
+    try {
+      expect(() => jsonStorage(paths)).toThrow();
+    } finally {
+      vi.restoreAllMocks();
+      rmSync(secretTempPath, { recursive: true, force: true });
+    }
+
+    expect(readFileSync(paths.configPath, "utf8")).toContain("sk-legacy");
+  });
+
   it("migrates legacy plaintext provider API keys out of the config file", () => {
     const paths = testPaths();
     mkdirSync(paths.configDir, { recursive: true });

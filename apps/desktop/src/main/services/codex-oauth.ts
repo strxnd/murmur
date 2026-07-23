@@ -69,6 +69,7 @@ export class CodexOAuthService {
   private loginController?: AbortController;
   private loginPromise?: Promise<CodexProviderRuntime>;
   private logoutPromise?: Promise<CodexProviderRuntime>;
+  private logoutInProgress = false;
   private turnQueue: Promise<void> = Promise.resolve();
   private readonly operationControllers = new Set<AbortController>();
   private readonly activeOperations = new Set<Promise<unknown>>();
@@ -109,8 +110,8 @@ export class CodexOAuthService {
   }
 
   async refreshStatus(): Promise<CodexProviderRuntime> {
-    if (this.logoutPromise) {
-      await this.logoutPromise;
+    if (this.logoutInProgress) {
+      if (this.logoutPromise) await this.logoutPromise;
       return this.getStatus();
     }
     if (this.disposed || this.loginPromise) return this.getStatus();
@@ -144,7 +145,7 @@ export class CodexOAuthService {
   }
 
   startLogin(): Promise<CodexProviderRuntime> {
-    if (this.logoutPromise) return Promise.reject(new Error("Codex logout is in progress."));
+    if (this.logoutInProgress) return Promise.reject(new Error("Codex logout is in progress."));
     if (this.disposed) return Promise.reject(new Error("Codex service is disposed."));
     if (this.loginPromise) return this.loginPromise;
 
@@ -180,15 +181,17 @@ export class CodexOAuthService {
 
   logout(): Promise<CodexProviderRuntime> {
     if (this.logoutPromise) return this.logoutPromise;
+    this.logoutInProgress = true;
     const operation = this.runLogout();
     this.logoutPromise = operation.finally(() => {
+      this.logoutInProgress = false;
       this.logoutPromise = undefined;
     });
     return this.logoutPromise;
   }
 
   processCleanup(options: { prompt: string; model: string; signal?: AbortSignal }): Promise<ProcessedResult> {
-    if (this.logoutPromise) return Promise.reject(new Error("Codex logout is in progress."));
+    if (this.logoutInProgress) return Promise.reject(new Error("Codex logout is in progress."));
     const generation = this.authGeneration;
     const run = this.turnQueue.then(() => {
       this.assertAuthGeneration(generation);
