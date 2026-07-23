@@ -184,6 +184,32 @@ describe("PasteService", () => {
     }
   });
 
+  it("does not overwrite same-text rich clipboard content copied during the restore window", async () => {
+    vi.useFakeTimers();
+    try {
+      const backend = new FakeBackend();
+      const service = new PasteService(new TextAutomationService(backend), 0, fakeLinuxClipboard(), 5000);
+      clipboardHarness.set({ text: "previous" }, ["text/plain"]);
+
+      const resultPromise = service.insertText("processed output");
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(resultPromise).resolves.toEqual({ pasted: true, message: successMessage, clipboardRetained: false });
+
+      clipboardHarness.set(
+        { text: "processed output", html: "<b>processed output</b>" },
+        ["text/plain", "text/html"]
+      );
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(clipboardHarness.get()).toMatchObject({
+        text: "processed output",
+        html: "<b>processed output</b>"
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("serializes delayed restoration with clipboard-based context capture", async () => {
     vi.useFakeTimers();
     try {

@@ -1,5 +1,10 @@
 import { clipboard } from "../electron-api";
-import { captureClipboardSnapshot, restoreClipboardSnapshot } from "./clipboard-snapshot";
+import {
+  captureClipboardSnapshot,
+  clipboardMatchesSnapshot,
+  restoreClipboardSnapshot,
+  type ClipboardSnapshot
+} from "./clipboard-snapshot";
 import { LinuxClipboardService } from "./linux-clipboard";
 import { TextAutomationService } from "./text-automation";
 
@@ -67,14 +72,19 @@ export class PasteService {
       const previousClipboard = captureClipboardSnapshot();
       let pasteDispatchStarted = false;
       let clipboardLease: ClipboardPasteLease | null = null;
+      let ownedClipboard: ClipboardSnapshot | undefined;
       const restoreIfOwned = async (): Promise<void> => {
         await clipboardLease?.restoreIfOwned();
-        if (clipboard.readText() === text) restoreClipboardSnapshot(previousClipboard);
+        const ownsStandardClipboard = ownedClipboard
+          ? clipboardMatchesSnapshot(ownedClipboard)
+          : clipboard.readText() === text;
+        if (ownsStandardClipboard) restoreClipboardSnapshot(previousClipboard);
       };
 
       try {
         clipboardLease = await this.linuxClipboard.writeTextForPaste(text, signal);
         throwIfAborted(signal);
+        ownedClipboard = captureClipboardSnapshot();
 
         await abortableDelay(this.clipboardSettleDelayMs, signal);
         throwIfAborted(signal);

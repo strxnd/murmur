@@ -28,6 +28,7 @@ export interface ClipboardSnapshot {
   html: string;
   rtf: string;
   image?: NativeImage;
+  formats: string[];
   restorable: boolean;
 }
 
@@ -39,8 +40,21 @@ export function captureClipboardSnapshot(): ClipboardSnapshot {
     html: clipboard.readHTML(),
     rtf: clipboard.readRTF(),
     image: image.isEmpty() ? undefined : image,
+    formats: normalizeClipboardFormats(formats),
     restorable: formats.every(isRestorableClipboardFormat)
   };
+}
+
+export function clipboardMatchesSnapshot(snapshot: ClipboardSnapshot): boolean {
+  const current = captureClipboardSnapshot();
+  return (
+    current.text === snapshot.text &&
+    current.html === snapshot.html &&
+    current.rtf === snapshot.rtf &&
+    current.formats.length === snapshot.formats.length &&
+    current.formats.every((format, index) => format === snapshot.formats[index]) &&
+    imagesMatch(current.image, snapshot.image)
+  );
 }
 
 export function restoreClipboardSnapshot(snapshot: ClipboardSnapshot): boolean {
@@ -59,6 +73,15 @@ export function restoreClipboardSnapshot(snapshot: ClipboardSnapshot): boolean {
     ...(snapshot.image ? { image: snapshot.image } : {})
   });
   return true;
+}
+
+function normalizeClipboardFormats(formats: string[]): string[] {
+  return formats.map((format) => format.trim().toLowerCase()).sort();
+}
+
+function imagesMatch(left: NativeImage | undefined, right: NativeImage | undefined): boolean {
+  if (!left || !right) return left === right;
+  return left.toDataURL() === right.toDataURL();
 }
 
 function isRestorableClipboardFormat(format: string): boolean {
