@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { ContextSnapshot } from "../../shared/types";
 import { clipboard } from "../electron-api";
-import { captureClipboardSnapshot, restoreClipboardSnapshot } from "./clipboard-snapshot";
+import {
+  captureClipboardSnapshot,
+  clipboardHasOwnershipToken,
+  restoreClipboardSnapshot,
+  writeOwnedClipboardText
+} from "./clipboard-snapshot";
 import { DesktopMetadataService } from "./context-metadata";
 import { LinuxClipboardService } from "./linux-clipboard";
 import { TextAutomationService } from "./text-automation";
@@ -10,14 +15,22 @@ export interface PrimarySelectionReader {
   readPrimaryText(): Promise<string | undefined>;
 }
 
+export interface ContextCaptureChannels {
+  selectedText: boolean;
+  clipboardText: boolean;
+}
+
 export interface ContextCaptureOptions {
   selectedText?: boolean;
+  clipboardText?: boolean;
+  resolveChannels?: (metadata: ContextSnapshot) => ContextCaptureChannels;
   signal?: AbortSignal;
 }
 
 export class ContextService {
   private lastClipboardText = "";
   private lastClipboardAt = 0;
+  private clipboardTransactionDepth = 0;
   private clipboardTrackingInterval: ReturnType<typeof setInterval> | null = null;
   private metadata = new DesktopMetadataService();
 
@@ -58,10 +71,20 @@ export class ContextService {
     const diagnostics: string[] = [];
     const activeWindow = await this.metadata.capture(diagnostics);
     throwIfAborted(signal);
+    const metadata: ContextSnapshot = {
+      ...activeWindow,
+      capturedAt: new Date().toISOString(),
+      sourceQuality: hasAppMetadata(activeWindow) ? "partial" : "unavailable",
+      diagnostics
+    };
+    const channels = options.resolveChannels?.(metadata) ?? {
+      selectedText: options.selectedText === true,
+      clipboardText: options.clipboardText === true
+    };
     let selectedText: string | undefined;
 
     const textAutomationCapability = this.textAutomation.getCapability();
-    if ((options.selectedText ?? true) && textAutomationCapability.automationAvailable) {
+    if (channels.selectedText && textAutomationCapability.automationAvailable) {
       if (textAutomationCapability.backend === "macos_accessibility_helper") {
         selectedText = await this.captureSelectionViaAccessibility(diagnostics, signal);
         selectedText ??= await this.captureSelectionViaClipboard(diagnostics, signal);
@@ -71,18 +94,13 @@ export class ContextService {
     }
     throwIfAborted(signal);
 
-    const now = Date.now();
-    const currentClipboard = clipboard.readText();
-    const clipboardText =
-      currentClipboard && (now - this.lastClipboardAt <= 3000 || currentClipboard !== selectedText)
-        ? currentClipboard
-        : undefined;
+    const clipboardText = channels.clipboardText ? this.readFreshClipboardText(selectedText) : undefined;
 
-    const hasAppMetadata = Boolean(activeWindow.appName || activeWindow.appId || activeWindow.windowId || activeWindow.windowTitle);
+    const appMetadataAvailable = hasAppMetadata(activeWindow);
     const quality =
-      hasAppMetadata && selectedText
+      appMetadataAvailable && selectedText
         ? "full"
-        : hasAppMetadata || selectedText
+        : appMetadataAvailable || selectedText
           ? "partial"
           : clipboardText
             ? "fallback"
@@ -92,7 +110,7 @@ export class ContextService {
       ...activeWindow,
       selectedText,
       clipboardText,
-      capturedAt: new Date().toISOString(),
+      capturedAt: metadata.capturedAt,
       sourceQuality: quality,
       diagnostics
     };
@@ -101,15 +119,25 @@ export class ContextService {
   private startClipboardTracking(): void {
     if (this.clipboardTrackingInterval) return;
     this.lastClipboardText = clipboard.readText();
-    this.lastClipboardAt = Date.now();
+    this.lastClipboardAt = 0;
     this.clipboardTrackingInterval = setInterval(() => {
-      const text = clipboard.readText();
-      if (text !== this.lastClipboardText) {
-        this.lastClipboardText = text;
-        this.lastClipboardAt = Date.now();
-      }
+      if (this.clipboardTransactionDepth > 0) return;
+      this.observeClipboardText(clipboard.readText());
     }, 1000);
     unrefTimer(this.clipboardTrackingInterval);
+  }
+
+  private readFreshClipboardText(selectedText?: string): string | undefined {
+    const currentClipboard = clipboard.readText();
+    this.observeClipboardText(currentClipboard);
+    const observedRecently = this.lastClipboardAt > 0 && Date.now() - this.lastClipboardAt <= 3000;
+    return currentClipboard && observedRecently && currentClipboard !== selectedText ? currentClipboard : undefined;
+  }
+
+  private observeClipboardText(text: string): void {
+    if (text === this.lastClipboardText) return;
+    this.lastClipboardText = text;
+    this.lastClipboardAt = Date.now();
   }
 
   private stopClipboardTracking(): void {
@@ -129,11 +157,13 @@ export class ContextService {
         diagnostics.push("Selected text capture was skipped to preserve unsupported clipboard formats.");
         return undefined;
       }
-      const sentinel = `murmur-selection-${randomUUID()}`;
+      const ownershipToken = randomUUID();
+      const sentinel = `murmur-selection-${ownershipToken}`;
       const originalPrimary = await this.linuxClipboard.readPrimaryText().catch(() => undefined);
+      this.clipboardTransactionDepth += 1;
       try {
         throwIfAborted(signal);
-        clipboard.writeText(sentinel);
+        writeOwnedClipboardText(sentinel, ownershipToken);
         const result = await this.textAutomation.copySelection();
         throwIfAborted(signal);
         if (!result.success) {
@@ -142,9 +172,7 @@ export class ContextService {
         }
 
         const copied = await this.pollClipboardChange(sentinel, signal);
-        if (copied && copied !== sentinel) {
-          return copied;
-        }
+        if (copied && copied !== sentinel) return copied;
         const primary = await this.linuxClipboard.readPrimaryText().catch(() => undefined);
         throwIfAborted(signal);
         if (primary && primary !== sentinel && primary !== originalPrimary) {
@@ -156,7 +184,16 @@ export class ContextService {
         diagnostics.push(`Selected text capture failed: ${String(error)}`);
         return undefined;
       } finally {
-        restoreClipboardSnapshot(original);
+        try {
+          if (clipboardHasOwnershipToken(ownershipToken)) {
+            restoreClipboardSnapshot(original);
+            this.lastClipboardText = original.text;
+          } else {
+            this.observeClipboardText(clipboard.readText());
+          }
+        } finally {
+          this.clipboardTransactionDepth -= 1;
+        }
       }
     }, signal);
   }
@@ -185,6 +222,12 @@ export class ContextService {
     }
     return undefined;
   }
+}
+
+function hasAppMetadata(
+  context: Pick<ContextSnapshot, "appName" | "appId" | "windowId" | "windowTitle">
+): boolean {
+  return Boolean(context.appName || context.appId || context.windowId || context.windowTitle);
 }
 
 function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {

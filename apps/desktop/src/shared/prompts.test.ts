@@ -34,6 +34,7 @@ describe("buildVocabularyPrompt", () => {
   it("trims entries, keeps pronunciation metadata, and caps prompt terms", () => {
     const vocabulary: VocabularyEntry[] = [
       { id: "blank", term: "   ", enabled: true },
+      { id: "disabled-secret", term: "Disabled Secret", enabled: false },
       { id: "murmur", term: " Murmur ", pronunciation: "mer-mer", category: "product", enabled: true },
       ...Array.from({ length: 80 }, (_, index) => ({
         id: `term-${index}`,
@@ -47,6 +48,7 @@ describe("buildVocabularyPrompt", () => {
     expect(prompt).toContain("- Murmur (mer-mer) [product]");
     expect(prompt).toContain("- Term 78");
     expect(prompt).not.toContain("- Term 79");
+    expect(prompt).not.toContain("Disabled Secret");
     expect(prompt).not.toContain("blank");
   });
 });

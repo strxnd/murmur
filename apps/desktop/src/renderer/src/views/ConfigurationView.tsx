@@ -17,6 +17,7 @@ import { Field } from "../components/ui/Field";
 import { Input } from "../components/ui/Input";
 import { Panel } from "../components/ui/Panel";
 import { Select, type SelectItem } from "../components/ui/Select";
+import { Switch } from "../components/ui/Switch";
 import { useAudioDevices } from "../hooks/useAudioDevices";
 import {
   audioInputSelectItems,
@@ -41,9 +42,10 @@ type ConfigurationFormValues = z.infer<typeof configurationFormSchema>;
 const promptAnimationMs = 180;
 const clearLocalDataConfirmationPhrase = "CLEAR LOCAL DATA";
 
-const editableSettingsKeys = [
+export const editableSettingsKeys = [
   "theme",
   "textRetentionDays",
+  "selectedTextCapture",
   "activationMode",
   "activationHotkey",
   "modeSelectorHotkey",
@@ -291,6 +293,23 @@ export function ConfigurationView({
               <Input type="number" min={1} {...form.register("settings.typingBaselineWpm", { valueAsNumber: true })} />
             </Field>
           </div>
+        </Panel>
+
+        <Panel title="Privacy">
+          <Switch
+            label="Allow selected-text capture"
+            checked={currentValues.settings.selectedTextCapture === "enabled"}
+            onCheckedChange={(checked) =>
+              form.setValue("settings.selectedTextCapture", checked ? "enabled" : "disabled", {
+                shouldDirty: true,
+                shouldValidate: true
+              })
+            }
+            className="rounded-md border border-border bg-muted/20 p-3"
+          />
+          <p className="m-0 mt-2 text-xs leading-5 text-muted-foreground">
+            Murmur reads selected text only when this setting and the active mode's selected-text context are both enabled.
+          </p>
         </Panel>
 
         <AccelerationPanel state={state} />

@@ -113,12 +113,11 @@ export function VocabularyView({ state }: { state: AppStateSnapshot }): JSX.Elem
   );
 }
 
-function normalizeVocabulary(entries: VocabularyEntry[]): VocabularyEntry[] {
+export function normalizeVocabulary(entries: VocabularyEntry[]): VocabularyEntry[] {
   return entries
     .map((entry) => ({
       ...entry,
-      term: entry.term.trim(),
-      enabled: true
+      term: entry.term.trim()
     }))
     .filter((entry) => entry.term.length > 0);
 }
