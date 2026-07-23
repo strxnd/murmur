@@ -87,6 +87,7 @@ describe("PasteService", () => {
 
   it("does not dispatch paste after the owning dictation is cancelled", async () => {
     const backend = new FakeBackend();
+    clipboardHarness.set({ text: "previous", html: "<b>previous</b>", rtf: "{\\rtf1 previous}" });
     let releaseWrite!: () => void;
     let markWriteStarted!: () => void;
     const writeStarted = new Promise<void>((resolve) => {
@@ -111,6 +112,11 @@ describe("PasteService", () => {
 
     await expect(result).rejects.toMatchObject({ name: "AbortError" });
     expect(backend.pasteCalls).toBe(0);
+    expect(clipboardHarness.get()).toMatchObject({
+      text: "previous",
+      html: "<b>previous</b>",
+      rtf: "{\\rtf1 previous}"
+    });
   });
 
   it("leaves output on the clipboard after successful automation", async () => {

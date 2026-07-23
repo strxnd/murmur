@@ -1,8 +1,10 @@
+import { clipboard } from "../electron-api";
+import { captureClipboardSnapshot, restoreClipboardSnapshot } from "./clipboard-snapshot";
 import { LinuxClipboardService } from "./linux-clipboard";
 import { TextAutomationService } from "./text-automation";
 
 export interface ClipboardPasteWriter {
-  writeTextForPaste(text: string): Promise<void>;
+  writeTextForPaste(text: string, signal?: AbortSignal): Promise<void>;
 }
 
 export class PasteService {
@@ -31,18 +33,32 @@ export class PasteService {
   async insertText(text: string, signal?: AbortSignal): Promise<{ pasted: boolean; message: string }> {
     return this.textAutomation.runExclusive(async () => {
       throwIfAborted(signal);
-      await this.linuxClipboard.writeTextForPaste(text);
-      throwIfAborted(signal);
+      const previousClipboard = captureClipboardSnapshot();
+      const restoreIfOwned = (): void => {
+        if (clipboard.readText() === text) restoreClipboardSnapshot(previousClipboard);
+      };
+      const onAbort = (): void => restoreIfOwned();
+      signal?.addEventListener("abort", onAbort, { once: true });
 
-      await abortableDelay(this.clipboardSettleDelayMs, signal);
-      throwIfAborted(signal);
+      try {
+        await this.linuxClipboard.writeTextForPaste(text, signal);
+        throwIfAborted(signal);
 
-      const result = await this.textAutomation.pasteClipboard();
-      if (!result.success) {
-        return { pasted: false, message: result.message };
+        await abortableDelay(this.clipboardSettleDelayMs, signal);
+        throwIfAborted(signal);
+
+        const result = await this.textAutomation.pasteClipboard();
+        if (!result.success) {
+          return { pasted: false, message: result.message };
+        }
+
+        return { pasted: true, message: "Paste shortcut sent; output left on clipboard." };
+      } catch (error) {
+        if (signal?.aborted) restoreIfOwned();
+        throw error;
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
       }
-
-      return { pasted: true, message: "Paste shortcut sent; output left on clipboard." };
     }, signal);
   }
 }

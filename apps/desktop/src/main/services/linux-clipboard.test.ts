@@ -1,9 +1,21 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LinuxClipboardService } from "./linux-clipboard";
 
-const clipboardHarness = vi.hoisted(() => ({
-  writeText: vi.fn()
-}));
+const clipboardHarness = vi.hoisted(() => {
+  let text = "";
+  let primary = "";
+  return {
+    readText: vi.fn((type?: string) => (type === "selection" ? primary : text)),
+    reset: () => {
+      text = "";
+      primary = "";
+    },
+    writeText: vi.fn((value: string, type?: string) => {
+      if (type === "selection") primary = value;
+      else text = value;
+    })
+  };
+});
 
 vi.mock("../electron-api", () => ({ clipboard: clipboardHarness }));
 
@@ -14,6 +26,12 @@ interface ExecCall {
 }
 
 describe("LinuxClipboardService", () => {
+  beforeEach(() => {
+    clipboardHarness.reset();
+    clipboardHarness.readText.mockClear();
+    clipboardHarness.writeText.mockClear();
+  });
+
   it("mirrors paste text to Wayland and X11 clipboards", async () => {
     const calls: ExecCall[] = [];
     const service = createService({
@@ -31,6 +49,44 @@ describe("LinuxClipboardService", () => {
         { command: "wl-copy", args: ["--primary"], input: "processed output" },
         { command: "xclip", args: ["-selection", "clipboard"], input: "processed output" },
         { command: "xclip", args: ["-selection", "primary"], input: "processed output" }
+      ])
+    );
+  });
+
+  it("restores clipboard selections when cancellation interrupts helper writes", async () => {
+    clipboardHarness.writeText("previous clipboard");
+    clipboardHarness.writeText("previous primary", "selection");
+    const calls: ExecCall[] = [];
+    let releaseHelpers!: () => void;
+    const helpersBlocked = new Promise<void>((resolve) => {
+      releaseHelpers = resolve;
+    });
+    const service = new LinuxClipboardService({
+      commandExists: async () => true,
+      env: { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-1" },
+      execFileText: vi.fn(async (command, args, _timeoutMs, execOptions) => {
+        calls.push({ command, args, input: execOptions?.input });
+        await helpersBlocked;
+        return "";
+      }),
+      platform: "linux"
+    });
+    const controller = new AbortController();
+
+    const write = service.writeTextForPaste("cancelled output", controller.signal);
+    await vi.waitFor(() => expect(calls).toHaveLength(4));
+    controller.abort();
+
+    expect(clipboardHarness.readText()).toBe("previous clipboard");
+    expect(clipboardHarness.readText("selection")).toBe("previous primary");
+    releaseHelpers();
+    await expect(write).rejects.toMatchObject({ name: "AbortError" });
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        { command: "wl-copy", args: [], input: "previous clipboard" },
+        { command: "wl-copy", args: ["--primary"], input: "previous primary" },
+        { command: "xclip", args: ["-selection", "clipboard"], input: "previous clipboard" },
+        { command: "xclip", args: ["-selection", "primary"], input: "previous primary" }
       ])
     );
   });
