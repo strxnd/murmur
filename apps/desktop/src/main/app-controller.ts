@@ -139,6 +139,7 @@ export class AppController {
   private sttSetup: SttSetupService;
   private session: DictationSession = defaultSession;
   private dictationOwner = new DictationSessionOwner();
+  private dictationStartGeneration = 0;
   private sessionOperation: DictationSessionOperation | null = null;
   private sessionContext: ContextSnapshot | null = null;
   private pendingContextCapture: { operation: DictationSessionOperation; promise: Promise<ContextSnapshot> } | null = null;
@@ -739,19 +740,7 @@ export class AppController {
       return this.getSnapshot();
     });
     handle("history:reprocess", (_event, payload) => this.reprocessHistory(parseIpcPayload(ipcIdPayloadSchema, payload, "history:reprocess")));
-    handle("data:clear-local", async () => {
-      if (this.sessionOperation) {
-        this.mainWindow?.webContents.send("recording:cancel", { sessionId: this.sessionOperation.sessionId });
-      }
-      this.invalidateDictation("cleared");
-      this.session = { ...defaultSession, modeId: this.storage.getState().settings.activeModeId };
-      await this.codex.logout();
-      this.storage.clearLocalData();
-      this.session = { ...defaultSession, modeId: this.storage.getState().settings.activeModeId };
-      await this.registerHotkeys();
-      this.broadcastState();
-      return this.getSnapshot();
-    });
+    handle("data:clear-local", () => this.clearLocalData());
     handle("mode-selector:hide", () => {
       this.hideModeSelectorWindow();
       return { ok: true };
@@ -1137,6 +1126,7 @@ export class AppController {
     if (this.session.status === "recording") return this.stopRecording();
     if (["transcribing", "processing", "pasting"].includes(this.session.status)) return this.getSnapshot();
 
+    const startGeneration = ++this.dictationStartGeneration;
     const persisted = this.storage.getState();
     const source: RecordingSource = this.onboardingDictationScopeActive ? "onboarding" : "dictation";
     const automation = source === "dictation" ? this.ensureAutomationReadyForUserAction("dictation") : { ready: true as const };
@@ -1170,8 +1160,9 @@ export class AppController {
       return this.failSession("No enabled transcription provider is configured.");
     }
     const initialMode = persisted.modes.find((candidate) => candidate.id === persisted.settings.activeModeId) ?? persisted.modes[0];
-    const selectedLlmProvider =
-      this.selectLlmProvider(persisted) ?? persisted.llmProviders.find((provider) => provider.type === "codex" && provider.enabled);
+    const selectedLlmProvider = await this.selectLlmProviderForRecording(persisted);
+    if (startGeneration !== this.dictationStartGeneration) return this.getSnapshot();
+
     const plan = createDictationProcessingPlan({
       source,
       settings: persisted.settings,
@@ -1231,7 +1222,10 @@ export class AppController {
   }
 
   private async cancelRecording(): Promise<AppStateSnapshot> {
-    if (this.session.status === "idle") return this.getSnapshot();
+    if (this.session.status === "idle") {
+      this.invalidateDictation("cancelled");
+      return this.getSnapshot();
+    }
     this.mainWindow?.webContents.send("recording:cancel", { sessionId: this.session.id });
     this.invalidateDictation("cancelled");
     this.session = {
@@ -1247,6 +1241,20 @@ export class AppController {
     this.pushToTalkPressed = false;
     this.pushToTalkSessionId = null;
     this.hidePillSoon();
+    this.broadcastState();
+    return this.getSnapshot();
+  }
+
+  private async clearLocalData(): Promise<AppStateSnapshot> {
+    if (this.sessionOperation) {
+      this.mainWindow?.webContents.send("recording:cancel", { sessionId: this.sessionOperation.sessionId });
+    }
+    this.invalidateDictation("cleared");
+    this.session = { ...defaultSession, modeId: this.storage.getState().settings.activeModeId };
+    await this.codex.logout();
+    this.storage.clearLocalData();
+    this.session = { ...defaultSession, modeId: this.storage.getState().settings.activeModeId };
+    await this.registerHotkeys();
     this.broadcastState();
     return this.getSnapshot();
   }
@@ -1538,6 +1546,7 @@ export class AppController {
   }
 
   private invalidateDictation(reason: DictationInvalidationReason): void {
+    this.dictationStartGeneration += 1;
     this.dictationOwner.invalidate(reason);
     this.sessionOperation = null;
     this.sessionContext = null;
@@ -1555,6 +1564,19 @@ export class AppController {
     const activeProvider = activeModel ? transcriptionProviderFromModel(activeModel, state.transcriptionProviders) : null;
     if (activeProvider && this.isTranscriptionProviderUsable(activeProvider)) return activeProvider;
     return state.transcriptionProviders.find((provider) => this.isTranscriptionProviderUsable(provider));
+  }
+
+  private async selectLlmProviderForRecording(state: {
+    llmProviders: LlmProviderConfig[];
+    modelLibrary: ModelLibrarySnapshot;
+  }): Promise<LlmProviderConfig | undefined> {
+    const codexRefreshPending =
+      this.codex.getStatus().status === "checking" &&
+      state.llmProviders.some((provider) => provider.type === "codex" && provider.enabled);
+    if (codexRefreshPending) {
+      await this.initialCodexRefresh;
+    }
+    return this.selectLlmProvider(state);
   }
 
   private selectLlmProvider(state: {
