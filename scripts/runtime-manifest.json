@@ -3,12 +3,45 @@
   "runtimes": {
     "whisper.cpp": {
       "version": "1.8.6",
+      "runtimeDir": "whisper.cpp",
       "gitTag": "v1.8.6",
+      "commit": "23ee03506a91ac3d3f0071b40e66a430eebdfa1d",
+      "tree": "a434f2f7f847edb2e4b57c21bcc94ea832341d47",
       "repository": "https://github.com/ggml-org/whisper.cpp.git",
-      "patch": "patches/whisper.cpp/v1.8.6-server-multipart-wav.patch"
+      "patch": "patches/whisper.cpp/v1.8.6-server-multipart-wav.patch",
+      "variants": {
+        "linux-x64": ["cpu", "cuda"],
+        "darwin-arm64": ["cpu"],
+        "darwin-x64": ["cpu"]
+      },
+      "bundles": {
+        "linux-x64": {
+          "cpu": {
+            "assetName": "murmur-stt-runtime-whisper.cpp-1.8.6-linux-x64-0.1.0.tar.gz",
+            "sizeBytes": 3720870,
+            "sha256": "d59417162bbf89aaecbf6c348a385da67dd71fcdbb6cf62066a53ae49ea685b1"
+          },
+          "cuda": {
+            "assetName": "murmur-stt-runtime-whisper.cpp-1.8.6-linux-x64-cuda-0.1.0.tar.gz",
+            "sizeBytes": 430368535,
+            "sha256": "c91b1b9a97e8a95ee8689cf364fd3ad85d24b6101789b02e33bf547e560ec778"
+          }
+        },
+        "darwin-arm64": {
+          "cpu": {
+            "assetName": "murmur-stt-runtime-whisper.cpp-1.8.6-darwin-arm64-0.1.0.tar.gz"
+          }
+        },
+        "darwin-x64": {
+          "cpu": {
+            "assetName": "murmur-stt-runtime-whisper.cpp-1.8.6-darwin-x64-0.1.0.tar.gz"
+          }
+        }
+      }
     },
     "sherpa-onnx": {
       "version": "1.13.2",
+      "runtimeDir": "sherpa-onnx",
       "releaseTag": "v1.13.2",
       "releaseBaseUrl": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.2",
       "assets": {
@@ -32,6 +65,35 @@
           "cpu": {
             "name": "sherpa-onnx-v1.13.2-osx-x64-shared-no-tts.tar.bz2",
             "sha256": "d1819cce38390d5b51ff38cb15a1b32e47c6ffe15882926211054b1f95e01357"
+          }
+        }
+      },
+      "variants": {
+        "linux-x64": ["cpu", "cuda"],
+        "darwin-arm64": ["cpu"],
+        "darwin-x64": ["cpu"]
+      },
+      "bundles": {
+        "linux-x64": {
+          "cpu": {
+            "assetName": "murmur-stt-runtime-sherpa-onnx-1.13.2-linux-x64-0.1.0.tar.gz",
+            "sizeBytes": 25574920,
+            "sha256": "563f226035c3905279ac01bf123f7b4f0faa1baa96cae7f2fece96f9e73530b1"
+          },
+          "cuda": {
+            "assetName": "murmur-stt-runtime-sherpa-onnx-1.13.2-linux-x64-cuda-0.1.0.tar.gz",
+            "sizeBytes": 225775663,
+            "sha256": "41d0c216303b3e1de55924fc68df877e25f66590fdb3551d326cb531832ac745"
+          }
+        },
+        "darwin-arm64": {
+          "cpu": {
+            "assetName": "murmur-stt-runtime-sherpa-onnx-1.13.2-darwin-arm64-0.1.0.tar.gz"
+          }
+        },
+        "darwin-x64": {
+          "cpu": {
+            "assetName": "murmur-stt-runtime-sherpa-onnx-1.13.2-darwin-x64-0.1.0.tar.gz"
           }
         }
       }
