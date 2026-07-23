@@ -123,6 +123,33 @@ describe("stage-bundled-runtimes", () => {
     expect(existsSync(join(realParent, "runtimes"))).toBe(false);
   });
 
+  it("does not follow stale destination symlinks outside the staging root", () => {
+    const { vendorRoot, stagingRoot } = setupRuntimeFixtures();
+    const outsideRoot = join(tempRoot(), "unrelated-important-data");
+    const outsideSentinel = join(outsideRoot, "whisper-server");
+    markExistingStagingRoot(stagingRoot);
+    touch(outsideSentinel, "important outside data");
+    touch(join(vendorRoot, "linux-x64", "whisper.cpp", "whisper-server"), "source payload");
+    mkdirSync(join(stagingRoot, "linux-x64"), { recursive: true });
+    symlinkSync(outsideRoot, join(stagingRoot, "linux-x64", "whisper.cpp"), "dir");
+
+    runStage(["--platform=linux-x64"], vendorRoot, stagingRoot);
+
+    expect(readFileSync(outsideSentinel, "utf8")).toBe("important outside data");
+    expect(readFileSync(join(stagingRoot, "linux-x64", "whisper.cpp", "whisper-server"), "utf8")).toBe("source payload");
+  });
+
+  it("recovers an empty unmarked staging leaf left by an interrupted reset", () => {
+    const { vendorRoot, stagingRoot } = setupRuntimeFixtures();
+    mkdirSync(stagingRoot, { recursive: true });
+
+    runStage(["--platform=linux-x64"], vendorRoot, stagingRoot);
+
+    expect(readFileSync(join(stagingRoot, ".murmur-runtime-staging"), "utf8")).toBe(stagingMarkerContents);
+    expect(existsSync(join(stagingRoot, "linux-x64", "whisper.cpp", "whisper-server"))).toBe(true);
+    expect(existsSync(join(stagingRoot, "linux-x64", "sherpa-onnx", "bin", "sherpa-onnx-offline"))).toBe(true);
+  });
+
   it("rejects a custom staging parent without explicit approval", () => {
     const root = tempRoot();
     const vendorRoot = join(root, "vendor", "runtimes");

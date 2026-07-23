@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync
@@ -42,15 +46,16 @@ validateSources(stagingPlan, stagingRoot);
 if (platformKey.startsWith("darwin-")) {
   await inspectMacOSDeploymentTargets(stagingPlan.map((item) => item.sourceDir));
 }
-resetStagingRoot(stagingRoot);
+const freshStagingRoot = resetStagingRoot(stagingRoot);
 
 for (const item of stagingPlan) {
-  cpSync(item.sourceDir, item.targetDir, {
+  const targetDir = resolveStagingTarget(freshStagingRoot, item.targetRelativePath);
+  cpSync(item.sourceDir, targetDir, {
     recursive: true,
     dereference: false,
     preserveTimestamps: true
   });
-  console.log(`Staged ${item.runtime.id} CPU for ${platformKey}: ${relative(item.targetDir)}`);
+  console.log(`Staged ${item.runtime.id} CPU for ${platformKey}: ${relative(targetDir)}`);
 }
 
 function buildStagingPlan(targetPlatformKey) {
@@ -63,7 +68,7 @@ function buildStagingPlan(targetPlatformKey) {
     return {
       runtime,
       sourceDir: canonicalPath(join(vendorRoot, targetPlatformKey, runtimeDir)),
-      targetDir: canonicalPath(join(stagingRoot, targetPlatformKey, runtimeDir))
+      targetRelativePath: join(targetPlatformKey, runtimeDir)
     };
   });
 }
@@ -119,14 +124,53 @@ function validateStagingRoot(destinationRoot, sourceRoot) {
     if (!statSync(destinationRoot).isDirectory()) {
       throw new Error(`Runtime staging path is not a directory: ${destinationRoot}`);
     }
-    requireMarker(join(destinationRoot, stagingLeafMarkerName), "runtime staging leaf");
+    if (readdirSync(destinationRoot).length > 0) {
+      requireMarker(join(destinationRoot, stagingLeafMarkerName), "runtime staging leaf");
+    }
   }
 }
 
 function resetStagingRoot(destinationRoot) {
-  rmSync(destinationRoot, { recursive: true, force: true });
-  mkdirSync(destinationRoot, { recursive: true, mode: 0o700 });
-  writeFileSync(join(destinationRoot, stagingLeafMarkerName), stagingMarkerContents, { mode: 0o600 });
+  const destinationParent = dirname(destinationRoot);
+  mkdirSync(destinationParent, { recursive: true, mode: 0o700 });
+  const replacementRoot = mkdtempSync(join(destinationParent, ".murmur-runtime-staging-"));
+
+  try {
+    chmodSync(replacementRoot, 0o700);
+    writeFileSync(join(replacementRoot, stagingLeafMarkerName), stagingMarkerContents, { mode: 0o600 });
+    rmSync(destinationRoot, { recursive: true, force: true });
+    renameSync(replacementRoot, destinationRoot);
+  } catch (error) {
+    rmSync(replacementRoot, { recursive: true, force: true });
+    throw error;
+  }
+
+  const freshRoot = realpathSync.native(destinationRoot);
+  if (freshRoot !== destinationRoot) {
+    throw new Error(`Runtime staging path changed during reset: ${destinationRoot}`);
+  }
+  return freshRoot;
+}
+
+function resolveStagingTarget(destinationRoot, targetRelativePath) {
+  const targetDir = resolve(destinationRoot, targetRelativePath);
+  if (!isStrictDescendant(destinationRoot, targetDir)) {
+    throw new Error(`Runtime staging target must remain inside the staging root: ${targetDir}`);
+  }
+
+  const canonicalTarget = canonicalPath(targetDir);
+  if (canonicalTarget !== targetDir) {
+    throw new Error(`Runtime staging target must not contain symbolic links: ${targetDir}`);
+  }
+  if (!isStrictDescendant(destinationRoot, canonicalTarget)) {
+    throw new Error(`Runtime staging target escaped the staging root: ${canonicalTarget}`);
+  }
+  return targetDir;
+}
+
+function isStrictDescendant(parent, candidate) {
+  const relative = relativePath(parent, candidate);
+  return Boolean(relative) && relative !== ".." && !relative.startsWith(`..${sep}`) && !isAbsolute(relative);
 }
 
 function requireMarker(path, label) {
