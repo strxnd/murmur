@@ -26,6 +26,23 @@ describe("ProviderSecretStore", () => {
     expect(persisted).not.toContain("sk-plain");
   });
 
+  it("encrypts prepared plaintext if secure storage becomes available before commit", async () => {
+    const path = await secretPath();
+    let available = false;
+    const codec = reversibleCodec(() => available);
+    const store = new ProviderSecretStore(path, codec);
+    store.set("provider-secret:llm:test", "sk-old");
+    store.prepareApply([{ secretId: "provider-secret:llm:test", value: "sk-new" }]);
+
+    available = true;
+    store.commitPrepared();
+
+    expect(store.get("provider-secret:llm:test")).toBe("sk-new");
+    const persisted = readFileSync(path, "utf8");
+    expect(persisted).toContain('"encoding": "electron-safe-storage"');
+    expect(persisted).not.toContain("sk-new");
+  });
+
   it("recovers the last durable secret store from its backup and quarantines corruption", async () => {
     const path = await secretPath();
     const store = new ProviderSecretStore(path);
@@ -72,10 +89,10 @@ async function secretPath(): Promise<string> {
   return join(root, "secrets.json");
 }
 
-function reversibleCodec(): ProviderSecretCodec {
+function reversibleCodec(isAvailable: () => boolean = () => true): ProviderSecretCodec {
   return {
     encoding: "electron-safe-storage",
-    isAvailable: () => true,
+    isAvailable,
     encrypt: (value) => Buffer.from(`encrypted:${value}`).toString("base64"),
     decrypt: (value) => Buffer.from(value, "base64").toString("utf8").replace(/^encrypted:/, "")
   };

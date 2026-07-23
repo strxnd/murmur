@@ -94,7 +94,9 @@ export class ProviderSecretStore {
 
   commitPrepared(): void {
     if (!existsSync(this.pendingPath)) throw new Error("Provider credential transaction is missing its prepared secret state.");
-    this.write(this.readFile(this.pendingPath));
+    const secrets = this.readFile(this.pendingPath);
+    this.encryptPlainRecords(secrets);
+    this.write(secrets);
   }
 
   hasPrepared(): boolean {
@@ -158,15 +160,18 @@ export class ProviderSecretStore {
   private upgradePlainRecords(): void {
     if (!this.codec?.isAvailable() || (!existsSync(this.path) && !existsSync(this.backupPath))) return;
     const secrets = this.read();
-    let changed = false;
+    if (this.encryptPlainRecords(secrets)) this.write(secrets);
+  }
 
+  private encryptPlainRecords(secrets: ProviderSecretsFile): boolean {
+    if (!this.codec?.isAvailable()) return false;
+    let changed = false;
     for (const [secretId, record] of Object.entries(secrets.records)) {
       if (record.encoding !== "plain") continue;
       secrets.records[secretId] = this.encode(record.value);
       changed = true;
     }
-
-    if (changed) this.write(secrets);
+    return changed;
   }
 
   private encode(value: string): ProviderSecretRecord {
