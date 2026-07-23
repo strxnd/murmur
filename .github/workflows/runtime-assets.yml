@@ -8,9 +8,14 @@ on:
         required: true
         default: current
       accelerator:
-        description: "cpu, cuda, apple, or all"
+        description: "Runtime accelerator variant"
         required: true
         default: all
+        type: choice
+        options:
+          - cpu
+          - cuda
+          - all
 
 permissions:
   contents: read
@@ -28,6 +33,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes build-essential cmake
+
+      - name: Install macOS packaging dependencies
+        if: runner.os == 'macOS'
+        run: brew install gnu-tar
 
       - name: Install mise toolchain
         uses: jdx/mise-action@v2

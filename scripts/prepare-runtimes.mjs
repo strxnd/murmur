@@ -27,49 +27,59 @@ const manifestPath = join(scriptDir, "runtime-manifest.json");
 const vendorRoot = join(repoRoot, "vendor", "runtimes");
 const cacheRoot = join(repoRoot, ".cache", "runtimes");
 
-const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-const platformArg = readPlatformArg(process.argv.slice(2));
-const acceleratorArg = readAcceleratorArg(process.argv.slice(2));
-const platformKeys = resolvePlatformKeys(platformArg);
-const accelerators = resolveAccelerators(acceleratorArg);
-const currentKey = currentPlatformKey();
+let manifest;
 
-for (const platformKey of platformKeys) {
-  console.log(`Preparing STT runtimes for ${platformKey}`);
-  for (const accelerator of accelerators) {
-    if (sherpaAsset(platformKey, accelerator)) {
-      await prepareSherpaOnnx(platformKey, accelerator);
-    } else {
-      console.warn(`Skipping Sherpa ONNX ${accelerator} for ${platformKey}; no source asset is configured.`);
-    }
-    if (supportsWhisperCpp(platformKey, accelerator)) {
-      if (platformKey === currentKey) {
-        await prepareWhisperCpp(platformKey, accelerator);
-      } else if (platformArg === "all") {
-        console.warn(`Skipping whisper.cpp ${accelerator} build for ${platformKey}; cross-compilation is not configured. Build it on that platform.`);
+if (isMainModule()) {
+  await main();
+}
+
+async function main() {
+  manifest = JSON.parse(await readFile(process.env.MURMUR_RUNTIME_MANIFEST_PATH ?? manifestPath, "utf8"));
+  const platformArg = readPlatformArg(process.argv.slice(2));
+  const acceleratorArg = readAcceleratorArg(process.argv.slice(2));
+  const platformKeys = resolvePlatformKeys(platformArg);
+  const accelerators = resolveAccelerators(acceleratorArg);
+  const currentKey = currentPlatformKey();
+
+  for (const platformKey of platformKeys) {
+    console.log(`Preparing STT runtimes for ${platformKey}`);
+    for (const accelerator of accelerators) {
+      if (sherpaAsset(platformKey, accelerator)) {
+        await prepareSherpaOnnx(platformKey, accelerator);
       } else {
-        throw new Error(`Cannot build whisper.cpp for ${platformKey} on ${currentKey}. Run this script on the target platform.`);
+        console.warn(`Skipping Sherpa ONNX ${accelerator} for ${platformKey}; no source asset is configured.`);
       }
-    } else {
-      console.warn(`Skipping whisper.cpp ${accelerator} for ${platformKey}; that variant is not supported.`);
+      if (supportsWhisperCpp(platformKey, accelerator)) {
+        if (platformKey === currentKey) {
+          await prepareWhisperCpp(platformKey, accelerator);
+        } else if (platformArg === "all") {
+          console.warn(`Skipping whisper.cpp ${accelerator} build for ${platformKey}; cross-compilation is not configured. Build it on that platform.`);
+        } else {
+          throw new Error(`Cannot build whisper.cpp for ${platformKey} on ${currentKey}. Run this script on the target platform.`);
+        }
+      } else {
+        console.warn(`Skipping whisper.cpp ${accelerator} for ${platformKey}; that variant is not supported.`);
+      }
     }
   }
 }
 
-function readPlatformArg(args) {
-  const index = args.indexOf("--platform");
-  if (index === -1) return "current";
-  const value = args[index + 1];
-  if (!value) throw new Error("--platform needs a value: current, all, or a platform key.");
+export function readPlatformArg(args) {
+  return readSingleOption(args, "--platform", "current", "current, all, or a platform key");
+}
+
+export function readAcceleratorArg(args) {
+  const value = readSingleOption(args, "--accelerator", "cpu", "cpu, cuda, or all");
+  if (!["cpu", "cuda", "all"].includes(value)) throw new Error(`Unsupported accelerator ${value}.`);
   return value;
 }
 
-function readAcceleratorArg(args) {
-  const index = args.indexOf("--accelerator");
-  if (index === -1) return "cpu";
-  const value = args[index + 1];
-  if (!value) throw new Error("--accelerator needs a value: cpu, cuda, or all.");
-  if (!["cpu", "cuda", "all"].includes(value)) throw new Error(`Unsupported accelerator ${value}.`);
+function readSingleOption(args, name, defaultValue, expectedValues) {
+  const indexes = args.flatMap((arg, index) => arg === name ? [index] : []);
+  if (indexes.length === 0) return defaultValue;
+  if (indexes.length > 1) throw new Error(`${name} may only be specified once.`);
+  const value = args[indexes[0] + 1];
+  if (!value || value.startsWith("--")) throw new Error(`${name} needs a value: ${expectedValues}.`);
   return value;
 }
 
@@ -128,7 +138,7 @@ async function prepareSherpaOnnx(platformKey, accelerator) {
     const offlineBinary = findFile(sourceRoot, (file) => basename(file) === "sherpa-onnx-offline");
     if (!offlineBinary) throw new Error(`Could not find sherpa-onnx-offline in ${asset.name}.`);
 
-    const dest = join(vendorRoot, platformKey, runtimeDirForVariant("sherpa-onnx", accelerator));
+    const dest = join(vendorRoot, platformKey, runtimeDirForVariant(runtime.runtimeDir, accelerator));
     rmSync(dest, { recursive: true, force: true });
     mkdirSync(dirname(dest), { recursive: true });
     cpSync(sourceRoot, dest, { recursive: true });
@@ -146,7 +156,7 @@ async function prepareWhisperCpp(platformKey, accelerator) {
   const buildDir = join(tempDir, "build");
 
   try {
-    await run("git", ["clone", "--depth", "1", "--branch", runtime.gitTag ?? runtime.version, runtime.repository, sourceDir]);
+    await checkoutPinnedGitSource(runtime, sourceDir);
     await run("git", ["apply", join(repoRoot, runtime.patch)], { cwd: sourceDir });
     const cmakeArgs = [
       "-S",
@@ -168,7 +178,7 @@ async function prepareWhisperCpp(platformKey, accelerator) {
     const binary = findFile(buildDir, (file) => basename(file) === binaryName);
     if (!binary) throw new Error(`Could not find built ${binaryName}.`);
 
-    const dest = join(vendorRoot, platformKey, runtimeDirForVariant("whisper.cpp", accelerator));
+    const dest = join(vendorRoot, platformKey, runtimeDirForVariant(runtime.runtimeDir, accelerator));
     rmSync(dest, { recursive: true, force: true });
     mkdirSync(dest, { recursive: true });
     copyFileSync(binary, join(dest, binaryName));
@@ -177,6 +187,32 @@ async function prepareWhisperCpp(platformKey, accelerator) {
     console.log(`Installed whisper.cpp to ${relative(dest)}`);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+export async function checkoutPinnedGitSource(runtime, sourceDir) {
+  if (!/^[a-f0-9]{40}$/.test(runtime.commit ?? "")) {
+    throw new Error(`whisper.cpp commit must be a full lowercase Git SHA: ${runtime.commit ?? "missing"}`);
+  }
+  if (!/^[a-f0-9]{40}$/.test(runtime.tree ?? "")) {
+    throw new Error(`whisper.cpp tree must be a full lowercase Git SHA: ${runtime.tree ?? "missing"}`);
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(runtime.gitTag ?? "")) {
+    throw new Error(`whisper.cpp gitTag must be a simple tag name: ${runtime.gitTag ?? "missing"}`);
+  }
+
+  await run("git", ["init", "--quiet", sourceDir]);
+  await run("git", ["-C", sourceDir, "remote", "add", "origin", runtime.repository]);
+  await run("git", ["-C", sourceDir, "fetch", "--depth", "1", "origin", `refs/tags/${runtime.gitTag}`]);
+  await run("git", ["-C", sourceDir, "-c", "advice.detachedHead=false", "checkout", "--detach", "FETCH_HEAD"]);
+
+  const actualCommit = await capture("git", ["-C", sourceDir, "rev-parse", "HEAD"]);
+  if (actualCommit !== runtime.commit) {
+    throw new Error(`whisper.cpp commit mismatch. Expected ${runtime.commit}, got ${actualCommit}.`);
+  }
+  const actualTree = await capture("git", ["-C", sourceDir, "rev-parse", "HEAD^{tree}"]);
+  if (actualTree !== runtime.tree) {
+    throw new Error(`whisper.cpp tree mismatch. Expected ${runtime.tree}, got ${actualTree}.`);
   }
 }
 
@@ -234,9 +270,7 @@ function sherpaAsset(platformKey, accelerator) {
 }
 
 function supportsWhisperCpp(platformKey, accelerator) {
-  if (accelerator === "cpu") return manifest.platforms.includes(platformKey);
-  if (accelerator === "cuda") return platformKey.startsWith("linux-");
-  return false;
+  return manifest.runtimes["whisper.cpp"].variants?.[platformKey]?.includes(accelerator) ?? false;
 }
 
 function singleChildDirectory(dir) {
@@ -273,6 +307,25 @@ function run(command, args, options = {}) {
       else reject(new Error(`${command} exited with code ${code}.`));
     });
   });
+}
+
+function capture(command, args) {
+  return new Promise((resolveCapture, reject) => {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolveCapture(Buffer.concat(stdout).toString("utf8").trim());
+      else reject(new Error(`${command} exited with code ${code}: ${Buffer.concat(stderr).toString("utf8").trim()}`));
+    });
+  });
+}
+
+function isMainModule() {
+  return Boolean(process.argv[1]) && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 }
 
 function relative(path) {

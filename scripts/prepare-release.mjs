@@ -9,22 +9,25 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
-const options = readOptions(process.argv.slice(2));
-const canPrompt = !options.yes && input.isTTY && output.isTTY;
 const releaseTagPattern =
   /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/;
+let options;
+let rl;
 
-if (options.help) {
-  printHelp();
-  process.exit(0);
-}
+if (isMainModule()) {
+  options = readOptions(process.argv.slice(2));
+  if (options.help) {
+    printHelp();
+    process.exit(0);
+  }
 
-const rl = canPrompt ? createInterface({ input, output }) : null;
-
-try {
-  await main();
-} finally {
-  rl?.close();
+  const canPrompt = !options.yes && input.isTTY && output.isTTY;
+  rl = canPrompt ? createInterface({ input, output }) : null;
+  try {
+    await main();
+  } finally {
+    rl?.close();
+  }
 }
 
 async function main() {
@@ -165,7 +168,7 @@ Options:
   --skip-audit                      skip bun audit --audit-level=moderate
   --skip-checksums                  skip checksum generation and verification
   --skip-dist                       skip bun run dist
-  --skip-release-url-check          skip runtime release URL reachability checks
+  --skip-release-url-check          skip runtime release asset integrity checks
   --skip-runtime-package            skip dist/runtimes archive packaging
   --skip-tests                      skip bun run test
   -h, --help                        show this help
@@ -240,7 +243,7 @@ async function chooseStep({ label, skip, enabled = true }) {
   return confirm(label, true);
 }
 
-function buildSteps({ runDist, runRuntimePackage, runChecksums }) {
+export function buildSteps({ runDist, runRuntimePackage, runChecksums }, platform = process.platform) {
   const steps = [
     commandStep("Typecheck", "bun", ["run", "lint"])
   ];
@@ -256,7 +259,7 @@ function buildSteps({ runDist, runRuntimePackage, runChecksums }) {
   steps.push(commandStep("Check runtime catalog metadata", "bun", ["run", "runtimes:manifest-check"]));
 
   if (!options.skipReleaseUrlCheck) {
-    steps.push(commandStep("Check runtime release URLs", "bun", ["run", "runtimes:manifest-check:release"]));
+    steps.push(commandStep("Verify runtime release asset bytes", "bun", ["run", "runtimes:manifest-check:release"]));
   }
 
   steps.push(commandStep("Prepare current-platform STT runtimes", "bun", ["run", "runtimes:prepare"]));
@@ -272,7 +275,7 @@ function buildSteps({ runDist, runRuntimePackage, runChecksums }) {
 
   if (runChecksums) {
     steps.push(commandStep("Generate SHA-256 checksums", "node", ["scripts/generate-linux-release-checksums.mjs"]));
-    steps.push(commandStep("Verify SHA-256 checksums", "sha256sum", ["-c", "SHA256SUMS.txt"], join(repoRoot, "dist")));
+    steps.push(checksumVerificationStep(platform));
   }
 
   return steps;
@@ -291,20 +294,28 @@ function printPlan(steps) {
   console.log("");
 }
 
-async function checkHostTools({ runDist, runRuntimePackage, runChecksums }) {
+export async function checkHostTools(
+  { runDist, runRuntimePackage, runChecksums },
+  platform = process.platform,
+  commandExistsImpl = commandExists
+) {
+  for (const command of requiredHostTools({ runDist, runRuntimePackage, runChecksums }, platform)) {
+    if (!(await commandExistsImpl(command))) throw new Error(`Required command not found on PATH: ${command}`);
+  }
+}
+
+export function requiredHostTools({ runDist, runRuntimePackage, runChecksums }, platform = process.platform) {
   const required = ["git", "bun", "node"];
-  if (runRuntimePackage) required.push("tar", "gzip");
-  if (runChecksums) required.push("sha256sum");
+  if (runRuntimePackage) required.push(platform === "darwin" ? "gtar" : "tar", "gzip");
+  if (runChecksums) required.push(platform === "darwin" ? "shasum" : "sha256sum");
+  if (runDist && platform === "linux") required.push("rpmbuild");
+  return required;
+}
 
-  for (const command of required) {
-    if (!(await commandExists(command))) throw new Error(`Required command not found on PATH: ${command}`);
-  }
-
-  if (runDist && !(await commandExists("rpmbuild"))) {
-    if (options.yes || !(await confirm("rpmbuild was not found. bun run dist is expected to fail for rpm output. Continue anyway?", false))) {
-      throw new Error("Install rpm/rpmbuild before building release artifacts.");
-    }
-  }
+export function checksumVerificationStep(platform = process.platform) {
+  return platform === "darwin"
+    ? commandStep("Verify SHA-256 checksums", "shasum", ["-a", "256", "-c", "SHA256SUMS.txt"], join(repoRoot, "dist"))
+    : commandStep("Verify SHA-256 checksums", "sha256sum", ["-c", "SHA256SUMS.txt"], join(repoRoot, "dist"));
 }
 
 async function commandExists(command) {
@@ -492,4 +503,8 @@ function toDisplayPath(path) {
 
 function toPosixPath(path) {
   return path.split(sep).join("/");
+}
+
+function isMainModule() {
+  return Boolean(process.argv[1]) && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 }
