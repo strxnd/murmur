@@ -5,6 +5,7 @@ import { ContextService } from "./context";
 
 const clipboardHarness = vi.hoisted(() => {
   const emptyImage = { isEmpty: () => true };
+  let formats: string[] = [];
   let state = {
     text: "",
     html: "",
@@ -12,6 +13,7 @@ const clipboardHarness = vi.hoisted(() => {
     image: emptyImage
   };
   const api = {
+    availableFormats: vi.fn(() => formats),
     clear: vi.fn(() => {
       state = { text: "", html: "", rtf: "", image: emptyImage };
     }),
@@ -36,8 +38,9 @@ const clipboardHarness = vi.hoisted(() => {
     api,
     image: (empty = false) => ({ isEmpty: () => empty }),
     get: () => state,
-    set: (next: Partial<typeof state>) => {
+    set: (next: Partial<typeof state>, nextFormats: string[] = []) => {
       state = { text: "", html: "", rtf: "", image: emptyImage, ...next };
+      formats = nextFormats;
     }
   };
 });
@@ -105,6 +108,24 @@ describe("ContextService", () => {
     expect(snapshot.selectedText).toBe("selected text");
     expect(backend.copyCalls).toBe(1);
     expect(clipboardHarness.get()).toEqual({ text: "previous", html: "<b>previous</b>", rtf: "{\\rtf1 previous}", image });
+  });
+
+  it("skips clipboard-based selection capture when the existing clipboard cannot be restored losslessly", async () => {
+    const backend = new FakeBackend();
+    backend.onCopy = () => clipboardHarness.api.writeText("selected text");
+    const context = new ContextService(new TextAutomationService(backend), 50, 1, fakePrimarySelection());
+    clipboardHarness.set({ text: "previous" }, ["application/x-custom"]);
+    clipboardHarness.api.writeText.mockClear();
+
+    const snapshot = await context.capture();
+
+    expect(snapshot.selectedText).toBeUndefined();
+    expect(snapshot.diagnostics).toContain(
+      "Selected text capture was skipped to preserve unsupported clipboard formats."
+    );
+    expect(backend.copyCalls).toBe(0);
+    expect(clipboardHarness.api.writeText).not.toHaveBeenCalled();
+    expect(clipboardHarness.get().text).toBe("previous");
   });
 
   it("drops selected-text capture while it is queued after cancellation", async () => {
