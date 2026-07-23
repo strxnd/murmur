@@ -1,7 +1,13 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const macosDeployment = require("./macos-deployment-target.cjs");
 
-async function afterPack(context) {
+async function afterPack(context, dependencies = {}) {
+  if (context.electronPlatformName === "darwin") {
+    const verify = dependencies.verifyMacosDeploymentTargets ?? macosDeployment.verifyMacosDeploymentTargets;
+    verify(context.appOutDir);
+    return;
+  }
   if (context.electronPlatformName !== "linux") return;
 
   const appDir = context.appOutDir;
