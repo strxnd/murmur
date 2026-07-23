@@ -210,6 +210,26 @@ describe("PasteService", () => {
     }
   });
 
+  it("does not overwrite an indistinguishable same-text user copy during the restore window", async () => {
+    vi.useFakeTimers();
+    try {
+      const backend = new FakeBackend();
+      const service = new PasteService(new TextAutomationService(backend), 0, fakeLinuxClipboard(), 5000);
+      clipboardHarness.set({ text: "previous" }, ["text/plain"]);
+
+      const resultPromise = service.insertText("processed output");
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(resultPromise).resolves.toEqual({ pasted: true, message: successMessage, clipboardRetained: false });
+
+      clipboardHarness.set({ text: "processed output" }, ["text/plain"]);
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(clipboardHarness.get().text).toBe("processed output");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("serializes delayed restoration with clipboard-based context capture", async () => {
     vi.useFakeTimers();
     try {
@@ -231,11 +251,11 @@ describe("PasteService", () => {
         releaseCapture = resolve;
       });
       const capture = automation.runExclusive(async () => {
-        const staleSnapshot = clipboardHarness.get().text;
+        const staleSnapshot = { ...clipboardHarness.get() };
         markCaptureStarted();
         await captureBlocked;
         clipboardHarness.api.writeText("murmur-selection");
-        clipboardHarness.api.writeText(staleSnapshot);
+        clipboardHarness.api.write(staleSnapshot);
       });
       await captureStarted;
 

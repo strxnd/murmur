@@ -1,8 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { clipboard } from "../electron-api";
 import {
   captureClipboardSnapshot,
+  clipboardHasOwnershipToken,
   clipboardMatchesSnapshot,
   restoreClipboardSnapshot,
+  writeOwnedClipboardText,
   type ClipboardSnapshot
 } from "./clipboard-snapshot";
 import { LinuxClipboardService } from "./linux-clipboard";
@@ -72,18 +75,22 @@ export class PasteService {
       const previousClipboard = captureClipboardSnapshot();
       let pasteDispatchStarted = false;
       let clipboardLease: ClipboardPasteLease | null = null;
+      let clipboardOwnershipToken: string | undefined;
       let ownedClipboard: ClipboardSnapshot | undefined;
       const restoreIfOwned = async (): Promise<void> => {
         await clipboardLease?.restoreIfOwned();
-        const ownsStandardClipboard = ownedClipboard
-          ? clipboardMatchesSnapshot(ownedClipboard)
-          : clipboard.readText() === text;
+        const ownsStandardClipboard =
+          clipboardOwnershipToken && ownedClipboard
+            ? clipboardHasOwnershipToken(clipboardOwnershipToken) && clipboardMatchesSnapshot(ownedClipboard)
+            : clipboard.readText() === text;
         if (ownsStandardClipboard) restoreClipboardSnapshot(previousClipboard);
       };
 
       try {
         clipboardLease = await this.linuxClipboard.writeTextForPaste(text, signal);
         throwIfAborted(signal);
+        clipboardOwnershipToken = randomUUID();
+        writeOwnedClipboardText(text, clipboardOwnershipToken);
         ownedClipboard = captureClipboardSnapshot();
 
         await abortableDelay(this.clipboardSettleDelayMs, signal);

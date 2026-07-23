@@ -1,6 +1,8 @@
 import type { NativeImage } from "electron";
 import { clipboard } from "../electron-api";
 
+const clipboardOwnershipMarkerPrefix = "murmur-clipboard-owner:";
+
 const restorableClipboardFormats = new Set([
   "compound_text",
   "image/png",
@@ -45,6 +47,18 @@ export function captureClipboardSnapshot(): ClipboardSnapshot {
   };
 }
 
+export function writeOwnedClipboardText(text: string, ownershipToken: string): void {
+  const marker = `${clipboardOwnershipMarkerPrefix}${ownershipToken}`;
+  clipboard.write({
+    text,
+    html: `<span style="white-space: pre-wrap"><!--${marker}-->${escapeHtml(text)}</span>`
+  });
+}
+
+export function clipboardHasOwnershipToken(ownershipToken: string): boolean {
+  return clipboard.readHTML().includes(`<!--${clipboardOwnershipMarkerPrefix}${ownershipToken}-->`);
+}
+
 export function clipboardMatchesSnapshot(snapshot: ClipboardSnapshot): boolean {
   const current = captureClipboardSnapshot();
   return (
@@ -73,6 +87,15 @@ export function restoreClipboardSnapshot(snapshot: ClipboardSnapshot): boolean {
     ...(snapshot.image ? { image: snapshot.image } : {})
   });
   return true;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function normalizeClipboardFormats(formats: string[]): string[] {
