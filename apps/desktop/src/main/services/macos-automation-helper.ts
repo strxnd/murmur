@@ -19,6 +19,7 @@ export interface MacosHelperResult {
   text?: string;
   appName?: string;
   appId?: string;
+  windowId?: string;
   windowTitle?: string;
 }
 

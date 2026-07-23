@@ -52,6 +52,21 @@ describe("Home dictation runway", () => {
     expect(handlers.startDictation).not.toHaveBeenCalled();
   });
 
+  it("preserves the Stop action when readiness changes during recording", async () => {
+    const handlers = actionHandlers();
+    const action = dictationRunwayAction({
+      status: "recording",
+      unavailableReason: "The active provider became unavailable.",
+      isActing: false
+    });
+
+    await performDictationRunwayAction(action, handlers);
+
+    expect(action).toBe("stop");
+    expect(handlers.stopDictation).toHaveBeenCalledOnce();
+    expect(handlers.openSetup).not.toHaveBeenCalled();
+  });
+
   it("is disabled while a dictation is being processed", async () => {
     const handlers = actionHandlers();
     const action = dictationRunwayAction({ status: "processing", unavailableReason: null, isActing: false });

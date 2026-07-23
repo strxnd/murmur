@@ -4,8 +4,16 @@ import { LinuxClipboardService } from "./linux-clipboard";
 const clipboardHarness = vi.hoisted(() => {
   let text = "";
   let primary = "";
+  let primaryHtml = "";
   let selectionAvailable = true;
   return {
+    readHTML: vi.fn((type?: string) => {
+      if (type === "selection") {
+        if (!selectionAvailable) throw new Error("selection unavailable");
+        return primaryHtml;
+      }
+      return "";
+    }),
     readText: vi.fn((type?: string) => {
       if (type === "selection") {
         if (!selectionAvailable) throw new Error("selection unavailable");
@@ -16,15 +24,26 @@ const clipboardHarness = vi.hoisted(() => {
     reset: () => {
       text = "";
       primary = "";
+      primaryHtml = "";
       selectionAvailable = true;
     },
     setSelectionAvailable: (available: boolean) => {
       selectionAvailable = available;
     },
+    write: vi.fn((data: { html?: string; text?: string }, type?: string) => {
+      if (type === "selection") {
+        if (!selectionAvailable) throw new Error("selection unavailable");
+        primary = data.text ?? "";
+        primaryHtml = data.html ?? "";
+      } else {
+        text = data.text ?? "";
+      }
+    }),
     writeText: vi.fn((value: string, type?: string) => {
       if (type === "selection") {
         if (!selectionAvailable) throw new Error("selection unavailable");
         primary = value;
+        primaryHtml = "";
       } else text = value;
     })
   };
@@ -41,11 +60,13 @@ interface ExecCall {
 describe("LinuxClipboardService", () => {
   beforeEach(() => {
     clipboardHarness.reset();
+    clipboardHarness.readHTML.mockClear();
     clipboardHarness.readText.mockClear();
+    clipboardHarness.write.mockClear();
     clipboardHarness.writeText.mockClear();
   });
 
-  it("mirrors paste text to Wayland and X11 clipboards", async () => {
+  it("mirrors paste text to Wayland and X11 PRIMARY selections", async () => {
     const calls: ExecCall[] = [];
     const service = createService({
       calls,
@@ -58,12 +79,69 @@ describe("LinuxClipboardService", () => {
     expect(clipboardHarness.writeText).toHaveBeenCalledWith("processed output");
     expect(calls).toEqual(
       expect.arrayContaining([
-        { command: "wl-copy", args: [], input: "processed output" },
         { command: "wl-copy", args: ["--primary"], input: "processed output" },
-        { command: "xclip", args: ["-selection", "clipboard"], input: "processed output" },
         { command: "xclip", args: ["-selection", "primary"], input: "processed output" }
       ])
     );
+    expect(calls).not.toContainEqual({ command: "wl-copy", args: [], input: "processed output" });
+    expect(calls).not.toContainEqual({
+      command: "xclip",
+      args: ["-selection", "clipboard"],
+      input: "processed output"
+    });
+  });
+
+  it("leaves standard clipboard restoration to the full snapshot after a successful paste", async () => {
+    clipboardHarness.writeText("previous clipboard");
+    clipboardHarness.writeText("previous primary", "selection");
+    const calls: ExecCall[] = [];
+    const service = createService({
+      calls,
+      env: { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-1" },
+      tools: ["wl-copy", "xclip"]
+    });
+
+    const lease = await service.writeTextForPaste("processed output", undefined, "ownership-token");
+    await lease.restoreIfOwned();
+
+    expect(clipboardHarness.readText()).toBe("processed output");
+    expect(clipboardHarness.readText("selection")).toBe("previous primary");
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        { command: "wl-copy", args: ["--primary"], input: "previous primary" },
+        { command: "xclip", args: ["-selection", "primary"], input: "previous primary" }
+      ])
+    );
+    expect(calls).not.toContainEqual({ command: "wl-copy", args: [], input: "previous clipboard" });
+    expect(calls).not.toContainEqual({
+      command: "xclip",
+      args: ["-selection", "clipboard"],
+      input: "previous clipboard"
+    });
+  });
+
+  it("does not restore over a same-text user PRIMARY selection", async () => {
+    clipboardHarness.writeText("previous clipboard");
+    clipboardHarness.writeText("previous primary", "selection");
+    const calls: ExecCall[] = [];
+    const service = createService({
+      calls,
+      env: { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-1" },
+      tools: ["wl-copy", "xclip"]
+    });
+
+    const lease = await service.writeTextForPaste("processed output", undefined, "ownership-token");
+    clipboardHarness.writeText("processed output", "selection");
+    calls.length = 0;
+    await lease.restoreIfOwned();
+
+    expect(clipboardHarness.readText("selection")).toBe("processed output");
+    expect(calls).not.toContainEqual({ command: "wl-copy", args: ["--primary"], input: "previous primary" });
+    expect(calls).not.toContainEqual({
+      command: "xclip",
+      args: ["-selection", "primary"],
+      input: "previous primary"
+    });
   });
 
   it("restores clipboard selections when cancellation interrupts helper writes", async () => {
@@ -87,7 +165,7 @@ describe("LinuxClipboardService", () => {
     const controller = new AbortController();
 
     const write = service.writeTextForPaste("cancelled output", controller.signal);
-    await vi.waitFor(() => expect(calls).toHaveLength(4));
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
     controller.abort();
 
     expect(clipboardHarness.readText()).toBe("previous clipboard");
@@ -129,7 +207,7 @@ describe("LinuxClipboardService", () => {
 
     const write = service.writeTextForPaste("cancelled output", controller.signal);
     await vi.waitFor(() =>
-      expect(calls.filter((call) => call.command === "wl-copy" && call.input === "cancelled output")).toHaveLength(2)
+      expect(calls.filter((call) => call.command === "wl-copy" && call.input === "cancelled output")).toHaveLength(1)
     );
     controller.abort();
     releaseWrites();
@@ -149,12 +227,8 @@ describe("LinuxClipboardService", () => {
 
     await service.writeTextForPaste("processed output");
 
-    expect(calls).toEqual(
-      expect.arrayContaining([
-        { command: "xsel", args: ["--clipboard", "--input"], input: "processed output" },
-        { command: "xsel", args: ["--primary", "--input"], input: "processed output" }
-      ])
-    );
+    expect(calls).toContainEqual({ command: "xsel", args: ["--primary", "--input"], input: "processed output" });
+    expect(calls).not.toContainEqual({ command: "xsel", args: ["--clipboard", "--input"], input: "processed output" });
   });
 
 });

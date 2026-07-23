@@ -78,7 +78,7 @@ export class ContextService {
         ? currentClipboard
         : undefined;
 
-    const hasAppMetadata = Boolean(activeWindow.appName || activeWindow.appId || activeWindow.windowTitle);
+    const hasAppMetadata = Boolean(activeWindow.appName || activeWindow.appId || activeWindow.windowId || activeWindow.windowTitle);
     const quality =
       hasAppMetadata && selectedText
         ? "full"
@@ -125,6 +125,10 @@ export class ContextService {
     return this.textAutomation.runExclusive(async () => {
       throwIfAborted(signal);
       const original = captureClipboardSnapshot();
+      if (!original.restorable) {
+        diagnostics.push("Selected text capture was skipped to preserve unsupported clipboard formats.");
+        return undefined;
+      }
       const sentinel = `murmur-selection-${randomUUID()}`;
       const originalPrimary = await this.linuxClipboard.readPrimaryText().catch(() => undefined);
       try {
