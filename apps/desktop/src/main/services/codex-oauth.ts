@@ -69,6 +69,9 @@ export class CodexOAuthService {
   private loginController?: AbortController;
   private loginPromise?: Promise<CodexProviderRuntime>;
   private turnQueue: Promise<void> = Promise.resolve();
+  private readonly operationControllers = new Set<AbortController>();
+  private readonly activeOperations = new Set<Promise<unknown>>();
+  private authGeneration = 0;
   private disposed = false;
   private status: CodexProviderRuntime = {
     status: "checking",
@@ -106,45 +109,59 @@ export class CodexOAuthService {
 
   async refreshStatus(): Promise<CodexProviderRuntime> {
     if (this.disposed || this.loginPromise) return this.getStatus();
-    this.updateStatus({ status: "checking", message: "Checking Codex connection...", modelAvailable: false });
+    const generation = this.authGeneration;
+    const controller = new AbortController();
+    this.operationControllers.add(controller);
+    this.updateStatusForGeneration(generation, { status: "checking", message: "Checking Codex connection...", modelAvailable: false });
 
-    const stored = this.authStore.get();
-    if (!stored) return this.setSignedOut();
+    const operation = (async () => {
+      const stored = this.authStore.get();
+      if (!stored) return this.setSignedOutForGeneration(generation);
 
-    try {
-      const tokens = await this.ensureFreshTokens(stored);
-      const modelAvailable = await this.validateModelAvailability(tokens);
-      return this.setConnected(tokens, modelAvailable);
-    } catch (error) {
-      if (this.handleTerminalAuthError(error)) return this.getStatus();
-      this.updateStatus({
-        status: "error",
-        message: `Codex connection failed: ${errorMessage(error)}`,
-        modelAvailable: false
-      });
-      return this.getStatus();
-    }
+      try {
+        const tokens = await this.ensureFreshTokens(stored, controller.signal, generation);
+        const modelAvailable = await this.validateModelAvailability(tokens, controller.signal, generation);
+        this.assertAuthGeneration(generation);
+        return this.setConnected(tokens, modelAvailable, generation);
+      } catch (error) {
+        if (!this.isAuthGenerationCurrent(generation)) return this.getStatus();
+        if (this.handleTerminalAuthError(error, generation)) return this.getStatus();
+        if (controller.signal.aborted) return this.getStatus();
+        this.updateStatusForGeneration(generation, {
+          status: "error",
+          message: `Codex connection failed: ${errorMessage(error)}`,
+          modelAvailable: false
+        });
+        return this.getStatus();
+      }
+    })().finally(() => this.operationControllers.delete(controller));
+    return this.trackOperation(operation);
   }
 
   startLogin(): Promise<CodexProviderRuntime> {
     if (this.disposed) return Promise.reject(new Error("Codex service is disposed."));
     if (this.loginPromise) return this.loginPromise;
 
+    const generation = this.authGeneration;
     const controller = new AbortController();
     this.loginController = controller;
-    this.loginPromise = this.runLogin(controller.signal)
+    this.operationControllers.add(controller);
+    const operation = this.runLogin(controller.signal, generation)
       .catch((error) => {
+        if (!this.isAuthGenerationCurrent(generation)) return this.getStatus();
         if (controller.signal.aborted) {
           this.authStore.delete();
-          return this.setSignedOut("Codex sign-in cancelled.");
+          return this.setSignedOutForGeneration(generation, "Codex sign-in cancelled.");
         }
-        this.updateStatus({ status: "error", message: errorMessage(error), modelAvailable: false });
+        this.updateStatusForGeneration(generation, { status: "error", message: errorMessage(error), modelAvailable: false });
         return this.getStatus();
       })
       .finally(() => {
+        this.operationControllers.delete(controller);
         if (this.loginController === controller) this.loginController = undefined;
         this.loginPromise = undefined;
       });
+    this.loginPromise = this.trackOperation(operation);
     return this.loginPromise;
   }
 
@@ -156,16 +173,20 @@ export class CodexOAuthService {
   }
 
   async logout(): Promise<CodexProviderRuntime> {
-    this.loginController?.abort();
-    if (this.loginPromise) await this.loginPromise;
+    const pendingQueue = this.turnQueue;
+    this.authGeneration += 1;
+    this.abortAuthenticationOperations();
+    await Promise.allSettled([...this.activeOperations, pendingQueue]);
     this.authStore.delete();
     return this.setSignedOut();
   }
 
   processCleanup(options: { prompt: string; model: string; signal?: AbortSignal }): Promise<ProcessedResult> {
+    const generation = this.authGeneration;
     const run = this.turnQueue.then(() => {
+      this.assertAuthGeneration(generation);
       throwIfAborted(options.signal);
-      return this.runCleanup(options);
+      return this.trackOperation(this.runCleanup(options, generation));
     });
     this.turnQueue = run.then(
       () => undefined,
@@ -174,14 +195,21 @@ export class CodexOAuthService {
     return run;
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
+    if (this.disposed) return;
+    const pendingQueue = this.turnQueue;
     this.disposed = true;
-    this.loginController?.abort();
-    this.loginController = undefined;
+    this.authGeneration += 1;
+    this.abortAuthenticationOperations();
+    await Promise.allSettled([...this.activeOperations, pendingQueue]);
   }
 
-  private async runLogin(signal: AbortSignal): Promise<CodexProviderRuntime> {
-    this.updateStatus({ status: "signing_in", message: "Requesting a Codex sign-in code...", modelAvailable: false });
+  private async runLogin(signal: AbortSignal, generation: number): Promise<CodexProviderRuntime> {
+    this.updateStatusForGeneration(generation, {
+      status: "signing_in",
+      message: "Requesting a Codex sign-in code...",
+      modelAvailable: false
+    });
     const deviceData = await this.requestJson(
       `${codexIssuer}/api/accounts/deviceauth/usercode`,
       {
@@ -192,11 +220,12 @@ export class CodexOAuthService {
       "Codex device-code request",
       signal
     );
+    this.assertAuthGeneration(generation);
     const userCode = nonEmptyString(deviceData.user_code);
     const deviceAuthId = nonEmptyString(deviceData.device_auth_id);
     if (!userCode || !deviceAuthId) throw new Error("OpenAI returned an incomplete Codex sign-in response.");
 
-    this.updateStatus({
+    this.updateStatusForGeneration(generation, {
       status: "signing_in",
       message: `Enter code ${userCode} in the browser to connect Codex.`,
       modelAvailable: false
@@ -205,14 +234,14 @@ export class CodexOAuthService {
       try {
         await this.openExternal(codexDeviceUrl);
       } catch {
-        this.updateStatus({
+        this.updateStatusForGeneration(generation, {
           status: "signing_in",
           message: `Open ${codexDeviceUrl} and enter code ${userCode} to connect Codex.`,
           modelAvailable: false
         });
       }
     } else {
-      this.updateStatus({
+      this.updateStatusForGeneration(generation, {
         status: "signing_in",
         message: `Open ${codexDeviceUrl} and enter code ${userCode} to connect Codex.`,
         modelAvailable: false
@@ -246,11 +275,13 @@ export class CodexOAuthService {
       "Codex token exchange",
       signal
     );
+    this.assertAuthGeneration(generation);
     const tokens = tokensFromResponse(tokenData);
-    const modelAvailable = await this.validateModelAvailability(tokens, signal);
+    const modelAvailable = await this.validateModelAvailability(tokens, signal, generation);
     throwIfAborted(signal);
+    this.assertAuthGeneration(generation);
     this.authStore.set(tokens);
-    return this.setConnected(tokens, modelAvailable);
+    return this.setConnected(tokens, modelAvailable, generation);
   }
 
   private async pollForAuthorization(
@@ -280,9 +311,13 @@ export class CodexOAuthService {
     throw new Error("Codex sign-in timed out. Start the connection again.");
   }
 
-  private async runCleanup(options: { prompt: string; model: string; signal?: AbortSignal }): Promise<ProcessedResult> {
+  private async runCleanup(
+    options: { prompt: string; model: string; signal?: AbortSignal },
+    generation: number
+  ): Promise<ProcessedResult> {
     if (options.model !== codexModel) throw new Error(`Codex only supports ${codexModel} in Murmur.`);
     const controller = new AbortController();
+    this.operationControllers.add(controller);
     let timedOut = false;
     const onAbort = (): void => controller.abort();
     if (options.signal?.aborted) controller.abort();
@@ -292,13 +327,19 @@ export class CodexOAuthService {
       controller.abort();
     }, this.responseTimeoutMs);
     try {
-      let tokens = await this.requireTokens(controller.signal);
+      this.assertAuthGeneration(generation);
+      let tokens = await this.requireTokens(controller.signal, generation);
+      this.assertAuthGeneration(generation);
       let response = await this.requestCleanup(options.prompt, tokens, controller.signal);
+      this.assertAuthGeneration(generation);
 
       if (response.status === 401) {
         await response.body?.cancel();
-        tokens = await this.refreshTokens(tokens, controller.signal);
+        this.assertAuthGeneration(generation);
+        tokens = await this.refreshTokens(tokens, controller.signal, generation);
+        this.assertAuthGeneration(generation);
         response = await this.requestCleanup(options.prompt, tokens, controller.signal);
+        this.assertAuthGeneration(generation);
         if (response.status === 401) {
           await response.body?.cancel();
           throw new CodexAuthError("Codex rejected the refreshed session.", true);
@@ -307,10 +348,11 @@ export class CodexOAuthService {
       if (!response.ok) throw await codexHttpError(response);
 
       const text = (await readCodexText(response, this.responseIdleTimeoutMs)).trim();
+      this.assertAuthGeneration(generation);
       if (!text) throw new Error("Codex completed without final text.");
       return { text, providerId: "codex", model: codexModel };
     } catch (error) {
-      if (this.handleTerminalAuthError(error)) throw error;
+      if (this.handleTerminalAuthError(error, generation)) throw error;
       if (options.signal?.aborted) throw abortError();
       if (timedOut) throw new Error("Codex request timed out.");
       throw error;
@@ -318,19 +360,21 @@ export class CodexOAuthService {
       clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
       controller.abort();
+      this.operationControllers.delete(controller);
     }
   }
 
-  private async requireTokens(signal?: AbortSignal): Promise<CodexTokens> {
+  private async requireTokens(signal: AbortSignal | undefined, generation: number): Promise<CodexTokens> {
     const stored = this.authStore.get();
     if (!stored) throw new Error("Sign in to Codex with your ChatGPT subscription.");
     try {
-      const tokens = await this.ensureFreshTokens(stored, signal);
+      const tokens = await this.ensureFreshTokens(stored, signal, generation);
+      this.assertAuthGeneration(generation);
       const accountId = accountIdFromTokens(tokens);
       if (!accountId) throw new Error("Codex did not provide a ChatGPT account ID. Sign in again.");
       return { ...tokens, accountId };
     } catch (error) {
-      this.handleTerminalAuthError(error);
+      this.handleTerminalAuthError(error, generation);
       throw error;
     }
   }
@@ -360,13 +404,13 @@ export class CodexOAuthService {
     });
   }
 
-  private ensureFreshTokens(tokens: CodexTokens, signal?: AbortSignal): Promise<CodexTokens> {
+  private ensureFreshTokens(tokens: CodexTokens, signal: AbortSignal | undefined, generation: number): Promise<CodexTokens> {
     const expiresAt = tokens.expiresAt ?? jwtExpiration(tokens.accessToken);
     if (!expiresAt || expiresAt - Date.now() > tokenRefreshSkewMs) return Promise.resolve(tokens);
-    return this.refreshTokens(tokens, signal);
+    return this.refreshTokens(tokens, signal, generation);
   }
 
-  private async refreshTokens(tokens: CodexTokens, signal?: AbortSignal): Promise<CodexTokens> {
+  private async refreshTokens(tokens: CodexTokens, signal: AbortSignal | undefined, generation: number): Promise<CodexTokens> {
     if (!tokens.refreshToken) throw new CodexAuthError("Codex refresh token is missing.", true);
     const refreshed = await this.withRequestTimeout(this.authTimeoutMs, signal, async (requestSignal) => {
       const response = await this.fetchImpl(codexTokenUrl, {
@@ -391,6 +435,7 @@ export class CodexOAuthService {
       return tokensFromResponse(await requireJsonResponse(response, "Codex token refresh", requestSignal), tokens);
     });
     throwIfAborted(signal);
+    this.assertAuthGeneration(generation);
     this.authStore.set(refreshed);
     return refreshed;
   }
@@ -402,13 +447,18 @@ export class CodexOAuthService {
     });
   }
 
-  private async validateModelAvailability(tokens: CodexTokens, signal?: AbortSignal): Promise<boolean> {
+  private async validateModelAvailability(
+    tokens: CodexTokens,
+    signal: AbortSignal | undefined,
+    generation: number
+  ): Promise<boolean> {
     const accountId = accountIdFromTokens(tokens);
     if (!accountId) return false;
 
+    this.assertAuthGeneration(generation);
     const separator = this.baseUrl.includes("?") ? "&" : "?";
     const url = `${this.baseUrl}/models${separator}client_version=${encodeURIComponent(this.codexCompatibilityVersion)}`;
-    return this.withRequestTimeout(this.authTimeoutMs, signal, async (requestSignal) => {
+    const modelAvailable = await this.withRequestTimeout(this.authTimeoutMs, signal, async (requestSignal) => {
       const response = await this.fetchImpl(url, {
         method: "GET",
         signal: requestSignal,
@@ -432,6 +482,8 @@ export class CodexOAuthService {
       const data = await requireJsonResponse(response, "Codex model discovery", requestSignal);
       return (Array.isArray(data.models) ? data.models : []).some((value) => nonEmptyString(asObject(value)?.slug) === codexModel);
     });
+    this.assertAuthGeneration(generation);
+    return modelAvailable;
   }
 
   private async withRequestTimeout<T>(
@@ -464,12 +516,12 @@ export class CodexOAuthService {
     }
   }
 
-  private setConnected(tokens: CodexTokens, modelAvailable: boolean): CodexProviderRuntime {
+  private setConnected(tokens: CodexTokens, modelAvailable: boolean, generation: number): CodexProviderRuntime {
     const claims = mergedClaims(tokens);
     const accountId = tokens.accountId ?? stringClaim(claims, "chatgpt_account_id");
     const email = stringClaim(claims, "email");
     const plan = stringClaim(claims, "chatgpt_plan_type");
-    this.updateStatus({
+    this.updateStatusForGeneration(generation, {
       status: "connected",
       message: modelAvailable
         ? "Connected to Codex with ChatGPT OAuth."
@@ -482,16 +534,50 @@ export class CodexOAuthService {
     return this.getStatus();
   }
 
-  private handleTerminalAuthError(error: unknown): boolean {
-    if (!isTerminalAuthError(error)) return false;
+  private handleTerminalAuthError(error: unknown, generation: number): boolean {
+    if (!isTerminalAuthError(error) || !this.isAuthGenerationCurrent(generation)) return false;
     this.authStore.delete();
-    this.setSignedOut("Your Codex session expired. Sign in again.");
+    this.setSignedOutForGeneration(generation, "Your Codex session expired. Sign in again.");
     return true;
+  }
+
+  private setSignedOutForGeneration(
+    generation: number,
+    message = "Sign in to Codex with your ChatGPT subscription."
+  ): CodexProviderRuntime {
+    this.updateStatusForGeneration(generation, { status: "signed_out", message, modelAvailable: false });
+    return this.getStatus();
   }
 
   private setSignedOut(message = "Sign in to Codex with your ChatGPT subscription."): CodexProviderRuntime {
     this.updateStatus({ status: "signed_out", message, modelAvailable: false });
     return this.getStatus();
+  }
+
+  private updateStatusForGeneration(generation: number, status: CodexProviderRuntime): void {
+    if (this.isAuthGenerationCurrent(generation)) this.updateStatus(status);
+  }
+
+  private isAuthGenerationCurrent(generation: number): boolean {
+    return !this.disposed && generation === this.authGeneration;
+  }
+
+  private assertAuthGeneration(generation: number): void {
+    if (!this.isAuthGenerationCurrent(generation)) throw abortError();
+  }
+
+  private abortAuthenticationOperations(): void {
+    this.loginController = undefined;
+    for (const controller of this.operationControllers) controller.abort();
+  }
+
+  private trackOperation<T>(operation: Promise<T>): Promise<T> {
+    this.activeOperations.add(operation);
+    void operation.then(
+      () => this.activeOperations.delete(operation),
+      () => this.activeOperations.delete(operation)
+    );
+    return operation;
   }
 
   private updateStatus(status: CodexProviderRuntime): void {

@@ -23,6 +23,8 @@ export type LlmProviderType =
   | "custom_openai_compatible";
 
 export type ModelKind = "voice" | "language";
+export type ProviderCredentialIntent = "keep" | "replace" | "remove";
+export type ProviderSecretProtectionStatus = "encrypted" | "plaintext" | "unavailable";
 
 export type ModelDiscoveryOrigin = "discovered" | "manual";
 
@@ -196,6 +198,8 @@ export interface TranscriptionProviderConfig {
   endpointPath?: string;
   apiKeySecretId?: string;
   apiKey?: string;
+  apiKeyIntent?: ProviderCredentialIntent;
+  hasStoredSecret?: boolean;
   isCloud: boolean;
   isLocal: boolean;
   defaultModel?: string;
@@ -211,6 +215,8 @@ export interface LlmProviderConfig {
   baseUrl?: string;
   apiKeySecretId?: string;
   apiKey?: string;
+  apiKeyIntent?: ProviderCredentialIntent;
+  hasStoredSecret?: boolean;
   isCloud: boolean;
   defaultModel?: string;
   models?: string[];
@@ -339,6 +345,10 @@ export interface CodexProviderRuntime {
 
 export interface ProviderRuntimeSnapshot {
   codex: CodexProviderRuntime;
+  secretStorage?: {
+    status: ProviderSecretProtectionStatus;
+    message: string;
+  };
 }
 
 export interface AppStateSnapshot {

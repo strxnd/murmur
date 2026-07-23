@@ -362,6 +362,93 @@ describe("StorageService", () => {
     expect(secondProvider ? storage.resolveLlmProviderSecret(secondProvider).apiKey : undefined).toBe("sk-second");
   });
 
+  it("requires explicit stored-credential intent when a provider connection changes", () => {
+    const paths = testPaths();
+    const storage = jsonStorage(paths);
+    storage.setLlmProviders([
+      ...storage.getState().llmProviders,
+      {
+        id: "custom-llm",
+        type: "custom_openai_compatible",
+        name: "Custom LLM",
+        baseUrl: "https://old.example.test/v1",
+        apiKey: "sk-custom",
+        apiKeyIntent: "replace",
+        isCloud: true,
+        models: ["model-a"],
+        enabled: true
+      }
+    ]);
+    const before = storage.getState().llmProviders.find((provider) => provider.id === "custom-llm");
+    if (!before) throw new Error("Missing custom LLM provider.");
+
+    expect(() =>
+      storage.setLlmProviders(
+        storage.getState().llmProviders.map((provider) =>
+          provider.id === "custom-llm" ? { ...provider, baseUrl: "https://new.example.test/v1" } : provider
+        )
+      )
+    ).toThrow("must explicitly keep, replace, or remove");
+
+    const after = storage.getState().llmProviders.find((provider) => provider.id === "custom-llm");
+    expect(after?.baseUrl).toBe("https://old.example.test/v1");
+    expect(after ? storage.resolveLlmProviderSecret(after).apiKey : undefined).toBe("sk-custom");
+  });
+
+  it("leaves stored credentials unchanged when provider config persistence fails", () => {
+    const paths = testPaths();
+    const storage = jsonStorage(paths);
+    storage.setLlmProviders(
+      storage.getState().llmProviders.map((provider) =>
+        provider.id === "openai-llm" ? { ...provider, enabled: true, apiKey: "sk-first", apiKeyIntent: "replace" } : provider
+      )
+    );
+    const provider = storage.getState().llmProviders.find((candidate) => candidate.id === "openai-llm");
+    if (!provider?.apiKeySecretId) throw new Error("Missing OpenAI credential reference.");
+
+    const now = 246813579;
+    const tempPath = join(paths.configDir, `.murmur-config.json.${process.pid}.${now}.tmp`);
+    mkdirSync(tempPath);
+    vi.spyOn(Date, "now").mockReturnValue(now);
+
+    try {
+      expect(() =>
+        storage.setLlmProviders(
+          storage.getState().llmProviders.map((candidate) =>
+            candidate.id === "openai-llm"
+              ? { ...candidate, apiKey: "sk-second", apiKeyIntent: "replace" }
+              : candidate
+          )
+        )
+      ).toThrow();
+    } finally {
+      vi.restoreAllMocks();
+      rmSync(tempPath, { recursive: true, force: true });
+    }
+
+    expect(new ProviderSecretStore(paths.providerSecretsPath).get(provider.apiKeySecretId)).toBe("sk-first");
+    expect(jsonStorage(paths).resolveLlmProviderSecret(provider).apiKey).toBe("sk-first");
+  });
+
+  it("derives stored-credential readiness from the authoritative secret store", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        llmProviders: defaultLlmProviders.map((provider) =>
+          provider.id === "openai-llm"
+            ? { ...provider, enabled: true, apiKeySecretId: secretIdForProvider("llm", provider.id) }
+            : provider
+        )
+      })
+    );
+
+    const provider = jsonStorage(paths).getState().llmProviders.find((candidate) => candidate.id === "openai-llm");
+
+    expect(provider).toMatchObject({ enabled: true, hasStoredSecret: false });
+  });
+
   it("migrates legacy plaintext provider API keys out of the config file", () => {
     const paths = testPaths();
     mkdirSync(paths.configDir, { recursive: true });

@@ -83,7 +83,7 @@ describe("renderer onboarding helpers", () => {
       activeModelIds: { voice: "openai-gpt-4o-transcribe" }
     };
     snapshot.transcriptionProviders = snapshot.transcriptionProviders.map((provider) =>
-      provider.id === "openai-stt" ? { ...provider, apiKey: "sk-test" } : provider
+      provider.id === "openai-stt" ? { ...provider, enabled: true, apiKey: "sk-test" } : provider
     );
 
     expect(onboardingSttReady(snapshot)).toBe(true);

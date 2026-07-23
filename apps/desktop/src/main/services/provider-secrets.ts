@@ -1,15 +1,21 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { ensureOwnerOnlyDirectory, ensureOwnerOnlyFile, ownerOnlyFileMode } from "./app-paths";
 
 export type ProviderSecretKind = "stt" | "llm";
+export type ProviderSecretProtectionStatus = "encrypted" | "plaintext" | "unavailable";
 
 export interface ProviderSecretCodec {
   readonly encoding: "electron-safe-storage";
   isAvailable(): boolean;
   encrypt(value: string): string;
   decrypt(value: string): string;
+}
+
+export interface ProviderSecretMutation {
+  secretId: string;
+  value?: string;
 }
 
 interface ElectronSafeStorageLike {
@@ -35,19 +41,22 @@ const emptySecrets: ProviderSecretsFile = {
 };
 
 export class ProviderSecretStore {
+  private readonly backupPath: string;
+
   constructor(
     private readonly path: string,
     private readonly codec?: ProviderSecretCodec
   ) {
+    this.backupPath = `${path}.bak`;
     ensureOwnerOnlyDirectory(dirname(this.path));
     if (existsSync(this.path)) ensureOwnerOnlyFile(this.path);
+    if (existsSync(this.backupPath)) ensureOwnerOnlyFile(this.backupPath);
+    if (existsSync(this.path) || existsSync(this.backupPath)) this.read();
+    this.upgradePlainRecords();
   }
 
   set(secretId: string, value: string): string {
-    const secrets = this.read();
-    const record = this.encode(value);
-    secrets.records[secretId] = record;
-    this.write(secrets);
+    this.apply([{ secretId, value }]);
     return secretId;
   }
 
@@ -60,29 +69,67 @@ export class ProviderSecretStore {
 
   delete(secretId: string | undefined): void {
     if (!secretId) return;
-    const secrets = this.read();
-    if (!Object.prototype.hasOwnProperty.call(secrets.records, secretId)) return;
-    delete secrets.records[secretId];
-    this.write(secrets);
+    this.apply([{ secretId }]);
   }
 
-  pruneKind(kind: ProviderSecretKind, activeSecretIds: Set<string>): void {
+  apply(mutations: ProviderSecretMutation[], prune?: { kind: ProviderSecretKind; activeSecretIds: Set<string> }): void {
     const secrets = this.read();
     let changed = false;
-    const prefix = `provider-secret:${kind}:`;
 
-    for (const secretId of Object.keys(secrets.records)) {
-      if (secretId.startsWith(prefix) && !activeSecretIds.has(secretId)) {
-        delete secrets.records[secretId];
+    for (const mutation of mutations) {
+      if (mutation.value === undefined) {
+        if (!Object.prototype.hasOwnProperty.call(secrets.records, mutation.secretId)) continue;
+        delete secrets.records[mutation.secretId];
         changed = true;
+        continue;
+      }
+
+      secrets.records[mutation.secretId] = this.encode(mutation.value);
+      changed = true;
+    }
+
+    if (prune) {
+      const prefix = `provider-secret:${prune.kind}:`;
+      for (const secretId of Object.keys(secrets.records)) {
+        if (secretId.startsWith(prefix) && !prune.activeSecretIds.has(secretId)) {
+          delete secrets.records[secretId];
+          changed = true;
+        }
       }
     }
 
     if (changed) this.write(secrets);
   }
 
+  pruneKind(kind: ProviderSecretKind, activeSecretIds: Set<string>): void {
+    this.apply([], { kind, activeSecretIds });
+  }
+
+  protectionStatus(): ProviderSecretProtectionStatus {
+    if (this.codec?.isAvailable()) this.upgradePlainRecords();
+    const records = Object.values(this.read().records);
+    if (this.codec?.isAvailable()) return "encrypted";
+    if (records.some((record) => record.encoding === "plain")) return "plaintext";
+    return records.length > 0 ? "unavailable" : "plaintext";
+  }
+
   clear(): void {
     rmSync(this.path, { force: true });
+    rmSync(this.backupPath, { force: true });
+  }
+
+  private upgradePlainRecords(): void {
+    if (!this.codec?.isAvailable() || (!existsSync(this.path) && !existsSync(this.backupPath))) return;
+    const secrets = this.read();
+    let changed = false;
+
+    for (const [secretId, record] of Object.entries(secrets.records)) {
+      if (record.encoding !== "plain") continue;
+      secrets.records[secretId] = this.encode(record.value);
+      changed = true;
+    }
+
+    if (changed) this.write(secrets);
   }
 
   private encode(value: string): ProviderSecretRecord {
@@ -113,23 +160,54 @@ export class ProviderSecretStore {
   }
 
   private read(): ProviderSecretsFile {
-    if (!existsSync(this.path)) return clone(emptySecrets);
+    if (!existsSync(this.path)) {
+      if (!existsSync(this.backupPath)) return clone(emptySecrets);
+      const recovered = this.readFile(this.backupPath);
+      this.writeRecovered(recovered);
+      return recovered;
+    }
 
     try {
-      const data = JSON.parse(readFileSync(this.path, "utf8")) as Partial<ProviderSecretsFile>;
-      if (data.version !== 1 || !data.records || typeof data.records !== "object") return clone(emptySecrets);
-      return {
-        version: 1,
-        records: data.records
-      };
-    } catch {
-      return clone(emptySecrets);
+      return this.readFile(this.path);
+    } catch (error) {
+      if (!existsSync(this.backupPath)) throw error;
+      const recovered = this.readFile(this.backupPath);
+      const quarantinePath = `${this.path}.corrupt-${Date.now()}`;
+      renameSync(this.path, quarantinePath);
+      this.writeRecovered(recovered);
+      return recovered;
     }
+  }
+
+  private readFile(path: string): ProviderSecretsFile {
+    let data: unknown;
+    try {
+      data = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    } catch {
+      throw new Error(`Provider secrets store is malformed: ${path}`);
+    }
+    if (!isProviderSecretsFile(data)) throw new Error(`Provider secrets store is malformed: ${path}`);
+    return clone(data);
   }
 
   private write(secrets: ProviderSecretsFile): void {
     ensureOwnerOnlyDirectory(dirname(this.path));
-    writeFileSync(this.path, JSON.stringify(secrets, null, 2), { mode: ownerOnlyFileMode });
+    if (existsSync(this.path)) {
+      const current = this.readFile(this.path);
+      writeJsonAtomic(this.backupPath, current);
+    }
+    writeJsonAtomic(this.path, secrets);
+    ensureOwnerOnlyFile(this.path);
+    try {
+      writeJsonAtomic(this.backupPath, secrets);
+    } catch {
+      // The primary write is durable; retain the older valid backup if refreshing it fails.
+    }
+  }
+
+  private writeRecovered(secrets: ProviderSecretsFile): void {
+    ensureOwnerOnlyDirectory(dirname(this.path));
+    writeJsonAtomic(this.path, secrets);
     ensureOwnerOnlyFile(this.path);
   }
 }
@@ -148,6 +226,63 @@ export function createSafeStorageProviderSecretCodec(safeStorage: ElectronSafeSt
 export function secretIdForProvider(kind: ProviderSecretKind, providerId: string): string {
   const digest = createHash("sha256").update(`${kind}:${providerId}`).digest("hex").slice(0, 32);
   return `provider-secret:${kind}:${digest}`;
+}
+
+function isProviderSecretsFile(value: unknown): value is ProviderSecretsFile {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<ProviderSecretsFile>;
+  if (candidate.version !== 1 || !candidate.records || typeof candidate.records !== "object" || Array.isArray(candidate.records)) {
+    return false;
+  }
+
+  return Object.values(candidate.records).every(
+    (record) =>
+      Boolean(record) &&
+      typeof record === "object" &&
+      !Array.isArray(record) &&
+      ((record as ProviderSecretRecord).encoding === "plain" || (record as ProviderSecretRecord).encoding === "electron-safe-storage") &&
+      typeof (record as ProviderSecretRecord).value === "string" &&
+      typeof (record as ProviderSecretRecord).updatedAt === "string"
+  );
+}
+
+function writeJsonAtomic(path: string, value: ProviderSecretsFile): void {
+  const dir = dirname(path);
+  const tempPath = join(dir, `.${basename(path)}.${process.pid}.${Date.now()}.tmp`);
+  let fd: number | null = null;
+
+  try {
+    ensureOwnerOnlyDirectory(dir);
+    fd = openSync(tempPath, "w", ownerOnlyFileMode);
+    writeFileSync(fd, `${JSON.stringify(value, null, 2)}\n`);
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = null;
+    renameSync(tempPath, path);
+    fsyncDirectory(dir);
+  } catch (error) {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        // Preserve the original write failure.
+      }
+    }
+    rmSync(tempPath, { force: true });
+    throw error;
+  }
+}
+
+function fsyncDirectory(path: string): void {
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, "r");
+    fsyncSync(fd);
+  } catch {
+    // Directory fsync is unavailable on some filesystems; rename atomicity is still preserved.
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
 }
 
 function clone<T>(value: T): T {

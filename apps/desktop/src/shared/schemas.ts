@@ -70,6 +70,7 @@ export const sttRuntimeInstallStatusSchema = z.enum([
 export const sttRuntimeSourceSchema = z.enum(["env", "resources", "cache", "vendor"]);
 
 const optionalStringSchema = z.string().optional();
+const providerCredentialIntentSchema = z.enum(["keep", "replace", "remove"]);
 
 export const contextSnapshotSchema = z
   .object({
@@ -175,6 +176,8 @@ export const transcriptionProviderConfigSchema = z
     endpointPath: optionalStringSchema,
     apiKeySecretId: optionalStringSchema,
     apiKey: optionalStringSchema,
+    apiKeyIntent: providerCredentialIntentSchema.optional(),
+    hasStoredSecret: z.boolean().optional(),
     isCloud: z.boolean(),
     isLocal: z.boolean(),
     defaultModel: optionalStringSchema,
@@ -191,6 +194,8 @@ export const llmProviderConfigSchema = z
     baseUrl: z.string().optional(),
     apiKeySecretId: optionalStringSchema,
     apiKey: optionalStringSchema,
+    apiKeyIntent: providerCredentialIntentSchema.optional(),
+    hasStoredSecret: z.boolean().optional(),
     isCloud: z.boolean(),
     defaultModel: optionalStringSchema,
     models: z.array(z.string()).optional(),
@@ -456,7 +461,13 @@ export const codexProviderRuntimeSchema = z.object({
 });
 
 export const providerRuntimeSnapshotSchema = z.object({
-  codex: codexProviderRuntimeSchema
+  codex: codexProviderRuntimeSchema,
+  secretStorage: z
+    .object({
+      status: z.enum(["encrypted", "plaintext", "unavailable"]),
+      message: z.string()
+    })
+    .optional()
 });
 
 export const appStateSnapshotSchema = z

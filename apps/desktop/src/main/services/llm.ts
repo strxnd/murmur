@@ -159,13 +159,16 @@ export class LlmService {
   private async processGoogle(options: LlmOptions): Promise<ProcessedResult> {
     const timeouts = llmHttpTimeouts();
     const model = options.provider.defaultModel || "gemini-2.5-flash";
-    const endpoint = `${joinUrl(options.provider.baseUrl || "https://generativelanguage.googleapis.com/v1beta", `/models/${model}:generateContent`)}?key=${encodeURIComponent(options.provider.apiKey || "")}`;
+    const endpoint = joinUrl(
+      options.provider.baseUrl || "https://generativelanguage.googleapis.com/v1beta",
+      `/models/${model}:generateContent`
+    );
     const response = await fetchWithTimeout(
       endpoint,
       {
         method: "POST",
         signal: options.signal,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": options.provider.apiKey || "" },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: options.prompt }] }],
           generationConfig: { temperature: 0.2 }

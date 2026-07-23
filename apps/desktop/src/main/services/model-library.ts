@@ -2,7 +2,13 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, createWriteStream, existsSync, mkdirSync, openSync, readSync, rmSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { canActivateModel, isLlmProviderUsable, isModelProviderUsable } from "../../shared/model-activation";
+import {
+  canActivateModel,
+  isLlmProviderUsable,
+  isModelProviderUsable,
+  llmProviderId,
+  sttProviderId
+} from "../../shared/model-activation";
 import { modelCatalog } from "../../shared/model-catalog";
 import type {
   LlmProviderConfig,
@@ -116,6 +122,7 @@ export class ModelLibraryService {
       await this.pullOllamaModel(item, signal);
     }
 
+    this.enableProviderForActivation(item);
     if (this.isModelReady(item) && !this.hasUsableActiveModel(item.kind)) {
       this.storage.setActiveModel(item.kind, item.id);
     }
@@ -125,7 +132,9 @@ export class ModelLibraryService {
 
   async activateModel(modelId: string): Promise<ModelLibrarySnapshot> {
     const item = this.findCatalogItem(modelId);
-    if (!item || !this.isModelReady(item)) return this.snapshot();
+    if (!item) return this.snapshot();
+    this.enableProviderForActivation(item);
+    if (!this.isModelReady(item)) return this.snapshot();
 
     this.storage.setActiveModel(item.kind, item.id);
     return this.snapshot();
@@ -660,6 +669,34 @@ export class ModelLibraryService {
     const activeModelId = this.storage.getState().modelLibrary.activeModelIds[kind];
     const item = activeModelId ? this.findCatalogItem(activeModelId) : undefined;
     return Boolean(item && item.kind === kind && this.isModelReady(item));
+  }
+
+  private enableProviderForActivation(item: ModelCatalogItem): void {
+    const state = this.storage.getState();
+    if (item.kind === "voice") {
+      const providerId = sttProviderId(item);
+      const provider = state.transcriptionProviders.find((candidate) => candidate.id === providerId);
+      if (!provider || provider.enabled || (item.isCloud && !provider.hasStoredSecret && !provider.apiKey)) return;
+      this.storage.setTranscriptionProviders(
+        state.transcriptionProviders.map((candidate) =>
+          candidate.id === providerId
+            ? { ...candidate, enabled: true, apiKeyIntent: candidate.hasStoredSecret ? "keep" : "remove" }
+            : candidate
+        )
+      );
+      return;
+    }
+
+    const providerId = item.defaultProviderConfig?.providerId ?? item.discovery?.providerId ?? llmProviderId(item);
+    const provider = state.llmProviders.find((candidate) => candidate.id === providerId);
+    if (!provider || provider.enabled || (item.isCloud && provider.type !== "codex" && !provider.hasStoredSecret && !provider.apiKey)) return;
+    this.storage.setLlmProviders(
+      state.llmProviders.map((candidate) =>
+        candidate.id === providerId
+          ? { ...candidate, enabled: true, apiKeyIntent: candidate.hasStoredSecret ? "keep" : "remove" }
+          : candidate
+      )
+    );
   }
 
   private isModelReady(item: ModelCatalogItem): boolean {

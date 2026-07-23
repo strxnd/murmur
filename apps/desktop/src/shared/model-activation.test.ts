@@ -52,6 +52,36 @@ describe("llmProviderFromModel", () => {
     expect(llmProviderFromModel(codex!)?.id).toBe("codex");
   });
 
+  it("keeps current provider enablement and endpoints authoritative for catalog models", () => {
+    const openai = modelCatalog.find((candidate) => candidate.id === "openai-gpt-5-5");
+    expect(openai).toBeDefined();
+    const current = defaultLlmProviders.map((provider) =>
+      provider.id === "openai-llm"
+        ? {
+            ...provider,
+            enabled: false,
+            baseUrl: "https://gateway.example.test/v1",
+            hasStoredSecret: true
+          }
+        : provider
+    );
+
+    const resolved = llmProviderFromModel(openai!, current);
+
+    expect(resolved).toMatchObject({
+      id: "openai-llm",
+      enabled: false,
+      baseUrl: "https://gateway.example.test/v1",
+      hasStoredSecret: true
+    });
+    expect(
+      isModelProviderUsable(openai!, {
+        transcriptionProviders: defaultTranscriptionProviders,
+        llmProviders: current
+      })
+    ).toBe(false);
+  });
+
   it("maps dynamic local models to the provider that discovered them", () => {
     const provider = {
       id: "team-ollama",
@@ -99,7 +129,8 @@ describe("provider usability", () => {
     expect(isTranscriptionProviderUsable({ ...provider!, enabled: true, apiKey: "" })).toBe(false);
     expect(isTranscriptionProviderUsable({ ...provider!, enabled: true, apiKey: "   " })).toBe(false);
     expect(isTranscriptionProviderUsable({ ...provider!, enabled: true, apiKey: "sk-test" })).toBe(true);
-    expect(isTranscriptionProviderUsable({ ...provider!, enabled: true, apiKeySecretId: "provider-secret:stt:test" })).toBe(true);
+    expect(isTranscriptionProviderUsable({ ...provider!, enabled: true, apiKeySecretId: "provider-secret:stt:test" })).toBe(false);
+    expect(isTranscriptionProviderUsable({ ...provider!, enabled: true, hasStoredSecret: true })).toBe(true);
   });
 
   it("requires cloud LLM providers to be enabled and credentialed", () => {
@@ -109,7 +140,8 @@ describe("provider usability", () => {
     expect(isLlmProviderUsable({ ...provider!, enabled: false, apiKey: "sk-test" })).toBe(false);
     expect(isLlmProviderUsable({ ...provider!, enabled: true, apiKey: "" })).toBe(false);
     expect(isLlmProviderUsable({ ...provider!, enabled: true, apiKey: "sk-test" })).toBe(true);
-    expect(isLlmProviderUsable({ ...provider!, enabled: true, apiKeySecretId: "provider-secret:llm:test" })).toBe(true);
+    expect(isLlmProviderUsable({ ...provider!, enabled: true, apiKeySecretId: "provider-secret:llm:test" })).toBe(false);
+    expect(isLlmProviderUsable({ ...provider!, enabled: true, hasStoredSecret: true })).toBe(true);
   });
 
   it("gates Codex on subscription readiness and Luna availability", () => {
@@ -147,10 +179,10 @@ describe("provider usability", () => {
     expect(llmModel).toBeDefined();
 
     const credentialedSttProviders = defaultTranscriptionProviders.map((provider) =>
-      provider.id === "openai-stt" ? { ...provider, apiKey: "sk-test" } : provider
+      provider.id === "openai-stt" ? { ...provider, enabled: true, apiKey: "sk-test" } : provider
     );
     const credentialedLlmProviders = defaultLlmProviders.map((provider) =>
-      provider.id === "openai-llm" ? { ...provider, apiKey: "sk-test" } : provider
+      provider.id === "openai-llm" ? { ...provider, enabled: true, apiKey: "sk-test" } : provider
     );
 
     expect(

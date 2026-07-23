@@ -27,6 +27,9 @@ describe("renderer STT setup helpers", () => {
         }
       ]
     };
+    snapshot.transcriptionProviders = snapshot.transcriptionProviders.map((provider) =>
+      provider.id === "local-whisper-cpp" ? { ...provider, enabled: true } : provider
+    );
 
     expect(recordingUnavailableReason(snapshot)).toBeNull();
     expect(shouldShowSttSetupCallout(snapshot)).toBe(false);
@@ -50,7 +53,7 @@ describe("renderer STT setup helpers", () => {
       activeModelIds: { voice: "openai-gpt-4o-transcribe" }
     };
     snapshot.transcriptionProviders = snapshot.transcriptionProviders.map((provider) =>
-      provider.id === "openai-stt" ? { ...provider, apiKey: "sk-test" } : provider
+      provider.id === "openai-stt" ? { ...provider, enabled: true, apiKey: "sk-test" } : provider
     );
 
     expect(recordingUnavailableReason(snapshot)).toBeNull();
