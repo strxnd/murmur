@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultSettings } from "../../shared/defaults";
 import {
   acceleratorToGnomeShortcut,
@@ -7,8 +8,17 @@ import {
   detectNativeShortcutBackends,
   findGnomeBindingInSettingsOutput,
   isTrustedDesktopShortcutProcessChain,
+  NativeDesktopGlobalShortcutService,
   nativeShortcutCallbackCommand
 } from "./native-global-shortcuts";
+
+const execFileMock = vi.hoisted(() => vi.fn());
+
+vi.mock("node:child_process", () => ({ execFile: execFileMock }));
+
+beforeEach(() => {
+  execFileMock.mockReset();
+});
 
 describe("detectNativeShortcutBackends", () => {
   it("detects GNOME-like desktops", () => {
@@ -107,6 +117,92 @@ describe("native shortcut callback authorization", () => {
     expect(
       isTrustedDesktopShortcutProcessChain([{ executable: "/usr/bin/Hyprland", uid: 0, mode: 0o100775 }])
     ).toBe(false);
+  });
+
+  it("preserves the raw sender when exported no-argument methods dispatch", async () => {
+    type ExportedMethod = (...args: unknown[]) => unknown;
+    type IncomingMessage = {
+      type: number;
+      sender: string;
+      path: string;
+      interface: string;
+      member: string;
+      body: unknown[];
+    };
+    type ExecFileCallback = (error: Error | null, stdout: string, stderr: string) => void;
+
+    execFileMock.mockImplementation((file: string, args: string[], _options: unknown, callback: ExecFileCallback) => {
+      let stdout = "";
+      if (file === "gsettings" && args[0] === "get" && args[2] === "custom-keybindings") stdout = "@as []";
+      if (file === "gsettings" && args[0] === "get" && args[2] === "binding") stdout = "'<Alt><Shift>r'";
+      callback(null, stdout, "");
+      return {};
+    });
+
+    const connection = new EventEmitter();
+    const dispatched: Promise<unknown>[] = [];
+    let exportedMethods: Record<string, ExportedMethod> | null = null;
+    connection.on("message", (message: IncomingMessage) => {
+      const method = exportedMethods?.[message.member];
+      if (method) dispatched.push(Promise.resolve().then(() => method()));
+    });
+
+    const bus = {
+      connection,
+      invoke: vi.fn(),
+      requestName: (_name: string, _flags: number, callback: (error?: Error, result?: number) => void) => callback(undefined, 1),
+      exportInterface: (implementation: Record<string, ExportedMethod>) => {
+        exportedMethods = implementation;
+      }
+    };
+    const onActivated = vi.fn();
+    const authorizeCallbackSender = vi.fn(async (sender: string) => sender === ":1.42");
+    const service = new NativeDesktopGlobalShortcutService({
+      platform: "linux",
+      env: {
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/tmp/fake-bus",
+        XDG_CURRENT_DESKTOP: "GNOME"
+      },
+      createBus: () => bus as never,
+      authorizeCallbackSender
+    });
+
+    const result = await service.register({
+      actions: [
+        {
+          id: "activation",
+          accelerator: "Alt+Shift+R",
+          description: "Murmur activation",
+          activationMode: "toggle",
+          onActivated,
+          onDeactivated: vi.fn(),
+          onPressedWithoutRelease: vi.fn()
+        }
+      ]
+    });
+    expect(result.actionResults.activation.registered).toBe(true);
+
+    connection.emit("message", {
+      type: 1,
+      sender: ":1.9",
+      path: "/dev/murmur/App",
+      interface: "dev.murmur.App",
+      member: "Activate",
+      body: []
+    } satisfies IncomingMessage);
+    connection.emit("message", {
+      type: 1,
+      sender: ":1.42",
+      path: "/dev/murmur/App",
+      interface: "dev.murmur.App",
+      member: "Activate",
+      body: []
+    } satisfies IncomingMessage);
+    await Promise.all(dispatched);
+
+    expect(authorizeCallbackSender).toHaveBeenNthCalledWith(1, ":1.9");
+    expect(authorizeCallbackSender).toHaveBeenNthCalledWith(2, ":1.42");
+    expect(onActivated).toHaveBeenCalledTimes(1);
   });
 });
 

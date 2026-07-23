@@ -10,6 +10,7 @@ export type DbusMessageBus = MessageBus & {
 };
 
 export interface DbusMessage {
+  type?: number;
   sender?: string;
   path?: string;
   interface?: string;

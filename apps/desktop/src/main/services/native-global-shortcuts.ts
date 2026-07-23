@@ -117,6 +117,8 @@ type NativeMessageBus = DbusMessageBus & {
   requestName?: (name: string, flags: number, callback: (error?: DbusError, result?: number) => void) => void;
 };
 
+type NativeCallbackMethod = "Activate" | "Deactivate" | "ModeSelector";
+
 interface DbusError {
   name?: string;
   message?: unknown;
@@ -145,8 +147,10 @@ const dbus = dbusNative as DbusNativeModule;
 
 export class NativeDesktopGlobalShortcutService {
   private activeRegistrations = new Map<GlobalShortcutActionId, ActiveNativeRegistration>();
+  private callbackBus: NativeMessageBus | null = null;
   private callbackServiceExported = false;
   private callbackServiceRequested = false;
+  private pendingCallbackSenders = new Map<NativeCallbackMethod, string[]>();
   private gnomeRegistered = new Set<GlobalShortcutActionId>();
   private hyprlandBindings = new Map<GlobalShortcutActionId, RegisteredHyprlandBinding>();
   private kdeRegistered = new Set<GlobalShortcutActionId>();
@@ -252,6 +256,7 @@ export class NativeDesktopGlobalShortcutService {
       if (this.callbackServiceRequested && bus?.releaseName) {
         bus.releaseName(dbusServiceName, () => undefined);
       }
+      this.detachCallbackSenderCapture();
       this.connection.dispose();
       this.callbackServiceExported = false;
       this.callbackServiceRequested = false;
@@ -669,23 +674,29 @@ export class NativeDesktopGlobalShortcutService {
     if (!bus.exportInterface) {
       throw new Error("@homebridge/dbus-native does not expose D-Bus service export support.");
     }
-    bus.exportInterface(
-      {
-        Activate: (message) => this.handleAuthenticatedCallback(message, "activation", false),
-        Deactivate: (message) => this.handleAuthenticatedCallback(message, "activation", true),
-        ModeSelector: (message) => this.handleAuthenticatedCallback(message, "mode-selector", false)
-      },
-      dbusObjectPath,
-      {
-        name: dbusCallbackInterface,
-        methods: {
-          Activate: ["", ""],
-          Deactivate: ["", ""],
-          ModeSelector: ["", ""]
+    this.attachCallbackSenderCapture(bus);
+    try {
+      bus.exportInterface(
+        {
+          Activate: () => this.handleAuthenticatedCallback(this.takeCallbackSender("Activate"), "activation", false),
+          Deactivate: () => this.handleAuthenticatedCallback(this.takeCallbackSender("Deactivate"), "activation", true),
+          ModeSelector: () => this.handleAuthenticatedCallback(this.takeCallbackSender("ModeSelector"), "mode-selector", false)
+        },
+        dbusObjectPath,
+        {
+          name: dbusCallbackInterface,
+          methods: {
+            Activate: ["", ""],
+            Deactivate: ["", ""],
+            ModeSelector: ["", ""]
+          }
         }
-      }
-    );
-    this.callbackServiceExported = true;
+      );
+      this.callbackServiceExported = true;
+    } catch (error) {
+      this.detachCallbackSenderCapture();
+      throw error;
+    }
   }
 
   private getBus(): NativeMessageBus {
@@ -791,6 +802,38 @@ export class NativeDesktopGlobalShortcutService {
     await Promise.all([...this.matchRules].map((rule) => this.removeMatch(rule)));
   }
 
+  private attachCallbackSenderCapture(bus: NativeMessageBus): void {
+    if (this.callbackBus === bus) return;
+    this.detachCallbackSenderCapture();
+    this.callbackBus = bus;
+    bus.connection.prependListener("message", this.captureCallbackSender);
+  }
+
+  private detachCallbackSenderCapture(): void {
+    this.callbackBus?.connection.removeListener("message", this.captureCallbackSender);
+    this.callbackBus = null;
+    this.pendingCallbackSenders.clear();
+  }
+
+  private readonly captureCallbackSender = (message: DbusMessage): void => {
+    if (message.type !== dbus.messageType.methodCall) return;
+    if (message.path !== dbusObjectPath || message.interface !== dbusCallbackInterface) return;
+    if ((message.body?.length ?? 0) !== 0) return;
+    const method = nativeCallbackMethod(message.member);
+    const sender = dbusMessageSender(message);
+    if (!method || !sender) return;
+    const senders = this.pendingCallbackSenders.get(method) ?? [];
+    senders.push(sender);
+    this.pendingCallbackSenders.set(method, senders);
+  };
+
+  private takeCallbackSender(method: NativeCallbackMethod): string | null {
+    const senders = this.pendingCallbackSenders.get(method);
+    const sender = senders?.shift() ?? null;
+    if (senders?.length === 0) this.pendingCallbackSenders.delete(method);
+    return sender;
+  }
+
   private readonly handleMessage = (message: DbusMessage): void => {
     if (message.sender === dbusDestination && message.interface === dbusInterface && message.member === "NameOwnerChanged") {
       const [name, oldOwner, newOwner] = message.body ?? [];
@@ -820,6 +863,7 @@ export class NativeDesktopGlobalShortcutService {
     this.callbackServiceExported = false;
     this.callbackServiceRequested = false;
     this.kdeOwner = null;
+    this.detachCallbackSenderCapture();
     this.connection.reset(new Error(reason));
     if (wasRegistered && !this.unregistering) this.onRegistrationLost(reason);
   }
@@ -844,11 +888,10 @@ export class NativeDesktopGlobalShortcutService {
   }
 
   private async handleAuthenticatedCallback(
-    message: unknown,
+    sender: string | null,
     actionId: GlobalShortcutActionId,
     deactivated: boolean
   ): Promise<void | Error> {
-    const sender = dbusMessageSender(message);
     if (!sender || !(await this.authorizeCallbackSender(sender))) {
       const error = new Error("Unauthorized Murmur shortcut callback sender.");
       Object.assign(error, { dbusName: "dev.murmur.Error.Unauthorized" });
@@ -1291,6 +1334,11 @@ function dbusMessageSender(message: unknown): string | null {
   if (!message || typeof message !== "object") return null;
   const sender = (message as { sender?: unknown }).sender;
   return typeof sender === "string" && sender.length > 0 ? sender : null;
+}
+
+function nativeCallbackMethod(member: unknown): NativeCallbackMethod | null {
+  if (member === "Activate" || member === "Deactivate" || member === "ModeSelector") return member;
+  return null;
 }
 
 function kdeActionId(id: GlobalShortcutActionId): string[] {
