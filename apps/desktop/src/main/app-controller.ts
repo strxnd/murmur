@@ -134,6 +134,7 @@ export class AppController {
   private stt: TranscriptionService;
   private codex: CodexOAuthService;
   private initialCodexRefresh: Promise<unknown> = Promise.resolve();
+  private clearingLocalData = false;
   private llm: LlmService;
   private modelLibrary: ModelLibraryService;
   private sttSetup: SttSetupService;
@@ -1123,6 +1124,7 @@ export class AppController {
   }
 
   private async startRecording(_trigger: string): Promise<AppStateSnapshot> {
+    if (this.clearingLocalData) return this.getSnapshot();
     if (this.session.status === "recording") return this.stopRecording();
     if (["transcribing", "processing", "pasting"].includes(this.session.status)) return this.getSnapshot();
 
@@ -1246,17 +1248,23 @@ export class AppController {
   }
 
   private async clearLocalData(): Promise<AppStateSnapshot> {
-    if (this.sessionOperation) {
-      this.mainWindow?.webContents.send("recording:cancel", { sessionId: this.sessionOperation.sessionId });
+    if (this.clearingLocalData) return this.getSnapshot();
+    this.clearingLocalData = true;
+    try {
+      if (this.sessionOperation) {
+        this.mainWindow?.webContents.send("recording:cancel", { sessionId: this.sessionOperation.sessionId });
+      }
+      this.invalidateDictation("cleared");
+      this.session = { ...defaultSession, modeId: this.storage.getState().settings.activeModeId };
+      await this.codex.logout();
+      this.storage.clearLocalData();
+      this.session = { ...defaultSession, modeId: this.storage.getState().settings.activeModeId };
+      await this.registerHotkeys();
+      this.broadcastState();
+      return this.getSnapshot();
+    } finally {
+      this.clearingLocalData = false;
     }
-    this.invalidateDictation("cleared");
-    this.session = { ...defaultSession, modeId: this.storage.getState().settings.activeModeId };
-    await this.codex.logout();
-    this.storage.clearLocalData();
-    this.session = { ...defaultSession, modeId: this.storage.getState().settings.activeModeId };
-    await this.registerHotkeys();
-    this.broadcastState();
-    return this.getSnapshot();
   }
 
   private beginRecordingContextCapture(operation: DictationSessionOperation): void {

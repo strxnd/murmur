@@ -124,6 +124,7 @@ interface ControllerHarness {
   stt: { transcribe: ReturnType<typeof vi.fn> };
   llm: { process: ReturnType<typeof vi.fn> };
   paste: { insertText: ReturnType<typeof vi.fn> };
+  codex: { logout: ReturnType<typeof vi.fn> };
   mainWindowSend: ReturnType<typeof vi.fn>;
   setCodexStatus(status: CodexProviderRuntime): void;
 }
@@ -210,6 +211,7 @@ function createControllerHarness(options: {
     stt,
     codex,
     initialCodexRefresh: options.initialCodexRefresh ?? Promise.resolve(),
+    clearingLocalData: false,
     llm,
     session: { ...defaultSession },
     dictationOwner: new DictationSessionOwner(),
@@ -247,6 +249,7 @@ function createControllerHarness(options: {
     stt,
     llm,
     paste,
+    codex,
     mainWindowSend,
     setCodexStatus(status) {
       codexStatus = status;
@@ -351,6 +354,29 @@ describe("AppController dictation ownership", () => {
     expect(harness.controller.session.status).toBe("idle");
     expect(harness.controller.sessionOperation).toBeNull();
     expect(harness.mainWindowSend).not.toHaveBeenCalledWith("recording:start", expect.anything());
+  });
+
+  it("blocks new recordings until local-data clearing finishes", async () => {
+    const harness = createControllerHarness();
+    const logout = deferred<CodexProviderRuntime>();
+    harness.codex.logout.mockReturnValueOnce(logout.promise);
+
+    const clearing = harness.controller.clearLocalData();
+    await vi.waitFor(() => expect(harness.codex.logout).toHaveBeenCalledOnce());
+    await harness.controller.startRecording("during-clear");
+
+    expect(harness.controller.session.status).toBe("idle");
+    expect(harness.mainWindowSend).not.toHaveBeenCalledWith("recording:start", expect.anything());
+
+    logout.resolve({ status: "signed_out", message: "Signed out", modelAvailable: false });
+    await clearing;
+    await harness.controller.startRecording("after-clear");
+
+    expect(harness.controller.session.status).toBe("recording");
+    expect(harness.mainWindowSend).toHaveBeenCalledWith(
+      "recording:start",
+      expect.objectContaining({ sessionId: harness.controller.session.id })
+    );
   });
 
   it("stops a cancelled STT continuation before LLM, paste, or history", async () => {
