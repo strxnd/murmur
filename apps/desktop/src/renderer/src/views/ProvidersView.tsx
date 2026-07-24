@@ -95,7 +95,13 @@ const streamingModeItems: Array<SelectItem<SttStreamingMode>> = [
   { value: "live_realtime", label: "Live transcription" }
 ];
 
-export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Element {
+export function ProvidersView({
+  state,
+  onUnsavedChangesChange
+}: {
+  state: AppStateSnapshot;
+  onUnsavedChangesChange?: (hasUnsavedChanges: boolean) => void;
+}): JSX.Element {
   const setSttProviders = useMurmurStore((store) => store.setSttProviders);
   const setLlmProviders = useMurmurStore((store) => store.setLlmProviders);
   const validateSttProvider = useMurmurStore((store) => store.validateSttProvider);
@@ -162,6 +168,11 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
       setCloudValidationByProvider((current) => omitKeys(current, changedCloudKeys));
     }
   }, [form, llmProviders, transcriptionProviders]);
+
+  useEffect(() => {
+    onUnsavedChangesChange?.(hasUnsavedChanges);
+    return () => onUnsavedChangesChange?.(false);
+  }, [hasUnsavedChanges, onUnsavedChangesChange]);
 
   useEffect(() => {
     if (hasUnsavedChanges) {

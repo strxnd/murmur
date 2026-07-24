@@ -179,9 +179,10 @@ function ModelsRoute(): JSX.Element {
 }
 
 function ProvidersRoute(): JSX.Element {
+  const { setProvidersHaveUnsavedChanges } = useAppShellRouteActions();
   return (
     <RoutePanel id="providers">
-      <ProvidersView state={useRequiredSnapshot()} />
+      <ProvidersView state={useRequiredSnapshot()} onUnsavedChangesChange={setProvidersHaveUnsavedChanges} />
     </RoutePanel>
   );
 }

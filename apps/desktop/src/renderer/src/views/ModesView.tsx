@@ -201,13 +201,14 @@ export function ModesView({
   const hasUnsavedChanges = form.formState.isDirty || Boolean(draftMode);
 
   useEffect(() => {
+    if (!shouldReconcileModesSnapshot(form.getValues("modes"), state.modes, form.formState.isDirty, Boolean(draftMode))) return;
     form.reset({ modes: state.modes });
     setOpenModeId((current) =>
       current && state.modes.some((mode) => mode.id === current)
         ? current
         : state.modes.find((mode) => mode.id === state.settings.activeModeId)?.id ?? state.modes[0]?.id ?? null
     );
-  }, [form, state.modes]);
+  }, [draftMode, form, form.formState.isDirty, state.modes, state.settings.activeModeId]);
 
   useEffect(() => {
     onUnsavedChangesChange?.(hasUnsavedChanges);
@@ -601,6 +602,15 @@ function ModeGlyph({ iconKey, active = false }: { iconKey: ModeIconKey; active?:
       <Icon size={17} />
     </span>
   );
+}
+
+export function shouldReconcileModesSnapshot(
+  currentModes: ModeConfig[],
+  incomingModes: ModeConfig[],
+  isDirty: boolean,
+  hasDraftMode: boolean
+): boolean {
+  return !isDirty && !hasDraftMode && JSON.stringify(currentModes) !== JSON.stringify(incomingModes);
 }
 
 function normalizeLanguageValue(value: string | undefined): string {

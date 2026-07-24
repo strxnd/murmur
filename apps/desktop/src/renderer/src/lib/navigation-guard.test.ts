@@ -13,7 +13,20 @@ describe("shouldGuardNavigation", () => {
         currentSection: "configuration",
         nextSection: "history",
         hasUnsavedConfigurationChanges: true,
-        hasUnsavedModeChanges: false
+        hasUnsavedModeChanges: false,
+        hasUnsavedProviderChanges: false
+      })
+    ).toBe(true);
+  });
+
+  it("blocks leaving providers while credentials or endpoints are unsaved", () => {
+    expect(
+      shouldGuardNavigation({
+        currentSection: "providers",
+        nextSection: "home",
+        hasUnsavedConfigurationChanges: false,
+        hasUnsavedModeChanges: false,
+        hasUnsavedProviderChanges: true
       })
     ).toBe(true);
   });
@@ -24,7 +37,8 @@ describe("shouldGuardNavigation", () => {
         currentSection: "modes",
         nextSection: "home",
         hasUnsavedConfigurationChanges: false,
-        hasUnsavedModeChanges: true
+        hasUnsavedModeChanges: true,
+        hasUnsavedProviderChanges: false
       })
     ).toBe(true);
   });
@@ -35,7 +49,8 @@ describe("shouldGuardNavigation", () => {
         currentSection: "history",
         nextSection: "models",
         hasUnsavedConfigurationChanges: true,
-        hasUnsavedModeChanges: true
+        hasUnsavedModeChanges: true,
+        hasUnsavedProviderChanges: false
       })
     ).toBe(false);
     expect(
@@ -43,7 +58,8 @@ describe("shouldGuardNavigation", () => {
         currentSection: "configuration",
         nextSection: "models",
         hasUnsavedConfigurationChanges: false,
-        hasUnsavedModeChanges: false
+        hasUnsavedModeChanges: false,
+        hasUnsavedProviderChanges: false
       })
     ).toBe(false);
   });
@@ -62,9 +78,22 @@ describe("route navigation guard policy", () => {
         currentPathname: "/modes",
         nextPathname: "/providers",
         hasUnsavedConfigurationChanges: false,
-        hasUnsavedModeChanges: true
+        hasUnsavedModeChanges: true,
+        hasUnsavedProviderChanges: false
       })
     ).toBe("You have an unsaved mode draft or edits. Discard them and switch views?");
+  });
+
+  it("returns the provider warning when leaving an unsaved provider form", () => {
+    expect(
+      navigationGuardMessage({
+        currentPathname: "/providers",
+        nextPathname: "/home",
+        hasUnsavedConfigurationChanges: false,
+        hasUnsavedModeChanges: false,
+        hasUnsavedProviderChanges: true
+      })
+    ).toBe("You have unsaved provider credentials or connection changes. Discard them and switch views?");
   });
 
   it("returns the configuration warning when navigating to an unknown route", () => {
@@ -73,7 +102,8 @@ describe("route navigation guard policy", () => {
         currentPathname: "/configuration",
         nextPathname: "/not-a-route",
         hasUnsavedConfigurationChanges: true,
-        hasUnsavedModeChanges: false
+        hasUnsavedModeChanges: false,
+        hasUnsavedProviderChanges: false
       })
     ).toBe("You have unsaved configuration changes. Discard them and switch views?");
   });
@@ -84,7 +114,8 @@ describe("route navigation guard policy", () => {
         currentPathname: "/modes",
         nextPathname: "/modes/",
         hasUnsavedConfigurationChanges: false,
-        hasUnsavedModeChanges: true
+        hasUnsavedModeChanges: true,
+        hasUnsavedProviderChanges: false
       })
     ).toBeNull();
     expect(
@@ -92,7 +123,8 @@ describe("route navigation guard policy", () => {
         currentPathname: "/unknown",
         nextPathname: "/home",
         hasUnsavedConfigurationChanges: true,
-        hasUnsavedModeChanges: true
+        hasUnsavedModeChanges: true,
+        hasUnsavedProviderChanges: false
       })
     ).toBeNull();
   });
@@ -101,13 +133,15 @@ describe("route navigation guard policy", () => {
     expect(
       hasUnsavedNavigationChanges({
         hasUnsavedConfigurationChanges: false,
-        hasUnsavedModeChanges: true
+        hasUnsavedModeChanges: true,
+        hasUnsavedProviderChanges: false
       })
     ).toBe(true);
     expect(
       hasUnsavedNavigationChanges({
         hasUnsavedConfigurationChanges: false,
-        hasUnsavedModeChanges: false
+        hasUnsavedModeChanges: false,
+        hasUnsavedProviderChanges: false
       })
     ).toBe(false);
   });

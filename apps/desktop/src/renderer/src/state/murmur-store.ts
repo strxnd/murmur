@@ -70,9 +70,15 @@ interface MurmurStore {
   clearLocalData: () => Promise<void>;
 }
 
-let unsubscribeState: (() => void) | null = null;
-let unsubscribeModelProgress: (() => void) | null = null;
-let unsubscribeRuntimeProgress: (() => void) | null = null;
+interface StoreInitialization {
+  generation: number;
+  promise: Promise<void>;
+  cancel: () => void;
+}
+
+let storeGeneration = 0;
+let activeStoreSubscriptions: (() => void) | null = null;
+let storeInitialization: StoreInitialization | null = null;
 
 export const useMurmurStore = create<MurmurStore>()((set, get) => {
   const actionErrorFrom = (error: unknown): ActionError => ({
@@ -138,34 +144,66 @@ export const useMurmurStore = create<MurmurStore>()((set, get) => {
     error: null,
     actionError: null,
     clearActionError: () => set({ actionError: null, error: get().snapshot ? null : get().error }),
-    init: async () => {
-      if (unsubscribeState) return;
-      await commit(() => murmurClient.getState());
-      unsubscribeState = murmurClient.onStateChanged((snapshot) => {
-        set({ snapshot, status: "ready", error: null });
-      });
-      unsubscribeModelProgress = murmurClient.onModelDownloadProgress((download) => {
-        set((current) => ({
-          snapshot: current.snapshot ? upsertDownload(current.snapshot, download) : current.snapshot,
-          status: current.snapshot ? "ready" : current.status,
-          error: null
-        }));
-      });
-      unsubscribeRuntimeProgress = murmurClient.onSttRuntimeProgress((runtime) => {
-        set((current) => ({
-          snapshot: current.snapshot ? upsertRuntimeState(current.snapshot, runtime) : current.snapshot,
-          status: current.snapshot ? "ready" : current.status,
-          error: null
-        }));
-      });
+    init: () => {
+      if (activeStoreSubscriptions) return Promise.resolve();
+      if (storeInitialization?.generation === storeGeneration) return storeInitialization.promise;
+
+      const generation = storeGeneration;
+      let stateEventCount = 0;
+      let cancelled = false;
+      const unsubscribers = [
+        murmurClient.onStateChanged((snapshot) => {
+          stateEventCount += 1;
+          if (generation === storeGeneration && !cancelled) set({ snapshot, status: "ready", error: null });
+        }),
+        murmurClient.onModelDownloadProgress((download) => {
+          if (generation !== storeGeneration || cancelled) return;
+          set((current) => ({
+            snapshot: current.snapshot ? upsertDownload(current.snapshot, download) : current.snapshot,
+            status: current.snapshot ? "ready" : current.status,
+            error: null
+          }));
+        }),
+        murmurClient.onSttRuntimeProgress((runtime) => {
+          if (generation !== storeGeneration || cancelled) return;
+          set((current) => ({
+            snapshot: current.snapshot ? upsertRuntimeState(current.snapshot, runtime) : current.snapshot,
+            status: current.snapshot ? "ready" : current.status,
+            error: null
+          }));
+        })
+      ];
+      const cancel = (): void => {
+        if (cancelled) return;
+        cancelled = true;
+        for (const unsubscribe of unsubscribers) unsubscribe();
+      };
+      const eventCountBeforeFetch = stateEventCount;
+      const promise = murmurClient
+        .getState()
+        .then((snapshot) => {
+          if (generation !== storeGeneration || cancelled) return;
+          if (stateEventCount === eventCountBeforeFetch) set({ snapshot, status: "ready", error: null, actionError: null });
+          activeStoreSubscriptions = cancel;
+        })
+        .catch((error) => {
+          if (generation !== storeGeneration || cancelled) return;
+          const actionError = actionErrorFrom(error);
+          set({ status: get().snapshot ? "ready" : "error", error: actionError.message, actionError });
+          cancel();
+        })
+        .finally(() => {
+          if (storeInitialization?.promise === promise) storeInitialization = null;
+        });
+      storeInitialization = { generation, promise, cancel };
+      return promise;
     },
     dispose: () => {
-      unsubscribeState?.();
-      unsubscribeModelProgress?.();
-      unsubscribeRuntimeProgress?.();
-      unsubscribeState = null;
-      unsubscribeModelProgress = null;
-      unsubscribeRuntimeProgress = null;
+      storeGeneration += 1;
+      storeInitialization?.cancel();
+      storeInitialization = null;
+      activeStoreSubscriptions?.();
+      activeStoreSubscriptions = null;
     },
     refresh: () => commit(() => murmurClient.getState()),
     setSnapshot: (snapshot) => set({ snapshot, status: "ready", error: null, actionError: null }),

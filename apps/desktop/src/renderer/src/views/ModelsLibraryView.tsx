@@ -11,7 +11,7 @@ import {
   Wrench,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useState, type JSX } from "react";
+import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 import type {
   AppStateSnapshot,
   ModelCatalogItem,
@@ -429,6 +429,14 @@ function ModelDetails({
   );
 }
 
+export function providerSetupDraftKey(
+  open: boolean,
+  item: ModelCatalogItem,
+  target: ProviderSetupTarget
+): string | null {
+  return open ? `${item.id}:${target.kind}:${target.providerId}:${target.modelId}` : null;
+}
+
 function ProviderSetupDialog({
   state,
   item,
@@ -450,13 +458,20 @@ function ProviderSetupDialog({
   const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const initializedDraftKeyRef = useRef<string | null>(null);
   const canSubmit = apiKey.trim().length > 0 && !isSubmitting;
 
   useEffect(() => {
-    if (!open) return;
+    const draftKey = providerSetupDraftKey(open, item, target);
+    if (!draftKey) {
+      initializedDraftKeyRef.current = null;
+      return;
+    }
+    if (initializedDraftKeyRef.current === draftKey) return;
+    initializedDraftKeyRef.current = draftKey;
     setApiKey(currentProviderSetupApiKey(item, state.transcriptionProviders, state.llmProviders));
     setError(null);
-  }, [item, open, state.llmProviders, state.transcriptionProviders]);
+  }, [item, open, state.llmProviders, state.transcriptionProviders, target]);
 
   const validateSaveAndActivate = async (): Promise<void> => {
     setError(null);

@@ -460,6 +460,32 @@ describe("AppController lifecycle and window ownership", () => {
     expect(registerHotkeys).not.toHaveBeenCalled();
   });
 
+  it("broadcasts final hotkey capabilities after startup registration", async () => {
+    const controller = Object.create(AppController.prototype) as AppController & Record<string, unknown>;
+    const broadcastState = vi.fn();
+    Object.assign(controller, {
+      isQuitting: false,
+      disposePromise: null,
+      automationPermissions: { initialize: vi.fn(async () => undefined) },
+      textAutomation: { initialize: vi.fn(async () => undefined) },
+      context: { initialize: vi.fn(async () => undefined) },
+      paste: { initialize: vi.fn(async () => undefined) },
+      registerIpc: vi.fn(),
+      configureSessionPermissions: vi.fn(),
+      codex: { refreshStatus: vi.fn(async () => undefined) },
+      createTray: vi.fn(),
+      createWindows: vi.fn(async () => undefined),
+      applySettings: vi.fn(),
+      storage: { getState: vi.fn(() => ({ settings: {} })) },
+      registerHotkeys: vi.fn(async () => undefined),
+      broadcastState
+    });
+
+    await controller.initialize();
+
+    expect(broadcastState).toHaveBeenCalledOnce();
+  });
+
   it("stops initialization after Quit marks the constructing controller", async () => {
     const firstStep = deferred<void>();
     const textInitialize = vi.fn(async () => undefined);
