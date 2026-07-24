@@ -66,6 +66,13 @@ export function runtimeInstallForModel(state: AppStateSnapshot, item: ModelCatal
   );
 }
 
+export function hasReadyRuntimeForModel(state: AppStateSnapshot, item: ModelCatalogItem): boolean {
+  if (item.kind !== "voice") return true;
+  const runtimeId = runtimeIdForModel(item);
+  if (!runtimeId) return true;
+  return runtimeVariantsForModel(state, runtimeId).some((runtime) => runtime.status === "ready");
+}
+
 export function runtimeStatusLabel(runtime: SttRuntimeInstallState): string {
   const label = acceleratorLabel(runtime.accelerator);
   if (runtime.status === "ready") return `${label} ready`;

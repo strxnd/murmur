@@ -7,7 +7,13 @@ import type {
   SttRuntimeId,
   SttRuntimeInstallState
 } from "../../../shared/types";
-import { accelerationRuntimePromptState, canCancelRuntimeOperation, runtimeInstallForModel, uniqueRuntimeInstallStates } from "./runtimes";
+import {
+  accelerationRuntimePromptState,
+  canCancelRuntimeOperation,
+  hasReadyRuntimeForModel,
+  runtimeInstallForModel,
+  uniqueRuntimeInstallStates
+} from "./runtimes";
 
 describe("renderer runtime helpers", () => {
   it("sorts variant-keyed runtime states", () => {
@@ -81,7 +87,7 @@ describe("renderer runtime helpers", () => {
     expect(runtimeInstallForModel(snapshot, voiceModel())?.variantKey).toBe(cuda.variantKey);
   });
 
-  it("shows an active accelerator install instead of a ready CPU fallback", () => {
+  it("shows an active accelerator install without hiding a ready CPU fallback", () => {
     const cpu = runtime("whisper.cpp", "cpu", "ready");
     const cuda = runtime("whisper.cpp", "cuda", "installing");
     const snapshot = state({
@@ -90,9 +96,22 @@ describe("renderer runtime helpers", () => {
         [cuda.variantKey]: cuda
       }
     });
+    const model = voiceModel();
 
-    expect(runtimeInstallForModel(snapshot, voiceModel())?.variantKey).toBe(cuda.variantKey);
+    expect(runtimeInstallForModel(snapshot, model)?.variantKey).toBe(cuda.variantKey);
+    expect(hasReadyRuntimeForModel(snapshot, model)).toBe(true);
     expect(canCancelRuntimeOperation(cuda)).toBe(true);
+  });
+
+  it("does not report a busy runtime as ready without a fallback", () => {
+    const cuda = runtime("whisper.cpp", "cuda", "downloading");
+    const snapshot = state({
+      runtimes: {
+        [cuda.variantKey]: cuda
+      }
+    });
+
+    expect(hasReadyRuntimeForModel(snapshot, voiceModel())).toBe(false);
   });
 });
 
