@@ -1,6 +1,13 @@
 import { codexModel } from "../../shared/codex-provider";
 import type { LlmProviderConfig, ProcessedResult } from "../../shared/types";
-import { fetchWithTimeout, joinUrl, parseJsonOrText, readResponseText } from "./http";
+import {
+  closeResponseBody,
+  fetchWithTimeout,
+  joinUrl,
+  parseJsonOrText,
+  providerSuccessBodyMaxBytes,
+  providerValidationBodyMaxBytes
+} from "./http";
 import { llmProviderAuthHeaders } from "./provider-auth";
 
 interface LlmOptions {
@@ -17,6 +24,7 @@ interface CodexLlmClient {
 
 const llmTimeoutMs = 120000;
 const llmIdleTimeoutMs = 30000;
+const validationTimeoutMs = 8000;
 
 export class LlmService {
   constructor(private codex?: CodexLlmClient) {}
@@ -59,10 +67,32 @@ export class LlmService {
     }
 
     try {
-      const path = provider.type === "ollama" ? "/api/tags" : provider.type === "google" ? "" : "/models";
-      const response = await fetchWithTimeout(joinUrl(provider.baseUrl, path), { headers: llmProviderAuthHeaders(provider) }, 8000);
-      if (response.status === 401 || response.status === 403) return { ok: false, message: "Authentication failed." };
-      return { ok: response.ok || response.status < 500, message: `Provider responded with HTTP ${response.status}.` };
+      const path = provider.type === "ollama" ? "/api/tags" : "/models";
+      const response = await fetchWithTimeout(
+        joinUrl(provider.baseUrl, path),
+        { headers: validationHeaders(provider) },
+        validationTimeoutMs
+      );
+      if (!response.ok) {
+        await closeResponseBody(response);
+        return {
+          ok: false,
+          message: response.status === 401 || response.status === 403
+            ? "Authentication failed."
+            : `Provider validation failed with HTTP ${response.status}.`
+        };
+      }
+
+      const data = await parseJsonOrText(response, {
+        totalTimeoutMs: validationTimeoutMs,
+        idleTimeoutMs: validationTimeoutMs,
+        maxBytes: providerValidationBodyMaxBytes,
+        label: "Provider validation"
+      });
+      if (!isValidModelList(provider, data)) {
+        return { ok: false, message: "Provider returned an unexpected validation response." };
+      }
+      return { ok: true, message: `Provider responded with HTTP ${response.status}.` };
     } catch (error) {
       return { ok: false, message: `Provider connection failed: ${errorMessage(error)}` };
     }
@@ -84,12 +114,16 @@ export class LlmService {
       },
       timeouts.totalTimeoutMs
     );
-    if (!response.ok) {
-      const body = await readResponseText(response, { ...timeouts, label: "Ollama error", signal: options.signal });
-      throw new Error(`Ollama failed with HTTP ${response.status}: ${body}`);
+    await assertSuccessfulResponse(response, "Ollama");
+    const data = await parseProviderResponse(response, "Ollama response", timeouts, options.signal);
+    if (!isRecord(data) || data.done !== true || !isRecord(data.message) || typeof data.message.content !== "string") {
+      throw new Error("Ollama returned an invalid success response.");
     }
-    const data = await parseJsonOrText(response, { ...timeouts, label: "Ollama response", signal: options.signal });
-    return { text: data?.message?.content?.trim() ?? "", providerId: options.provider.id, model: options.provider.defaultModel };
+    return {
+      text: requireCleanupText(data.message.content, "Ollama"),
+      providerId: options.provider.id,
+      model: options.provider.defaultModel
+    };
   }
 
   private async processOpenAiCompatible(options: LlmOptions): Promise<ProcessedResult> {
@@ -111,13 +145,19 @@ export class LlmService {
       },
       timeouts.totalTimeoutMs
     );
-    if (!response.ok) {
-      const body = await readResponseText(response, { ...timeouts, label: "LLM error", signal: options.signal });
-      throw new Error(`LLM failed with HTTP ${response.status}: ${body}`);
+    await assertSuccessfulResponse(response, "LLM");
+    const data = await parseProviderResponse(response, "LLM response", timeouts, options.signal);
+    const choice = isRecord(data) && Array.isArray(data.choices) ? data.choices[0] : undefined;
+    if (
+      !isRecord(choice) ||
+      choice.finish_reason !== "stop" ||
+      !isRecord(choice.message) ||
+      typeof choice.message.content !== "string"
+    ) {
+      throw new Error("LLM provider returned an incomplete or invalid success response.");
     }
-    const data = await parseJsonOrText(response, { ...timeouts, label: "LLM response", signal: options.signal });
     return {
-      text: data?.choices?.[0]?.message?.content?.trim() ?? "",
+      text: requireCleanupText(choice.message.content, "LLM provider"),
       providerId: options.provider.id,
       model: options.provider.defaultModel
     };
@@ -137,20 +177,24 @@ export class LlmService {
         },
         body: JSON.stringify({
           model: options.provider.defaultModel || "claude-sonnet-4-6",
-          max_tokens: 2048,
+          max_tokens: anthropicOutputTokenBudget(options.prompt),
           temperature: 0.2,
           messages: [{ role: "user", content: options.prompt }]
         })
       },
       timeouts.totalTimeoutMs
     );
-    if (!response.ok) {
-      const body = await readResponseText(response, { ...timeouts, label: "Anthropic error", signal: options.signal });
-      throw new Error(`Anthropic failed with HTTP ${response.status}: ${body}`);
+    await assertSuccessfulResponse(response, "Anthropic");
+    const data = await parseProviderResponse(response, "Anthropic response", timeouts, options.signal);
+    if (!isRecord(data) || data.stop_reason !== "end_turn" || !Array.isArray(data.content)) {
+      throw new Error(`Anthropic returned an incomplete or invalid success response${anthropicStopReasonSuffix(data)}.`);
     }
-    const data = await parseJsonOrText(response, { ...timeouts, label: "Anthropic response", signal: options.signal });
+    if (!data.content.every((part) => isRecord(part) && part.type === "text" && typeof part.text === "string")) {
+      throw new Error("Anthropic returned an invalid content response.");
+    }
+    const text = data.content.map((part) => (part as Record<string, unknown>).text as string).join("");
     return {
-      text: data?.content?.map((part: any) => part.text).join("").trim() ?? "",
+      text: requireCleanupText(text, "Anthropic"),
       providerId: options.provider.id,
       model: options.provider.defaultModel
     };
@@ -176,14 +220,86 @@ export class LlmService {
       },
       timeouts.totalTimeoutMs
     );
-    if (!response.ok) {
-      const body = await readResponseText(response, { ...timeouts, label: "Google LLM error", signal: options.signal });
-      throw new Error(`Google LLM failed with HTTP ${response.status}: ${body}`);
+    await assertSuccessfulResponse(response, "Google LLM");
+    const data = await parseProviderResponse(response, "Google LLM response", timeouts, options.signal);
+    const candidate = isRecord(data) && Array.isArray(data.candidates) ? data.candidates[0] : undefined;
+    const parts = isRecord(candidate) && isRecord(candidate.content) && Array.isArray(candidate.content.parts)
+      ? candidate.content.parts
+      : undefined;
+    if (
+      !isRecord(candidate) ||
+      candidate.finishReason !== "STOP" ||
+      !parts ||
+      !parts.every((part) => isRecord(part) && typeof part.text === "string")
+    ) {
+      throw new Error("Google LLM returned an incomplete or invalid success response.");
     }
-    const data = await parseJsonOrText(response, { ...timeouts, label: "Google LLM response", signal: options.signal });
-    const text = data?.candidates?.[0]?.content?.parts?.map((part: any) => part.text).join("").trim() ?? "";
-    return { text, providerId: options.provider.id, model };
+    const text = parts.map((part) => (part as Record<string, unknown>).text as string).join("");
+    return { text: requireCleanupText(text, "Google LLM"), providerId: options.provider.id, model };
   }
+}
+
+async function parseProviderResponse(
+  response: Response,
+  label: string,
+  timeouts: { totalTimeoutMs: number; idleTimeoutMs: number },
+  signal?: AbortSignal
+): Promise<unknown> {
+  return parseJsonOrText(response, {
+    ...timeouts,
+    maxBytes: providerSuccessBodyMaxBytes,
+    label,
+    signal
+  });
+}
+
+async function assertSuccessfulResponse(response: Response, providerLabel: string): Promise<void> {
+  if (response.ok) return;
+  await closeResponseBody(response);
+  throw providerHttpError(providerLabel, response);
+}
+
+function providerHttpError(providerLabel: string, response: Response): Error {
+  const requestId = boundedRequestId(response);
+  return new Error(`${providerLabel} failed with HTTP ${response.status}${requestId ? ` (request ID ${requestId})` : ""}.`);
+}
+
+function boundedRequestId(response: Response): string | undefined {
+  const value = response.headers.get("request-id") ?? response.headers.get("x-request-id");
+  if (!value) return undefined;
+  const sanitized = value.replace(/[^a-zA-Z0-9._:-]/g, "").slice(0, 128);
+  return sanitized || undefined;
+}
+
+function validationHeaders(provider: LlmProviderConfig): HeadersInit {
+  if (provider.type === "google") {
+    return provider.apiKey ? { "x-goog-api-key": provider.apiKey } : {};
+  }
+  if (provider.type === "anthropic") {
+    return { ...llmProviderAuthHeaders(provider), "anthropic-version": "2023-06-01" };
+  }
+  return llmProviderAuthHeaders(provider);
+}
+
+function isValidModelList(provider: LlmProviderConfig, data: unknown): boolean {
+  if (!isRecord(data)) return false;
+  if (provider.type === "ollama" || provider.type === "google") return Array.isArray(data.models);
+  return Array.isArray(data.data);
+}
+
+function requireCleanupText(value: string, providerLabel: string): string {
+  const text = value.trim();
+  if (!text) throw new Error(`${providerLabel} returned empty cleanup text.`);
+  return text;
+}
+
+function anthropicOutputTokenBudget(prompt: string): number {
+  return Math.min(16384, Math.max(2048, Math.ceil(prompt.length / 3)));
+}
+
+function anthropicStopReasonSuffix(data: unknown): string {
+  if (!isRecord(data) || typeof data.stop_reason !== "string") return "";
+  return ` (stop reason ${data.stop_reason})`;
 }
 
 function llmHttpTimeouts(): { totalTimeoutMs: number; idleTimeoutMs: number } {
@@ -200,4 +316,8 @@ function envPositiveInteger(name: string, fallback: number): number {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

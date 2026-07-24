@@ -13,7 +13,20 @@ import type {
 } from "../../shared/types";
 import type { AppPaths } from "./app-paths";
 import { ensureOwnerOnlyDirectory, ensureOwnerOnlyFile, ownerOnlyFileMode } from "./app-paths";
-import { fetchWithTimeout, extractTextFromTranscriptionResponse, joinUrl, parseJsonOrText, readResponseBody, readResponseText } from "./http";
+import {
+  closeResponseBody,
+  extractTextFromTranscriptionResponse,
+  fetchWithTimeout,
+  joinUrl,
+  parseJsonOrText,
+  providerSsePendingMaxChars,
+  providerSuccessBodyMaxBytes,
+  providerTranscriptMaxChars,
+  providerValidationBodyMaxBytes,
+  readResponseBody,
+  readResponseText,
+  requireTranscriptText
+} from "./http";
 import { SttRuntimeService, type ResolvedSttRuntime } from "./stt-runtime";
 
 interface TranscribeOptions {
@@ -141,23 +154,41 @@ export class TranscriptionService {
       if (provider.type === "cloud_openai" || provider.type.includes("openai")) {
         const headers = this.authHeaders(provider);
         const response = await fetchWithTimeout(joinUrl(provider.baseUrl, "/models"), { headers }, 8000);
-        if (response.status === 401) return { ok: false, message: "Authentication failed." };
+        if (!response.ok) {
+          await closeResponseBody(response);
+          return {
+            ok: false,
+            message: response.status === 401 || response.status === 403
+              ? "Authentication failed."
+              : `Provider validation failed with HTTP ${response.status}.`
+          };
+        }
+        const data = await parseJsonOrText(response, {
+          totalTimeoutMs: 8000,
+          idleTimeoutMs: 8000,
+          maxBytes: providerValidationBodyMaxBytes,
+          label: "STT provider validation"
+        });
+        if (!isRecord(data) || !Array.isArray(data.data)) {
+          return { ok: false, message: "Provider returned an unexpected validation response." };
+        }
         return {
-          ok: response.ok || response.status < 500,
-          message: response.ok ? "Provider reachable." : `Provider responded with HTTP ${response.status}.`,
+          ok: true,
+          message: "Provider reachable.",
           capabilities: {
             fileTranscription: true,
             completedAudioStreaming: provider.streamingMode === "completed_audio_sse",
             liveRealtimeStreaming: provider.streamingMode === "live_realtime",
-            modelDiscovery: response.ok
+            modelDiscovery: true
           }
         };
       }
 
       const response = await fetchWithTimeout(provider.baseUrl, {}, 8000);
+      await closeResponseBody(response);
       return {
-        ok: response.ok || response.status < 500,
-        message: response.ok ? "Provider reachable." : `Provider responded with HTTP ${response.status}.`,
+        ok: response.ok,
+        message: response.ok ? "Provider reachable." : `Provider validation failed with HTTP ${response.status}.`,
         capabilities: { fileTranscription: true, completedAudioStreaming: false, liveRealtimeStreaming: false }
       };
     } catch (error) {
@@ -216,11 +247,16 @@ export class TranscriptionService {
     const timeouts = transcriptionHttpTimeouts();
     const response = await fetchWithTimeout(endpoint, { method: "POST", body: form, signal: options.signal }, timeouts.totalTimeoutMs);
     if (!response.ok) {
-      const body = await readResponseText(response, { ...timeouts, label: "whisper.cpp error", signal: options.signal });
-      throw new Error(`whisper.cpp transcription failed with HTTP ${response.status}: ${body}`);
+      await closeResponseBody(response);
+      throw providerHttpError("whisper.cpp transcription", response);
     }
 
-    const data = await parseJsonOrText(response, { ...timeouts, label: "whisper.cpp transcription", signal: options.signal });
+    const data = await parseJsonOrText(response, {
+      ...timeouts,
+      maxBytes: providerSuccessBodyMaxBytes,
+      label: "whisper.cpp transcription",
+      signal: options.signal
+    });
     return {
       text: extractTextFromTranscriptionResponse(data),
       providerId: options.provider.id,
@@ -293,8 +329,8 @@ export class TranscriptionService {
     );
 
     if (!response.ok) {
-      const body = await readResponseText(response, { ...timeouts, label: "STT error", signal: options.signal });
-      throw new Error(`STT failed with HTTP ${response.status}: ${body}`);
+      await closeResponseBody(response);
+      throw providerHttpError("STT", response);
     }
 
     if (streamingMode === "completed_audio_sse" && response.body) {
@@ -307,7 +343,12 @@ export class TranscriptionService {
       };
     }
 
-    const data = await parseJsonOrText(response, { ...timeouts, label: "STT transcription", signal: options.signal });
+    const data = await parseJsonOrText(response, {
+      ...timeouts,
+      maxBytes: providerSuccessBodyMaxBytes,
+      label: "STT transcription",
+      signal: options.signal
+    });
     return {
       text: extractTextFromTranscriptionResponse(data),
       providerId: options.provider.id,
@@ -642,14 +683,15 @@ export class TranscriptionService {
           }
           if (!isRecord(data)) continue;
           if (data.type === "transcript.text.done") {
-            if (typeof data.text === "string") transcript = data.text;
+            if (typeof data.text !== "string") throw new Error("STT SSE returned an invalid completion event.");
+            transcript = checkedTranscriptAppend("", data.text);
             completed = true;
             continue;
           }
 
           const delta = data.delta;
           if (typeof delta === "string" && delta) {
-            transcript += delta;
+            transcript = checkedTranscriptAppend(transcript, delta);
             onDelta?.(delta);
           }
         }
@@ -661,14 +703,17 @@ export class TranscriptionService {
       (chunk) => {
         buffer += decoder.decode(chunk, { stream: true });
         consumeEvents();
+        if (buffer.length > providerSsePendingMaxChars) {
+          throw new Error(`STT SSE pending event exceeded ${providerSsePendingMaxChars} characters.`);
+        }
       },
-      { ...timeouts, label: "STT SSE", signal }
+      { ...timeouts, maxBytes: providerSuccessBodyMaxBytes, label: "STT SSE", signal }
     );
     buffer += decoder.decode();
     consumeEvents(true);
     if (!completed) throw new Error("STT SSE ended before a terminal completion event.");
 
-    return transcript.trim();
+    return requireTranscriptText(transcript);
   }
 
   private authHeaders(provider: TranscriptionProviderConfig): HeadersInit {
@@ -991,6 +1036,25 @@ function readAscii(view: DataView, offset: number, length: number): string {
     value += String.fromCharCode(view.getUint8(offset + index));
   }
   return value;
+}
+
+function checkedTranscriptAppend(current: string, addition: string): string {
+  if (current.length + addition.length > providerTranscriptMaxChars) {
+    throw new Error(`STT transcript exceeded ${providerTranscriptMaxChars} characters.`);
+  }
+  return `${current}${addition}`;
+}
+
+function providerHttpError(providerLabel: string, response: Response): Error {
+  const requestId = boundedRequestId(response);
+  return new Error(`${providerLabel} failed with HTTP ${response.status}${requestId ? ` (request ID ${requestId})` : ""}.`);
+}
+
+function boundedRequestId(response: Response): string | undefined {
+  const value = response.headers.get("request-id") ?? response.headers.get("x-request-id");
+  if (!value) return undefined;
+  const sanitized = value.replace(/[^a-zA-Z0-9._:-]/g, "").slice(0, 128);
+  return sanitized || undefined;
 }
 
 function errorMessage(error: unknown): string {

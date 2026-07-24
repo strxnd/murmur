@@ -27,6 +27,7 @@ import { Switch } from "../components/ui/Switch";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { cn } from "../lib/cn";
 import { makeClientId } from "../lib/ids";
+import { ProviderValidationGate, providerValidationFingerprint } from "../lib/provider-validation";
 import {
   applyCloudCredentialApiKey,
   applyLlmProviderType,
@@ -129,6 +130,8 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const providerDialogTriggerRef = useRef<HTMLButtonElement | null>(null);
   const retainedProviderEntryRef = useRef<CustomProviderEntry | null>(null);
+  const validationGateRef = useRef(new ProviderValidationGate());
+  const validationFingerprintsRef = useRef<Record<string, string>>({});
   const advancedBodyId = useId();
   const customProviderListParent = useAutoAnimateRef<HTMLDivElement>();
   const currentValues: ProvidersFormValues = {
@@ -136,6 +139,29 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
     llmProviders
   };
   const hasUnsavedChanges = hasProvidersFormChanges(currentValues, persistedValuesRef.current);
+
+  useEffect(() => {
+    const nextFingerprints = validationFingerprints(normalizeProvidersFormValues(form.getValues()));
+    const previousFingerprints = validationFingerprintsRef.current;
+    const changedKeys = new Set([...Object.keys(previousFingerprints), ...Object.keys(nextFingerprints)]);
+    const changedCustomKeys: string[] = [];
+    const changedCloudKeys: CloudCredentialProviderId[] = [];
+
+    for (const key of changedKeys) {
+      if (previousFingerprints[key] === nextFingerprints[key]) continue;
+      validationGateRef.current.invalidate(key);
+      if (key.startsWith("custom:")) changedCustomKeys.push(key.slice("custom:".length));
+      if (key.startsWith("cloud:")) changedCloudKeys.push(key.slice("cloud:".length) as CloudCredentialProviderId);
+    }
+    validationFingerprintsRef.current = nextFingerprints;
+
+    if (changedCustomKeys.length > 0) {
+      setValidationByProvider((current) => omitKeys(current, changedCustomKeys));
+    }
+    if (changedCloudKeys.length > 0) {
+      setCloudValidationByProvider((current) => omitKeys(current, changedCloudKeys));
+    }
+  }, [form, llmProviders, transcriptionProviders]);
 
   useEffect(() => {
     if (hasUnsavedChanges) {
@@ -275,6 +301,11 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
     const normalizedValues = normalizeProvidersFormValues(form.getValues());
     const normalizedProvider =
       kind === "stt" ? normalizedValues.transcriptionProviders[index] : normalizedValues.llmProviders[index];
+    if (!normalizedProvider) return;
+    const request = validationGateRef.current.begin(
+      customValidationGateKey(key),
+      providerValidationFingerprint(normalizedProvider)
+    );
 
     setValidationByProvider((current) => ({
       ...current,
@@ -286,6 +317,8 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
         kind === "stt"
           ? await validateSttProvider(normalizedProvider as TranscriptionProviderConfig)
           : await validateLlmProvider(normalizedProvider as LlmProviderConfig);
+      const currentFingerprint = customProviderFingerprint(form.getValues(), kind, provider.id);
+      if (!validationGateRef.current.accepts(request, currentFingerprint)) return;
       setValidationByProvider((current) => ({
         ...current,
         [key]: {
@@ -295,6 +328,8 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
         }
       }));
     } catch (error) {
+      const currentFingerprint = customProviderFingerprint(form.getValues(), kind, provider.id);
+      if (!validationGateRef.current.accepts(request, currentFingerprint)) return;
       setValidationByProvider((current) => ({
         ...current,
         [key]: { status: "error", message: errorMessage(error) }
@@ -327,6 +362,10 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
     }
 
     const targets = cloudCredentialValidationProviders(providerId, normalizedValues);
+    const request = validationGateRef.current.begin(
+      cloudValidationGateKey(providerId),
+      providerValidationFingerprint(targets)
+    );
     setCloudValidationByProvider((current) => ({
       ...current,
       [providerId]: { status: "validating", message: `Testing ${providerName} key...` }
@@ -343,6 +382,8 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
 
       const failed = results.find((result) => !result.ok);
       const capabilities = results.find((result) => result.capabilities)?.capabilities;
+      const currentFingerprint = cloudProviderFingerprint(form.getValues(), providerId);
+      if (!validationGateRef.current.accepts(request, currentFingerprint)) return;
       setCloudValidationByProvider((current) => ({
         ...current,
         [providerId]: {
@@ -352,6 +393,8 @@ export function ProvidersView({ state }: { state: AppStateSnapshot }): JSX.Eleme
         }
       }));
     } catch (error) {
+      const currentFingerprint = cloudProviderFingerprint(form.getValues(), providerId);
+      if (!validationGateRef.current.accepts(request, currentFingerprint)) return;
       setCloudValidationByProvider((current) => ({
         ...current,
         [providerId]: { status: "error", message: errorMessage(error) }
@@ -1428,6 +1471,48 @@ function validationCapabilityLabels(capabilities: ProviderValidationResult["capa
   if (capabilities.liveRealtimeStreaming) labels.push("Live transcription");
   if (capabilities.modelDiscovery) labels.push("Model list");
   return labels;
+}
+
+function validationFingerprints(values: ProvidersFormValues): Record<string, string> {
+  const fingerprints: Record<string, string> = {};
+  for (const provider of values.transcriptionProviders) {
+    fingerprints[customValidationGateKey(providerKey("stt", provider.id))] = providerValidationFingerprint(provider);
+  }
+  for (const provider of values.llmProviders) {
+    fingerprints[customValidationGateKey(providerKey("llm", provider.id))] = providerValidationFingerprint(provider);
+  }
+  for (const provider of cloudCredentialProviders) {
+    fingerprints[cloudValidationGateKey(provider.id)] = providerValidationFingerprint(
+      cloudCredentialValidationProviders(provider.id, values)
+    );
+  }
+  return fingerprints;
+}
+
+function customProviderFingerprint(values: ProvidersFormValues, kind: ProviderKind, providerId: string): string | undefined {
+  const normalized = normalizeProvidersFormValues(values);
+  const providers = kind === "stt" ? normalized.transcriptionProviders : normalized.llmProviders;
+  const provider = providers.find((candidate) => candidate.id === providerId);
+  return provider ? providerValidationFingerprint(provider) : undefined;
+}
+
+function cloudProviderFingerprint(values: ProvidersFormValues, providerId: CloudCredentialProviderId): string {
+  const normalized = normalizeProvidersFormValues(values);
+  return providerValidationFingerprint(cloudCredentialValidationProviders(providerId, normalized));
+}
+
+function customValidationGateKey(key: string): string {
+  return `custom:${key}`;
+}
+
+function cloudValidationGateKey(providerId: CloudCredentialProviderId): string {
+  return `cloud:${providerId}`;
+}
+
+function omitKeys<T extends Record<string, unknown>>(current: T, keys: string[]): T {
+  const next = { ...current };
+  for (const key of keys) delete next[key];
+  return next;
 }
 
 function clearValidation(key: string, setValidationByProvider: (updater: (current: Record<string, ValidationState>) => Record<string, ValidationState>) => void): void {
