@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -179,7 +179,9 @@ describe("ModelLibraryService", () => {
     if (!item) throw new Error("Missing whisper-tiny-en catalog item.");
     const originalUrl = item.downloadUrl;
     const originalSha256 = item.sha256;
+    const originalSizeBytes = item.sizeBytes;
     item.downloadUrl = server.url;
+    item.sizeBytes = Buffer.byteLength("model-bytes");
     item.sha256 = sha256("model-bytes");
 
     try {
@@ -192,6 +194,7 @@ describe("ModelLibraryService", () => {
       expect(readFileSync(expectedPath, "utf8")).toBe("model-bytes");
     } finally {
       item.downloadUrl = originalUrl;
+      item.sizeBytes = originalSizeBytes;
       item.sha256 = originalSha256;
       await closeServer(server.server);
     }
@@ -204,7 +207,9 @@ describe("ModelLibraryService", () => {
     if (!item) throw new Error("Missing whisper-tiny-en catalog item.");
     const originalUrl = item.downloadUrl;
     const originalSha256 = item.sha256;
+    const originalSizeBytes = item.sizeBytes;
     item.downloadUrl = server.url;
+    item.sizeBytes = Buffer.byteLength("tampered-model-bytes");
     item.sha256 = sha256("expected-model-bytes");
 
     try {
@@ -218,6 +223,7 @@ describe("ModelLibraryService", () => {
       expect(existsSync(`${expectedPath}.part`)).toBe(false);
     } finally {
       item.downloadUrl = originalUrl;
+      item.sizeBytes = originalSizeBytes;
       item.sha256 = originalSha256;
       await closeServer(server.server);
     }
@@ -230,7 +236,9 @@ describe("ModelLibraryService", () => {
     const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en");
     if (!item) throw new Error("Missing whisper-tiny-en catalog item.");
     const originalUrl = item.downloadUrl;
+    const originalSizeBytes = item.sizeBytes;
     item.downloadUrl = server.url;
+    item.sizeBytes = 64;
     const service = new ModelLibraryService(paths, storage, () => undefined, fakeRuntimeService("available"), {
       downloadBodyTimeoutMs: 20
     });
@@ -246,6 +254,7 @@ describe("ModelLibraryService", () => {
       expect(existsSync(`${expectedPath}.part`)).toBe(false);
     } finally {
       item.downloadUrl = originalUrl;
+      item.sizeBytes = originalSizeBytes;
       await closeServer(server.server);
     }
   });
@@ -259,7 +268,9 @@ describe("ModelLibraryService", () => {
     if (!item) throw new Error("Missing whisper-tiny-en catalog item.");
     const originalUrl = item.downloadUrl;
     const originalSha256 = item.sha256;
+    const originalSizeBytes = item.sizeBytes;
     item.downloadUrl = server.url;
+    item.sizeBytes = Buffer.byteLength(body);
     item.sha256 = sha256(body);
     const progressEvents: number[] = [];
     const service = new ModelLibraryService(
@@ -283,6 +294,7 @@ describe("ModelLibraryService", () => {
       expect(progressEvents).toContain(64);
     } finally {
       item.downloadUrl = originalUrl;
+      item.sizeBytes = originalSizeBytes;
       item.sha256 = originalSha256;
       await closeServer(server.server);
     }
@@ -296,7 +308,9 @@ describe("ModelLibraryService", () => {
     if (!item) throw new Error("Missing Parakeet catalog item.");
     const originalUrl = item.downloadUrl;
     const originalSha256 = item.sha256;
+    const originalSizeBytes = item.sizeBytes;
     item.downloadUrl = server.url;
+    item.sizeBytes = archive.byteLength;
     item.sha256 = sha256(archive);
 
     try {
@@ -310,6 +324,7 @@ describe("ModelLibraryService", () => {
       expect(existsSync(join(paths.modelDir, `${item.filename!}.part`))).toBe(false);
     } finally {
       item.downloadUrl = originalUrl;
+      item.sizeBytes = originalSizeBytes;
       item.sha256 = originalSha256;
       await closeServer(server.server);
     }
@@ -322,7 +337,9 @@ describe("ModelLibraryService", () => {
     const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en");
     if (!item) throw new Error("Missing whisper-tiny-en catalog item.");
     const originalUrl = item.downloadUrl;
+    const originalSizeBytes = item.sizeBytes;
     item.downloadUrl = server.url;
+    item.sizeBytes = Buffer.byteLength("partial-model-bytes");
     let progressResolved = false;
     let resolveProgress: () => void = () => undefined;
     const progress = new Promise<void>((resolve) => {
@@ -357,6 +374,7 @@ describe("ModelLibraryService", () => {
       expect(existsSync(`${expectedPath}.part`)).toBe(false);
     } finally {
       item.downloadUrl = originalUrl;
+      item.sizeBytes = originalSizeBytes;
       await closeServer(server.server);
     }
   });
@@ -395,6 +413,132 @@ describe("ModelLibraryService", () => {
     expect(download?.status).toBe("not_downloaded");
     expect(download?.localPath).toBeUndefined();
     expect(snapshot.activeModelIds.voice).toBeUndefined();
+  });
+
+  it("recovers interrupted model downloads as retryable errors and removes staging", () => {
+    const paths = testPaths();
+    const storage = new StorageService(paths);
+    const item = modelCatalog.find((candidate) => candidate.id === "nvidia-parakeet-tdt-ctc-110m")!;
+    const target = join(paths.modelDir, item.extractDir!);
+    const part = join(paths.modelDir, `${item.filename}.part`);
+    const staging = join(paths.modelDir, `${item.extractDir}.staging-crash`);
+    mkdirSync(target, { recursive: true });
+    touch(join(target, "tokens.txt"));
+    touch(part);
+    mkdirSync(staging, { recursive: true });
+    storage.upsertModelDownload({
+      modelId: item.id,
+      status: "downloading",
+      progressBytes: 10,
+      totalBytes: item.sizeBytes,
+      localPath: target,
+      favorite: false
+    });
+
+    const service = new ModelLibraryService(paths, storage, () => undefined, fakeRuntimeService("available"));
+    const download = service.snapshot().downloads.find((candidate) => candidate.modelId === item.id);
+
+    expect(download?.status).toBe("error");
+    expect(download?.error).toBeTruthy();
+    expect(existsSync(part)).toBe(false);
+    expect(existsSync(staging)).toBe(false);
+  });
+
+  it("extracts archive models in staging and promotes only validated contents", async () => {
+    const { service, paths } = setup("available");
+    const item = modelCatalog.find((candidate) => candidate.id === "nvidia-parakeet-tdt-ctc-110m")!;
+    const archive = sherpaTarBz2(item.extractDir!);
+    const server = await binaryModelServer(archive);
+    const original = { url: item.downloadUrl, size: item.sizeBytes, sha: item.sha256 };
+    item.downloadUrl = server.url;
+    item.sizeBytes = archive.byteLength;
+    item.sha256 = sha256(archive);
+
+    try {
+      const snapshot = await service.downloadModel(item.id);
+      const target = join(paths.modelDir, item.extractDir!);
+      const download = snapshot.downloads.find((candidate) => candidate.modelId === item.id);
+      expect(download?.error).toBeUndefined();
+      expect(download?.status).toBe("downloaded");
+      expect(existsSync(join(target, "tokens.txt"))).toBe(true);
+      expect(existsSync(join(target, ".murmur-model.json"))).toBe(true);
+      expect(existsSync(join(paths.modelDir, `${item.filename}.part`))).toBe(false);
+      expect(readdirNames(paths.modelDir).some((name) => name.includes(".staging-"))).toBe(false);
+    } finally {
+      item.downloadUrl = original.url;
+      item.sizeBytes = original.size;
+      item.sha256 = original.sha;
+      await closeServer(server.server);
+    }
+  });
+
+  it("rejects model responses that exceed pinned download sizes", async () => {
+    const { service } = setup("available");
+    const server = await modelServer("oversized");
+    const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en")!;
+    const original = { url: item.downloadUrl, size: item.sizeBytes, sha: item.sha256 };
+    item.downloadUrl = server.url;
+    item.sizeBytes = 4;
+    item.sha256 = sha256("over");
+
+    try {
+      const snapshot = await service.downloadModel(item.id);
+      const download = snapshot.downloads.find((candidate) => candidate.modelId === item.id);
+      expect(download?.status).toBe("error");
+      expect(download?.error).toContain("size mismatch");
+    } finally {
+      item.downloadUrl = original.url;
+      item.sizeBytes = original.size;
+      item.sha256 = original.sha;
+      await closeServer(server.server);
+    }
+  });
+
+  it("rejects missing model response bodies before opening partial files", async () => {
+    const { service, paths } = setup("available");
+    const server = await emptyBodyServer();
+    const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en")!;
+    const original = { url: item.downloadUrl, size: item.sizeBytes, sha: item.sha256 };
+    item.downloadUrl = server.url;
+    item.sizeBytes = 4;
+    item.sha256 = sha256("four");
+
+    try {
+      const snapshot = await service.downloadModel(item.id);
+      const download = snapshot.downloads.find((candidate) => candidate.modelId === item.id);
+      expect(download?.status).toBe("error");
+      expect(download?.error).toContain("did not include a stream");
+      expect(existsSync(join(paths.modelDir, `${item.filename}.part`))).toBe(false);
+    } finally {
+      item.downloadUrl = original.url;
+      item.sizeBytes = original.size;
+      item.sha256 = original.sha;
+      await closeServer(server.server);
+    }
+  });
+
+  it("reverifies downloaded direct files after their metadata changes", async () => {
+    const { service, storage, paths } = setup("available");
+    const server = await modelServer("verified-model");
+    const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en")!;
+    const original = { url: item.downloadUrl, size: item.sizeBytes, sha: item.sha256 };
+    item.downloadUrl = server.url;
+    item.sizeBytes = Buffer.byteLength("verified-model");
+    item.sha256 = sha256("verified-model");
+
+    try {
+      await service.downloadModel(item.id);
+      storage.setActiveModel("voice", item.id);
+      writeFileSync(join(paths.modelDir, item.filename!), "corrupt");
+      const snapshot = await service.activateModel(item.id);
+      expect(snapshot.downloads.find((candidate) => candidate.modelId === item.id)?.status).toBe("error");
+      expect(snapshot.activeModelIds.voice).toBeUndefined();
+    } finally {
+      item.downloadUrl = original.url;
+      item.sizeBytes = original.size;
+      item.sha256 = original.sha;
+      await closeServer(server.server);
+    }
   });
 
   it("discovers Ollama models and remembers them when the provider is unavailable", async () => {
@@ -647,12 +791,16 @@ function reversibleCodec(isAvailable: () => boolean): ProviderSecretCodec {
 }
 
 function downloaded(modelId: string, paths: AppPaths) {
+  const localPath = join(paths.modelDir, "ggml-tiny.en.bin");
+  const item = modelCatalog.find((candidate) => candidate.id === modelId);
+  const stats = existsSync(localPath) ? statSync(localPath) : undefined;
   return {
     modelId,
     status: "downloaded" as const,
     progressBytes: 1,
-    localPath: join(paths.modelDir, "ggml-tiny.en.bin"),
+    localPath,
     downloadedAt: new Date().toISOString(),
+    verification: item?.sha256 && stats ? { sizeBytes: stats.size, mtimeMs: stats.mtimeMs, sha256: item.sha256 } : undefined,
     favorite: false
   };
 }
@@ -717,6 +865,20 @@ function tempRoot(): string {
 function touch(path: string): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, "");
+}
+
+function emptyBodyServer(): Promise<{ server: Server; url: string }> {
+  return new Promise((resolve) => {
+    const server = createServer((_request, response) => {
+      response.writeHead(204);
+      response.end();
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Could not start test server.");
+      resolve({ server, url: `http://127.0.0.1:${address.port}/model.bin` });
+    });
+  });
 }
 
 function modelServer(body: string): Promise<{ server: Server; url: string }> {
@@ -820,6 +982,22 @@ function slowModelServer(chunks: string[], delayMs: number): Promise<{ server: S
       resolve({ server, url: `http://127.0.0.1:${address.port}/model.bin` });
     });
   });
+}
+
+function sherpaTarBz2(extractDir: string): Buffer {
+  const root = tempRoot();
+  const source = join(root, extractDir);
+  const archivePath = join(root, "model.tar.bz2");
+  mkdirSync(source, { recursive: true });
+  writeFileSync(join(source, "tokens.txt"), "token");
+  writeFileSync(join(source, "model.onnx"), "model");
+  const result = spawnSync("tar", ["-cjf", archivePath, "-C", root, extractDir], { encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`Could not create model fixture: ${result.stderr}`);
+  return readFileSync(archivePath);
+}
+
+function readdirNames(path: string): string[] {
+  return readdirSync(path);
 }
 
 function unsafeTarBz2(): Buffer {

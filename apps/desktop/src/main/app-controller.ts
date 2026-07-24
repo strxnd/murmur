@@ -223,6 +223,7 @@ export class AppController {
     this.macosReleaseHotkeys.unregister();
     this.textAutomation.dispose();
     this.context.dispose();
+    await Promise.all([this.modelLibrary?.dispose?.(), this.runtimeService?.dispose?.()]);
     await this.stt.dispose();
     this.codex.dispose();
     this.closeToTrayNotification?.removeAllListeners();

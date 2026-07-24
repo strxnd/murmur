@@ -1,6 +1,18 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, createWriteStream, existsSync, mkdirSync, openSync, readSync, rmSync, renameSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  readSync,
+  rmSync,
+  renameSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import { dirname, join } from "node:path";
 import {
   canActivateModel,
@@ -21,6 +33,15 @@ import type {
 } from "../../shared/types";
 import type { AppPaths } from "./app-paths";
 import { joinUrl } from "./http";
+import {
+  createInstalledTreeReceipt,
+  downloadResponseToFile,
+  ensureAvailableDiskSpace,
+  inspectTarArchive,
+  type InstalledTreeReceipt,
+  verifyInstalledTreeReceipt,
+  withDownloadDeadline
+} from "./installation-integrity";
 import { llmProviderAuthHeaders } from "./provider-auth";
 import { StorageService } from "./storage";
 import { SttRuntimeService } from "./stt-runtime";
@@ -29,8 +50,11 @@ const ollamaBaseUrl = "http://127.0.0.1:11434";
 const ollamaNotRunning = "Ollama is not running at http://127.0.0.1:11434.";
 const defaultDownloadHeaderTimeoutMs = 15000;
 const defaultDownloadBodyTimeoutMs = 30000;
+const defaultDownloadTotalTimeoutMs = 30 * 60 * 1000;
 const defaultProgressEmitIntervalMs = 500;
 const progressEmitMinBytes = 1024 * 1024;
+const maxArchiveExpansionRatio = 20;
+const modelReceiptName = ".murmur-model.json";
 
 type ProgressEmitter = (state: ModelDownloadState) => void;
 
@@ -46,13 +70,21 @@ interface DownloadProgressSnapshot {
 
 interface DownloadToFileResult {
   progressBytes: number;
-  totalBytes?: number;
+  totalBytes: number;
   sha256: string;
+}
+
+interface ModelArchiveReceipt {
+  modelId: string;
+  archiveSha256: string;
+  installedAt: string;
+  tree: InstalledTreeReceipt;
 }
 
 export interface ModelLibraryServiceOptions {
   downloadHeaderTimeoutMs?: number;
   downloadBodyTimeoutMs?: number;
+  downloadTotalTimeoutMs?: number;
   progressEmitIntervalMs?: number;
   getProviderRuntime?: () => ProviderRuntimeSnapshot;
 }
@@ -62,6 +94,7 @@ export class ModelLibraryService {
   private progressSnapshots = new Map<string, DownloadProgressSnapshot>();
   private downloadHeaderTimeoutMs: number;
   private downloadBodyTimeoutMs: number;
+  private downloadTotalTimeoutMs: number;
   private progressEmitIntervalMs: number;
   private getProviderRuntime?: () => ProviderRuntimeSnapshot;
 
@@ -74,8 +107,10 @@ export class ModelLibraryService {
   ) {
     this.downloadHeaderTimeoutMs = options.downloadHeaderTimeoutMs ?? defaultDownloadHeaderTimeoutMs;
     this.downloadBodyTimeoutMs = options.downloadBodyTimeoutMs ?? defaultDownloadBodyTimeoutMs;
+    this.downloadTotalTimeoutMs = options.downloadTotalTimeoutMs ?? defaultDownloadTotalTimeoutMs;
     this.progressEmitIntervalMs = options.progressEmitIntervalMs ?? defaultProgressEmitIntervalMs;
     this.getProviderRuntime = options.getProviderRuntime;
+    this.cleanupPartialModelInstalls();
     this.refreshCachedModelDownloadStates();
   }
 
@@ -111,6 +146,12 @@ export class ModelLibraryService {
       // The download path records cancellation state before resolving back to the caller.
     }
     return this.snapshot();
+  }
+
+  async dispose(): Promise<void> {
+    const operations = Array.from(this.activeDownloads.values());
+    for (const operation of operations) operation.controller.abort();
+    await Promise.allSettled(operations.map((operation) => operation.promise));
   }
 
   private async performModelDownload(item: ModelCatalogItem, signal: AbortSignal): Promise<ModelLibrarySnapshot> {
@@ -190,6 +231,7 @@ export class ModelLibraryService {
       localPath: existing?.localPath,
       error: existing?.error,
       downloadedAt: existing?.downloadedAt,
+      verification: existing?.verification,
       favorite: !existing?.favorite
     });
     return this.snapshot();
@@ -234,6 +276,7 @@ export class ModelLibraryService {
         totalBytes,
         localPath: targetPath,
         downloadedAt: new Date().toISOString(),
+        verification: modelFileVerification(targetPath, sha256),
         favorite: Boolean(this.getDownloadState(item.id)?.favorite)
       });
     } catch (error) {
@@ -255,16 +298,20 @@ export class ModelLibraryService {
   }
 
   private async downloadArchive(item: ModelCatalogItem, signal: AbortSignal): Promise<void> {
-    if (!item.downloadUrl || !item.filename || !item.extractDir) return;
+    if (!item.downloadUrl || !item.filename || !item.extractDir || !item.sizeBytes || !item.sha256) return;
 
     const modelRoot = this.paths.modelDir;
     const targetPath = join(modelRoot, item.extractDir);
-    const archivePath = join(modelRoot, item.filename);
-    const partPath = `${archivePath}.part`;
+    const archivePath = join(modelRoot, `${item.filename}.part`);
+    const stagingDir = join(modelRoot, `${item.extractDir}.staging-${process.pid}-${Date.now()}`);
+    const extractRoot = join(stagingDir, "extract");
+    const stagedModelPath = join(extractRoot, item.extractDir);
+    const maxExtractedBytes = item.sizeBytes * maxArchiveExpansionRatio;
+    let backupDir: string | undefined;
+    let promotedFinal = false;
     mkdirSync(modelRoot, { recursive: true });
-    if (existsSync(partPath)) rmSync(partPath, { force: true });
-    if (existsSync(archivePath)) rmSync(archivePath, { force: true });
-    let extractionStarted = false;
+    rmSync(archivePath, { force: true });
+    rmSync(stagingDir, { recursive: true, force: true });
 
     this.persistAndEmit({
       modelId: item.id,
@@ -276,21 +323,42 @@ export class ModelLibraryService {
     });
 
     try {
-      const { progressBytes, sha256 } = await this.downloadToFile(item, partPath, targetPath, signal);
+      const { progressBytes, sha256 } = await this.downloadToFile(item, archivePath, targetPath, signal);
       if (signal.aborted) throw abortError();
       verifyModelSha256(item, sha256);
-      renameSync(partPath, archivePath);
-      await assertSafeTarBz2Archive(archivePath, signal);
+      const extractedBytes = await inspectTarArchive(archivePath, "bz2", maxExtractedBytes, signal);
+      ensureAvailableDiskSpace(modelRoot, extractedBytes);
       if (signal.aborted) throw abortError();
-      if (existsSync(targetPath)) rmSync(targetPath, { recursive: true, force: true });
-      extractionStarted = true;
-      await extractTarBz2(archivePath, modelRoot, signal);
+      mkdirSync(extractRoot, { recursive: true });
+      await extractTarBz2(archivePath, extractRoot, signal);
       if (signal.aborted) throw abortError();
-      rmSync(archivePath, { force: true });
-
-      if (!existsSync(targetPath)) {
-        throw new Error(`Archive did not extract expected model directory: ${targetPath}`);
+      if (!existsSync(stagedModelPath)) {
+        throw new Error(`Archive did not extract expected model directory: ${item.extractDir}`);
       }
+      validateSherpaModelDirectory(stagedModelPath);
+      const receipt: ModelArchiveReceipt = {
+        modelId: item.id,
+        archiveSha256: item.sha256,
+        installedAt: new Date().toISOString(),
+        tree: createInstalledTreeReceipt(stagedModelPath, maxExtractedBytes)
+      };
+      writeFileSync(join(stagedModelPath, modelReceiptName), JSON.stringify(receipt, null, 2), { mode: 0o600 });
+      backupDir = replaceModelDirectory(stagedModelPath, targetPath);
+      promotedFinal = true;
+      const promoted = this.validateExistingModelArtifact(item, targetPath, {
+        modelId: item.id,
+        status: "downloaded",
+        progressBytes,
+        totalBytes: item.sizeBytes,
+        localPath: targetPath,
+        downloadedAt: receipt.installedAt,
+        favorite: false
+      });
+      if (!promoted.valid) throw new Error(promoted.error);
+      if (backupDir) rmSync(backupDir, { recursive: true, force: true });
+      backupDir = undefined;
+      rmSync(archivePath, { force: true });
+      rmSync(stagingDir, { recursive: true, force: true });
 
       this.persistAndEmit({
         modelId: item.id,
@@ -302,9 +370,10 @@ export class ModelLibraryService {
         favorite: Boolean(this.getDownloadState(item.id)?.favorite)
       });
     } catch (error) {
-      if (existsSync(partPath)) rmSync(partPath, { force: true });
-      if (existsSync(archivePath)) rmSync(archivePath, { force: true });
-      if (extractionStarted && existsSync(targetPath)) rmSync(targetPath, { recursive: true, force: true });
+      if (backupDir) restoreModelBackup(targetPath, backupDir);
+      else if (promotedFinal) rmSync(targetPath, { recursive: true, force: true });
+      rmSync(archivePath, { force: true });
+      rmSync(stagingDir, { recursive: true, force: true });
       if (signal.aborted) {
         this.persistAndEmit(this.cancelledDownloadState(item, item.sizeBytes));
       } else {
@@ -327,48 +396,32 @@ export class ModelLibraryService {
     targetPath: string,
     signal: AbortSignal
   ): Promise<DownloadToFileResult> {
-    if (!item.downloadUrl) return { progressBytes: 0, sha256: createHash("sha256").digest("hex") };
+    if (!item.downloadUrl || !item.sizeBytes) throw new Error(`Model ${item.id} is missing pinned download metadata.`);
 
-    const response = await fetchWithTimeout(item.downloadUrl, {}, this.downloadHeaderTimeoutMs, signal);
-    if (!response.ok) {
-      throw new Error(`Download failed with HTTP ${response.status}: ${await response.text()}`);
-    }
-
-    const totalBytes = Number(response.headers.get("content-length")) || item.sizeBytes;
-    const writer = createWriteStream(partPath);
-    const hash = createHash("sha256");
-    let progressBytes = 0;
-    let streamDone = false;
-
-    if (!response.body) throw new Error("Download response did not include a stream.");
-    const reader = response.body.getReader();
-    try {
-      while (true) {
-        if (signal.aborted) throw abortError();
-        const { done, value } = await readStreamChunk(reader, this.downloadBodyTimeoutMs, signal);
-        if (done) {
-          streamDone = true;
-          break;
-        }
-        if (!value) continue;
-        progressBytes += value.byteLength;
-        hash.update(value);
-        await writeChunk(writer, value);
-        this.maybePersistAndEmitProgress({
-          modelId: item.id,
-          status: "downloading",
-          progressBytes,
-          totalBytes,
-          localPath: targetPath,
-          favorite: Boolean(this.getDownloadState(item.id)?.favorite)
-        });
+    return withDownloadDeadline(signal, this.downloadTotalTimeoutMs, async (deadlineSignal) => {
+      const response = await fetchWithTimeout(item.downloadUrl!, {}, this.downloadHeaderTimeoutMs, deadlineSignal);
+      if (!response.ok) {
+        throw new Error(`Download failed with HTTP ${response.status}: ${await response.text()}`);
       }
-    } finally {
-      if (!streamDone) await reader.cancel().catch(() => undefined);
-      await closeWriter(writer);
-    }
-
-    return { progressBytes, totalBytes, sha256: hash.digest("hex") };
+      const result = await downloadResponseToFile({
+        response,
+        filePath: partPath,
+        expectedBytes: item.sizeBytes!,
+        idleTimeoutMs: this.downloadBodyTimeoutMs,
+        signal: deadlineSignal,
+        onProgress: (progressBytes) => {
+          this.maybePersistAndEmitProgress({
+            modelId: item.id,
+            status: "downloading",
+            progressBytes,
+            totalBytes: item.sizeBytes,
+            localPath: targetPath,
+            favorite: Boolean(this.getDownloadState(item.id)?.favorite)
+          });
+        }
+      });
+      return { progressBytes: result.bytes, totalBytes: item.sizeBytes!, sha256: result.sha256 };
+    });
   }
 
   private async pullOllamaModel(item: ModelCatalogItem, signal: AbortSignal): Promise<void> {
@@ -459,6 +512,56 @@ export class ModelLibraryService {
     }
   }
 
+  private cleanupPartialModelInstalls(): void {
+    mkdirSync(this.paths.modelDir, { recursive: true });
+    for (const entry of readdirSync(this.paths.modelDir, { withFileTypes: true })) {
+      const path = join(this.paths.modelDir, entry.name);
+      if ((entry.isFile() && entry.name.endsWith(".part")) || (entry.isDirectory() && entry.name.includes(".staging-"))) {
+        rmSync(path, { recursive: entry.isDirectory(), force: true });
+      }
+    }
+    for (const item of modelCatalog.filter((candidate) => candidate.downloadStrategy === "archive" && candidate.extractDir)) {
+      const finalDir = join(this.paths.modelDir, item.extractDir!);
+      const backupPrefix = `${item.extractDir}.previous-`;
+      const backups = readdirSync(this.paths.modelDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith(backupPrefix))
+        .map((entry) => join(this.paths.modelDir, entry.name))
+        .sort()
+        .reverse();
+      if (backups.length === 0) continue;
+      const existing = this.getDownloadState(item.id);
+      if (existsSync(finalDir) && this.validateExistingModelArtifact(item, finalDir, existing).valid) {
+        for (const backup of backups) rmSync(backup, { recursive: true, force: true });
+        continue;
+      }
+      const validBackup = backups.find((backup) => this.validateExistingModelArtifact(item, backup, existing).valid);
+      if (!validBackup) continue;
+      rmSync(finalDir, { recursive: true, force: true });
+      renameSync(validBackup, finalDir);
+      for (const backup of backups) {
+        if (backup !== validBackup) rmSync(backup, { recursive: true, force: true });
+      }
+    }
+    for (const download of this.storage.getState().modelLibrary.downloads) {
+      if (download.status !== "downloading") continue;
+      this.persistDownload({
+        modelId: download.modelId,
+        status: "error",
+        progressBytes: 0,
+        totalBytes: download.totalBytes,
+        localPath: download.localPath,
+        error: "A previous model installation was interrupted. Retry the download.",
+        favorite: Boolean(download.favorite)
+      });
+    }
+  }
+
+  private clearActiveModel(item: ModelCatalogItem): void {
+    if (this.storage.getState().modelLibrary.activeModelIds[item.kind] === item.id) {
+      this.storage.setActiveModel(item.kind, undefined);
+    }
+  }
+
   private async refreshOllamaDownloadStates(): Promise<void> {
     const tags = await this.fetchOllamaTags();
     if (!tags) return;
@@ -490,61 +593,99 @@ export class ModelLibraryService {
       if (!expectedPath) continue;
 
       const existing = this.getDownloadState(item.id);
-      const exists = existsSync(expectedPath);
-
-      if (exists && existing?.status !== "downloaded") {
-        if (!this.isExistingModelArtifactValid(item, expectedPath)) {
+      if (!existsSync(expectedPath)) {
+        if (existing?.status === "downloaded") {
           this.persistDownload({
             modelId: item.id,
-            status: "error",
+            status: "not_downloaded",
             progressBytes: 0,
-            totalBytes: item.sizeBytes,
-            localPath: expectedPath,
-            error: `Cached model failed SHA-256 verification for ${item.filename ?? item.id}.`,
-            favorite: Boolean(existing?.favorite)
+            totalBytes: existing.totalBytes ?? item.sizeBytes,
+            favorite: Boolean(existing.favorite)
           });
-          if (this.storage.getState().modelLibrary.activeModelIds[item.kind] === item.id) {
-            this.storage.setActiveModel(item.kind, undefined);
-          }
-          continue;
+          this.clearActiveModel(item);
         }
+        continue;
+      }
+
+      const validation = this.validateExistingModelArtifact(item, expectedPath, existing);
+      if (!validation.valid) {
         this.persistDownload({
           modelId: item.id,
-          status: "downloaded",
-          progressBytes: existing?.progressBytes ?? item.sizeBytes ?? 0,
-          totalBytes: existing?.totalBytes ?? item.sizeBytes,
+          status: "error",
+          progressBytes: 0,
+          totalBytes: item.sizeBytes,
           localPath: expectedPath,
-          downloadedAt: existing?.downloadedAt ?? new Date().toISOString(),
+          error: validation.error,
           favorite: Boolean(existing?.favorite)
         });
-      } else if (!exists && existing?.status === "downloaded") {
-        this.persistDownload({
-          modelId: item.id,
-          status: "not_downloaded",
-          progressBytes: 0,
-          totalBytes: existing.totalBytes ?? item.sizeBytes,
-          favorite: Boolean(existing.favorite)
-        });
-        if (this.storage.getState().modelLibrary.activeModelIds[item.kind] === item.id) {
-          this.storage.setActiveModel(item.kind, undefined);
-        }
-      } else if (exists && existing && existing.localPath !== expectedPath) {
-        this.persistDownload({
-          ...existing,
-          localPath: expectedPath,
-          favorite: Boolean(existing.favorite)
-        });
+        this.clearActiveModel(item);
+        continue;
       }
+
+      this.persistDownload({
+        modelId: item.id,
+        status: "downloaded",
+        progressBytes: item.sizeBytes ?? existing?.progressBytes ?? 0,
+        totalBytes: item.sizeBytes ?? existing?.totalBytes,
+        localPath: expectedPath,
+        downloadedAt: existing?.downloadedAt ?? new Date().toISOString(),
+        verification: validation.verification,
+        favorite: Boolean(existing?.favorite)
+      });
     }
   }
 
-  private isExistingModelArtifactValid(item: ModelCatalogItem, expectedPath: string): boolean {
-    if (item.downloadStrategy !== "direct_file" || !item.sha256) return true;
-    try {
-      return sha256FileSync(expectedPath) === item.sha256;
-    } catch {
-      return false;
+  private validateExistingModelArtifact(
+    item: ModelCatalogItem,
+    expectedPath: string,
+    existing: ModelDownloadState | undefined
+  ): { valid: true; verification?: ModelDownloadState["verification"] } | { valid: false; error: string } {
+    if (item.downloadStrategy === "direct_file" && item.sha256) {
+      try {
+        const stats = statSync(expectedPath);
+        if (!stats.isFile()) return { valid: false, error: `Cached model is not a regular file: ${item.filename ?? item.id}.` };
+        if (
+          existing?.verification?.sha256 === item.sha256 &&
+          existing.verification.sizeBytes === stats.size &&
+          existing.verification.mtimeMs === stats.mtimeMs
+        ) {
+          return { valid: true, verification: existing.verification };
+        }
+        const actualSha256 = sha256FileSync(expectedPath);
+        if (actualSha256 !== item.sha256) {
+          return { valid: false, error: `Cached model failed SHA-256 verification for ${item.filename ?? item.id}.` };
+        }
+        return { valid: true, verification: modelFileVerification(expectedPath, actualSha256) };
+      } catch (error) {
+        return { valid: false, error: `Cached model could not be verified: ${message(error)}` };
+      }
     }
+
+    if (item.downloadStrategy === "archive" && item.sizeBytes && item.sha256) {
+      try {
+        validateSherpaModelDirectory(expectedPath);
+        const maxBytes = item.sizeBytes * maxArchiveExpansionRatio;
+        let receipt = readModelArchiveReceipt(expectedPath);
+        if (!receipt && existing?.status === "downloaded") {
+          receipt = {
+            modelId: item.id,
+            archiveSha256: item.sha256,
+            installedAt: existing.downloadedAt ?? new Date().toISOString(),
+            tree: createInstalledTreeReceipt(expectedPath, maxBytes)
+          };
+          writeFileSync(join(expectedPath, modelReceiptName), JSON.stringify(receipt, null, 2), { mode: 0o600 });
+        }
+        if (!receipt || receipt.modelId !== item.id || receipt.archiveSha256 !== item.sha256) {
+          return { valid: false, error: `Cached model is missing a valid installation receipt for ${item.id}.` };
+        }
+        const treeProblem = verifyInstalledTreeReceipt(expectedPath, receipt.tree, maxBytes);
+        return treeProblem ? { valid: false, error: treeProblem } : { valid: true };
+      } catch (error) {
+        return { valid: false, error: `Cached model could not be verified: ${message(error)}` };
+      }
+    }
+
+    return { valid: false, error: `Model ${item.id} is missing integrity metadata.` };
   }
 
   private async refreshDiscoveredLocalModels(): Promise<void> {
@@ -708,7 +849,26 @@ export class ModelLibraryService {
     if (item.downloadStrategy === "none") return true;
     if (item.downloadStrategy === "direct_file" || item.downloadStrategy === "archive") {
       const expectedPath = this.expectedLocalPath(item);
-      return Boolean(expectedPath && existsSync(expectedPath) && this.getDownloadState(item.id)?.status === "downloaded");
+      const existing = this.getDownloadState(item.id);
+      if (!expectedPath || !existsSync(expectedPath) || existing?.status !== "downloaded") return false;
+      const validation = this.validateExistingModelArtifact(item, expectedPath, existing);
+      if (!validation.valid) {
+        this.persistDownload({
+          modelId: item.id,
+          status: "error",
+          progressBytes: 0,
+          totalBytes: item.sizeBytes,
+          localPath: expectedPath,
+          error: validation.error,
+          favorite: Boolean(existing.favorite)
+        });
+        this.clearActiveModel(item);
+        return false;
+      }
+      if (validation.verification && validation.verification !== existing.verification) {
+        this.persistDownload({ ...existing, verification: validation.verification });
+      }
+      return true;
     }
     return this.getDownloadState(item.id)?.status === "downloaded";
   }
@@ -1066,15 +1226,6 @@ function modelNameSetHas(names: Set<string>, model: string): boolean {
   return names.has(model) || Array.from(names).some((name) => name === `${model}:latest` || name.startsWith(`${model}:`));
 }
 
-function writeChunk(writer: NodeJS.WritableStream, value: Uint8Array): Promise<void> {
-  return new Promise((resolve, reject) => {
-    writer.write(Buffer.from(value), (error) => {
-      if (error) reject(error);
-      else resolve();
-    });
-  });
-}
-
 function readStreamChunk(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   timeoutMs: number,
@@ -1108,20 +1259,63 @@ function readStreamChunk(
   });
 }
 
-function closeWriter(writer: NodeJS.WritableStream): Promise<void> {
-  return new Promise((resolve, reject) => {
-    writer.end((error?: Error | null) => {
-      if (error) reject(error);
-      else resolve();
-    });
-  });
-}
-
 function verifyModelSha256(item: ModelCatalogItem, actualSha256: string): void {
   if (!item.sha256) return;
   if (actualSha256 !== item.sha256) {
     throw new Error(`SHA-256 mismatch for ${item.filename ?? item.id}. Expected ${item.sha256}, got ${actualSha256}.`);
   }
+}
+
+function modelFileVerification(path: string, sha256: string): NonNullable<ModelDownloadState["verification"]> {
+  const stats = statSync(path);
+  return { sizeBytes: stats.size, mtimeMs: stats.mtimeMs, sha256 };
+}
+
+function validateSherpaModelDirectory(path: string): void {
+  const requiredTokens = join(path, "tokens.txt");
+  if (!isRegularFile(requiredTokens)) throw new Error("Archive model is missing a regular tokens.txt file.");
+  const ctc = ["model.int8.onnx", "model.onnx"].some((name) => isRegularFile(join(path, name)));
+  const transducer = ["encoder", "decoder", "joiner"].every((prefix) =>
+    [`${prefix}.int8.onnx`, `${prefix}.onnx`].some((name) => isRegularFile(join(path, name)))
+  );
+  if (!ctc && !transducer) throw new Error("Archive model is missing a supported set of regular ONNX model files.");
+}
+
+function isRegularFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function readModelArchiveReceipt(root: string): ModelArchiveReceipt | null {
+  try {
+    const value = JSON.parse(readFileSync(join(root, modelReceiptName), "utf8")) as Partial<ModelArchiveReceipt>;
+    if (!value.modelId || !value.archiveSha256 || !value.installedAt || !value.tree?.files || !value.tree.symlinks) return null;
+    return value as ModelArchiveReceipt;
+  } catch {
+    return null;
+  }
+}
+
+function replaceModelDirectory(sourceDir: string, targetDir: string): string | undefined {
+  const backupDir = `${targetDir}.previous-${process.pid}-${Date.now()}`;
+  const hadTarget = existsSync(targetDir);
+  if (hadTarget) renameSync(targetDir, backupDir);
+  try {
+    renameSync(sourceDir, targetDir);
+    return hadTarget ? backupDir : undefined;
+  } catch (error) {
+    rmSync(targetDir, { recursive: true, force: true });
+    if (hadTarget && existsSync(backupDir)) renameSync(backupDir, targetDir);
+    throw error;
+  }
+}
+
+function restoreModelBackup(targetDir: string, backupDir: string): void {
+  rmSync(targetDir, { recursive: true, force: true });
+  if (existsSync(backupDir)) renameSync(backupDir, targetDir);
 }
 
 function sha256FileSync(path: string): string {
@@ -1138,60 +1332,6 @@ function sha256FileSync(path: string): string {
     closeSync(fd);
   }
   return hash.digest("hex");
-}
-
-function assertSafeTarBz2Archive(archivePath: string, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("tar", ["-tjf", archivePath], { stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    const finish = (error?: Error): void => {
-      if (settled) return;
-      settled = true;
-      signal?.removeEventListener("abort", abort);
-      if (error) {
-        reject(error);
-        return;
-      }
-      const unsafeEntry = stdout
-        .split("\n")
-        .map((entry) => entry.trim())
-        .filter(Boolean)
-        .find(isUnsafeArchiveEntry);
-      if (unsafeEntry) {
-        reject(new Error(`Archive contains an unsafe path: ${unsafeEntry}`));
-      } else {
-        resolve();
-      }
-    };
-    const abort = (): void => {
-      child.kill();
-      finish(abortError());
-    };
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", (error) => finish(isAbortError(error) ? abortError() : error));
-    child.on("close", (code) => {
-      if (code === 0) finish();
-      else finish(new Error(`tar archive listing failed with exit code ${code}: ${stderr.trim()}`));
-    });
-    if (signal?.aborted) {
-      abort();
-      return;
-    }
-    signal?.addEventListener("abort", abort, { once: true });
-  });
-}
-
-function isUnsafeArchiveEntry(entry: string): boolean {
-  const normalized = entry.replace(/\\/g, "/");
-  if (!normalized || normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized) || normalized.includes("\0")) return true;
-  return normalized.split("/").some((part) => part === "..");
 }
 
 function isAbortError(error: unknown): boolean {

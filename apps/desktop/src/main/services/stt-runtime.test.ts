@@ -1,6 +1,17 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -476,6 +487,128 @@ describe("SttRuntimeService", () => {
     expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "cpu", "0.1.0"))).toBe(false);
   });
 
+  it("rejects runtime responses that exceed pinned sizes", async () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const catalog = downloadableCatalog(4, sha256("four"));
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      runtimeDir,
+      env: {},
+      catalog,
+      fetch: async () => new Response("oversized", { status: 200, headers: { "content-length": "9" } })
+    });
+
+    const state = await service.downloadRuntime("whisper.cpp|linux-x64|cpu|0.1.0");
+
+    expect(state.status).toBe("error");
+    expect(state.error).toContain("size mismatch");
+    expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "cpu", "runtime.tar.gz.part"))).toBe(false);
+  });
+
+  it("enforces a total runtime download deadline after headers arrive", async () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const catalog = downloadableCatalog(4, sha256("four"));
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      runtimeDir,
+      env: {},
+      catalog,
+      downloadBodyTimeoutMs: 1000,
+      downloadTotalTimeoutMs: 20,
+      fetch: async () => new Response(new ReadableStream<Uint8Array>({ start() {} }), { status: 200 })
+    });
+
+    const state = await service.downloadRuntime("whisper.cpp|linux-x64|cpu|0.1.0");
+
+    expect(state.status).toBe("error");
+    expect(state.error).toContain("total deadline");
+  });
+
+  it("rejects missing runtime response bodies before opening partial files", async () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const catalog = downloadableCatalog(4, sha256("four"));
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      runtimeDir,
+      env: {},
+      catalog,
+      fetch: async () => new Response(null, { status: 200 })
+    });
+
+    const state = await service.downloadRuntime("whisper.cpp|linux-x64|cpu|0.1.0");
+
+    expect(state.status).toBe("error");
+    expect(state.error).toContain("did not include a stream");
+    expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "cpu", "runtime.tar.gz.part"))).toBe(false);
+  });
+
+  it("rejects runtime archives with external symlink targets", async () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const archive = externalSymlinkTarGz();
+    const catalog = downloadableCatalog(archive.byteLength, sha256(archive));
+    let extractCalls = 0;
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      runtimeDir,
+      env: {},
+      catalog,
+      fetch: async () => new Response(arrayBufferFromBuffer(archive), { status: 200, headers: { "content-length": String(archive.byteLength) } }),
+      extractArchive: async () => { extractCalls += 1; }
+    });
+
+    const state = await service.downloadRuntime("whisper.cpp|linux-x64|cpu|0.1.0");
+
+    expect(state.status).toBe("error");
+    expect(state.error).toContain("unsafe symbolic link");
+    expect(extractCalls).toBe(0);
+  });
+
+  it("marks modified and non-executable managed runtimes as repairable", () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const cacheRoot = join(runtimeDir, "linux-x64", "whisper.cpp", "cpu", "0.1.0");
+    touch(join(cacheRoot, "whisper-server"));
+    writeRuntimeReceipt(cacheRoot, "whisper.cpp", "linux-x64", "0.1.0");
+    writeFileSync(join(cacheRoot, "whisper-server"), "tampered");
+    const catalog = downloadableCatalog(10, "0".repeat(64));
+
+    const modified = new SttRuntimeService({ platform: "linux", arch: "x64", projectRoot: root, runtimeDir, env: {}, catalog });
+    expect(modified.getInstallState("whisper.cpp").status).toBe("repairable");
+
+    writeRuntimeReceipt(cacheRoot, "whisper.cpp", "linux-x64", "0.1.0");
+    chmodSync(join(cacheRoot, "whisper-server"), 0o644);
+    const nonExecutable = new SttRuntimeService({ platform: "linux", arch: "x64", projectRoot: root, runtimeDir, env: {}, catalog });
+    expect(nonExecutable.getInstallState("whisper.cpp").error).toContain("not executable");
+  });
+
+  it("restores the newest valid runtime backup after interrupted promotion", () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const finalDir = join(runtimeDir, "linux-x64", "whisper.cpp", "cpu", "0.1.0");
+    touch(join(finalDir, "whisper-server"));
+    writeRuntimeReceipt(finalDir, "whisper.cpp", "linux-x64", "0.1.0");
+    const backupDir = `${finalDir}.previous-1-1`;
+    renameSync(finalDir, backupDir);
+
+    const service = new SttRuntimeService({ platform: "linux", arch: "x64", projectRoot: root, runtimeDir, env: {} });
+
+    expect(service.getInstallState("whisper.cpp").status).toBe("ready");
+    expect(existsSync(finalDir)).toBe(true);
+    expect(existsSync(backupDir)).toBe(false);
+  });
+
   it("builds dynamic library environment variables", () => {
     const root = tempRoot();
     const runtimeRoot = join(root, "vendor", "runtimes", "linux-x64", "sherpa-onnx");
@@ -509,6 +642,9 @@ function touch(path: string): string {
 }
 
 function writeRuntimeReceipt(root: string, id: string, platformKey: string, version: string): void {
+  const binaryPath = join(root, "whisper-server");
+  writeFileSync(binaryPath, "runtime");
+  chmodSync(binaryPath, 0o755);
   writeFileSync(
     join(root, "runtime.json"),
     JSON.stringify({
@@ -517,13 +653,41 @@ function writeRuntimeReceipt(root: string, id: string, platformKey: string, vers
       version,
       archiveName: "runtime.tar.gz",
       archiveSha256: "0".repeat(64),
-      installedAt: new Date().toISOString()
+      installedAt: new Date().toISOString(),
+      tree: {
+        files: {
+          "whisper-server": { sizeBytes: statSync(binaryPath).size, sha256: sha256(readFileSync(binaryPath)) }
+        },
+        symlinks: {}
+      }
     })
   );
 }
 
 function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function downloadableCatalog(sizeBytes: number, hash: string) {
+  const catalog = structuredClone(sttRuntimeCatalog);
+  catalog["whisper.cpp"].platforms["linux-x64"] = {
+    assetName: "runtime.tar.gz",
+    url: "https://example.test/runtime.tar.gz",
+    sizeBytes,
+    sha256: hash
+  };
+  return catalog;
+}
+
+function externalSymlinkTarGz(): Buffer {
+  const root = tempRoot();
+  const source = join(root, "archive-src");
+  const archivePath = join(root, "symlink.tar.gz");
+  mkdirSync(source, { recursive: true });
+  symlinkSync("/tmp/external-runtime", join(source, "whisper-server"));
+  const result = spawnSync("tar", ["-czf", archivePath, "-C", source, "whisper-server"], { encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`Could not create symlink fixture: ${result.stderr}`);
+  return readFileSync(archivePath);
 }
 
 function unsafeTarGz(): Buffer {
