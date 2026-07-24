@@ -34,7 +34,8 @@
     "native-helpers:build": "bun run --cwd apps/desktop native-helpers:build",
     "release:prepare": "bun run --cwd apps/desktop release:prepare",
     "pack": "bun run --cwd apps/desktop pack",
-    "dist": "bun run --cwd apps/desktop dist"
+    "dist": "bun run --cwd apps/desktop dist",
+    "dist:release": "bun run --cwd apps/desktop dist:release"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

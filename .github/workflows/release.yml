@@ -105,8 +105,14 @@ jobs:
           bun run runtimes:prepare
           bun run runtimes:doctor
 
-      - name: Build artifacts
-        run: bun run dist
+      - name: Build release artifacts
+        env:
+          CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.MACOS_APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.MACOS_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+        run: bun run dist:release
 
       - name: Upload artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

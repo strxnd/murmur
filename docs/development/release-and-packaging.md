@@ -6,8 +6,8 @@ Packaging uses Electron Vite for build output and `electron-builder` for app art
 flowchart TD
   Source["Source tree"]
   Build["bun run build: tsc --noEmit and electron-vite build"]
-  Pack["electron-builder --dir"]
-  Dist["electron-builder"]
+  Pack["unsigned development pack"]
+  Dist["signed release dist"]
   AfterPack["scripts/after-pack.cjs"]
   AppArtifacts["App package artifacts"]
   Checksums["generate-linux-release-checksums.mjs"]
@@ -46,7 +46,7 @@ For local release preparation without pushing a tag or creating a GitHub release
 bun run release:prepare
 ```
 
-The preparation helper verifies the release version and `docs/releases/<version>.md`, checks the git worktree, runs verification steps, prepares bundled STT runtimes, builds current-platform app artifacts, packages current-platform runtime archives, and writes `dist/SHA256SUMS.txt`. It does not edit tracked files, create release notes, commit, tag, push, or call `gh release`.
+The preparation helper verifies the release version and `docs/releases/<version>.md`, checks the git worktree, runs verification steps, prepares bundled STT runtimes, builds current-platform release artifacts with `bun run dist:release`, packages current-platform runtime archives, and writes `dist/SHA256SUMS.txt`. On macOS, the default artifact step requires the signing and notarization credentials listed below; use `--skip-dist` when preparing only runtimes or checksums without those credentials. The helper does not edit tracked files, create release notes, commit, tag, push, or call `gh release`.
 
 The helper writes only ignored generated output under paths such as `apps/desktop/out/`, `dist/`, `.cache/bundled-runtimes/`, `vendor/runtimes/`, and `resources/bin/*`. For available skips and non-interactive mode:
 
@@ -55,8 +55,9 @@ bun run release:prepare -- --help
 ```
 
 ```sh
-bun run pack
-bun run dist
+bun run pack          # explicitly unsigned development app directory
+bun run dist          # explicitly unsigned development artifacts
+bun run dist:release  # signed and notarized release artifacts
 ```
 
 `pack` runs:
@@ -66,10 +67,10 @@ bun run build
 bun run native-helpers:build
 bun run runtimes:manifest-check
 bun run runtimes:stage
-electron-builder --dir
+env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir --config electron-builder.dev.cjs
 ```
 
-`dist` runs the same build, native helper build, manifest check, and runtime staging, then invokes `electron-builder`.
+`dist` uses the same explicitly unsigned development profile. `dist:release` uses `electron-builder.release.cjs`, requires macOS signing and notarization credentials on Darwin, and enables hardened runtime, entitlements, Developer ID signing, notarization, and stapling through electron-builder. It then fails the build unless `codesign`, `stapler`, and Gatekeeper all validate the packaged app.
 
 The `build` block in `package.json` sets:
 
@@ -81,7 +82,8 @@ The `build` block in `package.json` sets:
 - Linux desktop-name syncing for installed package integration
 - Linux package category: `Utility`
 - Linux package maintainer: `Kumar Aarav <kumaraarav@kumaraarav.dev>`
-- macOS distributable targets: unsigned/unnotarized `dmg` and `zip`
+- macOS development targets: explicitly unsigned `dmg` and `zip`
+- macOS release targets: Developer ID signed, hardened, notarized, and stapled `dmg` and `zip`
 - macOS minimum system version: `13.0`
 - macOS microphone usage description in `Info.plist`
 - packaged files from `apps/desktop/out/**` and `apps/desktop/package.json`
@@ -117,7 +119,7 @@ The workflow verifies that the tag matches `apps/desktop/package.json`, requires
 For every release, publish an explicit SHA-256 manifest next to the package artifacts:
 
 ```sh
-bun run dist
+bun run dist:release
 node scripts/generate-linux-release-checksums.mjs
 ```
 
@@ -135,12 +137,14 @@ cd dist
 sha256sum -c SHA256SUMS.txt
 ```
 
-Package signing is not currently performed:
+Release signing is platform-specific:
 
 - AppImage artifacts are not signed.
 - `.deb` packages are not signed, and no signed apt repository metadata is produced.
 - `.rpm` packages are not signed, and `rpmsign` is not configured.
-- macOS `dmg` and `zip` artifacts are unsigned and unnotarized. Release notes should include Gatekeeper guidance for first-run users.
+- `bun run dist` remains an explicitly unsigned development path on macOS.
+- `bun run dist:release` fails closed on macOS unless `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID` are configured. The tag workflow maps these from `MACOS_CSC_LINK`, `MACOS_CSC_KEY_PASSWORD`, `MACOS_APPLE_ID`, `MACOS_APP_SPECIFIC_PASSWORD`, and `MACOS_TEAM_ID` repository secrets.
+- The macOS release profile enables hardened runtime and entitlements; electron-builder performs Developer ID signing, notarization, and stapling.
 - No project GPG release-signing key is configured, so detached signatures such as `SHA256SUMS.txt.asc` are not generated.
 
 If a release-signing key is added later, sign the checksum manifest with a detached signature and publish the public key fingerprint in the release notes. Package-level signing for `.deb` repository metadata or `.rpm` packages should be configured as a separate release step rather than implied by the checksum manifest.

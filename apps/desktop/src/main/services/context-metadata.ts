@@ -69,6 +69,8 @@ interface PendingKdeRequest {
 
 const dbus = dbusNative as DbusNativeModule;
 
+type MacosMetadataHelper = Pick<MacosAutomationHelper, "activeWindow" | "status">;
+
 export class DesktopMetadataService {
   private backends: ContextMetadataBackend[] = [];
   private commands: ContextCommandAvailability = emptyCommandAvailability();
@@ -77,16 +79,22 @@ export class DesktopMetadataService {
   private kdeCallbackServiceExported = false;
   private kdeCallbackServiceRequested = false;
   private pendingKdeRequests = new Map<string, PendingKdeRequest>();
-  private macosHelper = new MacosAutomationHelper();
+
+  constructor(
+    private readonly macosHelper: MacosMetadataHelper = new MacosAutomationHelper(),
+    private readonly platform: NodeJS.Platform = process.platform
+  ) {}
 
   async initialize(): Promise<void> {
-    this.commands = await detectCommandAvailability(process.env, process.platform);
+    this.commands = await detectCommandAvailability(process.env, this.platform);
+    const macosHelperAvailable = this.platform === "darwin" && this.macosHelper.status().helperAvailable;
     this.backends = detectContextMetadataBackends({
       commands: this.commands,
       env: process.env,
-      platform: process.platform
+      platform: this.platform,
+      macosHelperAvailable
     });
-    this.diagnostics = metadataDiagnostics(this.backends, this.commands, process.env, process.platform);
+    this.diagnostics = metadataDiagnostics(this.backends, this.commands, process.env, this.platform);
   }
 
   dispose(): void {
@@ -125,10 +133,20 @@ export class DesktopMetadataService {
         diagnostics.push(`${backendLabel(backend)} did not return an active window.`);
       } catch (error) {
         diagnostics.push(`${backendLabel(backend)} active app metadata failed: ${errorMessage(error)}.`);
+        if (backend === "macos_accessibility_helper") this.refreshMacosHelperAvailability();
       }
     }
 
     return {};
+  }
+
+  private refreshMacosHelperAvailability(): void {
+    const status = this.macosHelper.status();
+    if (status.helperAvailable) return;
+    this.backends = this.backends.filter((backend) => backend !== "macos_accessibility_helper");
+    this.diagnostics = status.diagnostics.length
+      ? status.diagnostics.map((diagnostic) => `Active app metadata unavailable: ${diagnostic}`)
+      : ["Active app metadata unavailable: macOS automation helper was not found."];
   }
 
   private captureWithBackend(backend: ContextMetadataBackend): Promise<ActiveWindowMetadata | null> {
@@ -301,13 +319,15 @@ export class DesktopMetadataService {
 export function detectContextMetadataBackends({
   commands = emptyCommandAvailability(),
   env = process.env,
-  platform = process.platform
+  platform = process.platform,
+  macosHelperAvailable = false
 }: {
   commands?: Partial<ContextCommandAvailability>;
   env?: ContextEnv;
   platform?: NodeJS.Platform;
+  macosHelperAvailable?: boolean;
 } = {}): ContextMetadataBackend[] {
-  if (platform === "darwin") return ["macos_accessibility_helper"];
+  if (platform === "darwin") return macosHelperAvailable ? ["macos_accessibility_helper"] : [];
   if (platform !== "linux") return [];
 
   const backends: ContextMetadataBackend[] = [];
@@ -473,7 +493,7 @@ async function captureX11ActiveWindow(): Promise<ActiveWindowMetadata | null> {
   return parseX11ActiveWindow(titleOutput, xpropOutput, windowId);
 }
 
-function captureMacosActiveWindow(helper: MacosAutomationHelper): Promise<ActiveWindowMetadata | null> {
+function captureMacosActiveWindow(helper: MacosMetadataHelper): Promise<ActiveWindowMetadata | null> {
   const result = helper.activeWindow();
   if (!result.ok) throw new Error(result.error ?? "macOS active-window helper failed.");
   return Promise.resolve(

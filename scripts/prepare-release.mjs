@@ -42,7 +42,7 @@ async function main() {
   await checkGitStatus(initialGitStatus);
 
   const runDist = await chooseStep({
-    label: "Build current-platform app artifacts with bun run dist",
+    label: "Build current-platform release artifacts with bun run dist:release (requires signing and notarization credentials on macOS)",
     skip: options.skipDist
   });
   const runRuntimePackage = await chooseStep({
@@ -156,7 +156,7 @@ Default preparation:
   - warn on dirty git state
   - run lint, tests, bun audit, and runtime manifest checks
   - prepare and verify current-platform STT runtimes
-  - build app artifacts with bun run dist
+  - build release app artifacts with bun run dist:release (requires signing and notarization credentials on macOS)
   - package current-platform runtime archives into dist/runtimes
   - generate and verify dist/SHA256SUMS.txt
 
@@ -167,7 +167,7 @@ Options:
   --dry-run                         print the selected plan without running commands
   --skip-audit                      skip bun audit --audit-level=moderate
   --skip-checksums                  skip checksum generation and verification
-  --skip-dist                       skip bun run dist
+  --skip-dist                       skip bun run dist:release
   --skip-release-url-check          skip runtime release asset integrity checks
   --skip-runtime-package            skip dist/runtimes archive packaging
   --skip-tests                      skip bun run test
@@ -266,7 +266,7 @@ export function buildSteps({ runDist, runRuntimePackage, runChecksums }, platfor
   steps.push(commandStep("Verify current-platform STT runtimes", "bun", ["run", "runtimes:doctor"]));
 
   if (runDist) {
-    steps.push(commandStep("Build current-platform app artifacts", "bun", ["run", "dist"]));
+    steps.push(commandStep("Build current-platform release artifacts", "bun", ["run", "dist:release"]));
   }
 
   if (runRuntimePackage) {
@@ -306,6 +306,7 @@ export async function checkHostTools(
 
 export function requiredHostTools({ runDist, runRuntimePackage, runChecksums }, platform = process.platform) {
   const required = ["git", "bun", "node"];
+  if (runDist && platform === "darwin") required.push("codesign", "xcrun", "spctl");
   if (runRuntimePackage) required.push(platform === "darwin" ? "gtar" : "tar", "gzip");
   if (runChecksums) required.push(platform === "darwin" ? "shasum" : "sha256sum");
   if (runDist && platform === "linux") required.push("rpmbuild");

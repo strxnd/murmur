@@ -186,7 +186,7 @@ describe("host-correct runtime and release tooling", () => {
 
   it("requires packaging tools for the current host artifacts only", () => {
     expect(requiredHostTools({ runDist: true, runRuntimePackage: true, runChecksums: true }, "darwin")).toEqual([
-      "git", "bun", "node", "gtar", "gzip", "shasum"
+      "git", "bun", "node", "codesign", "xcrun", "spctl", "gtar", "gzip", "shasum"
     ]);
     expect(requiredHostTools({ runDist: true, runRuntimePackage: true, runChecksums: true }, "linux")).toEqual([
       "git", "bun", "node", "tar", "gzip", "sha256sum", "rpmbuild"

@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -141,8 +142,9 @@ describe("stage-bundled-runtimes", () => {
   });
 
   it("excludes the internal staging marker from packaged resources", () => {
-    const packageJson = JSON.parse(readFileSync(join(repoRoot, "apps", "desktop", "package.json"), "utf8"));
-    const runtimeResource = packageJson.build.extraResources.find(
+    const require = createRequire(import.meta.url);
+    const buildConfig = require(join(repoRoot, "apps", "desktop", "electron-builder.base.cjs"));
+    const runtimeResource = buildConfig.extraResources.find(
       (resource) => resource.from === "../../.cache/bundled-runtimes/runtimes"
     );
 

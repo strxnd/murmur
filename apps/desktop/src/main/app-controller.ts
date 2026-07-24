@@ -90,7 +90,7 @@ import {
   shortcutDescriptionForModeSelector,
   XdgGlobalShortcutService
 } from "./services/xdg-global-shortcuts";
-import { MacosEventTapReleaseService } from "./services/macos-event-tap-hotkeys";
+import { isSupportedMacosReleaseAccelerator, MacosEventTapReleaseService } from "./services/macos-event-tap-hotkeys";
 import { isIpcChannelAllowed, rendererRoleArgument, type RendererRole } from "./ipc-policy";
 import {
   app,
@@ -740,6 +740,20 @@ export class AppController {
     });
     handle("settings:update", async (_event, payload) => {
       const patch = parseIpcPayload(settingsUpdatePayloadSchema, payload, "settings:update") as Partial<AppSettings>;
+      const currentSettings = this.storage.getState().settings;
+      const nextSettings = { ...currentSettings, ...patch };
+      const activationModeChanged =
+        patch.activationMode !== undefined && patch.activationMode !== currentSettings.activationMode;
+      const activationHotkeyChanged =
+        patch.activationHotkey !== undefined && patch.activationHotkey !== currentSettings.activationHotkey;
+      if (
+        process.platform === "darwin" &&
+        nextSettings.activationMode === "push_to_talk" &&
+        (activationModeChanged || activationHotkeyChanged) &&
+        !isSupportedMacosReleaseAccelerator(nextSettings.activationHotkey)
+      ) {
+        throw new Error(`macOS push-to-talk does not support shortcut "${nextSettings.activationHotkey}".`);
+      }
       const state = this.storage.updateSettings(patch);
       this.applySettings(state.settings);
       await this.registerHotkeys();
@@ -1169,9 +1183,15 @@ export class AppController {
       const macosPermission = this.automationPermissions.status();
       const releaseResult =
         macosPermission.status === "trusted"
-          ? await this.macosReleaseHotkeys.register(settings.activationHotkey, () => {
-              void this.handlePushToTalkDeactivated();
-            })
+          ? await this.macosReleaseHotkeys.register(
+              settings.activationHotkey,
+              () => {
+                void this.handlePushToTalkDeactivated();
+              },
+              (diagnostics) => {
+                this.handleMacosReleaseWatcherUnavailable(generation, settings.activationHotkey, diagnostics);
+              }
+            )
           : {
               registered: false,
               diagnostics: macosPermission.diagnostics.length
@@ -1186,30 +1206,35 @@ export class AppController {
         return;
       }
 
-      const electronResult = registerElectronShortcutActions(globalShortcut, [
+      const electronActions = [
+        ...(releaseResult.registered
+          ? [
+              {
+                id: "activation" as const,
+                label: "activation",
+                accelerator: settings.activationHotkey,
+                onActivated: () => {
+                  void this.handlePushToTalkActivated();
+                }
+              }
+            ]
+          : []),
         {
-          id: "activation",
-          label: "activation",
-          accelerator: settings.activationHotkey,
-          onActivated: () => {
-            void this.handlePushToTalkActivated();
-          }
-        },
-        {
-          id: "mode-selector",
+          id: "mode-selector" as const,
           label: "mode selector",
           accelerator: settings.modeSelectorHotkey,
           onActivated: () => {
             this.showModeSelectorWindow();
           }
         }
-      ]);
+      ];
+      const electronResult = registerElectronShortcutActions(globalShortcut, electronActions);
       const activationResult = electronResult.actionResults.activation;
       const modeSelectorResult = electronResult.actionResults["mode-selector"];
       this.hotkeyBackend = "macos_event_tap";
       this.hotkeyRegistered = activationResult.registered && releaseResult.registered;
-      this.hotkeyPushToTalkRelease = releaseResult.registered;
-      this.hotkeyTriggerDescription = releaseResult.triggerDescription;
+      this.hotkeyPushToTalkRelease = this.hotkeyRegistered;
+      this.hotkeyTriggerDescription = this.hotkeyRegistered ? releaseResult.triggerDescription : undefined;
       this.hotkeyDiagnostics = this.hotkeyRegistered
         ? releaseResult.diagnostics
         : [...fallbackActivationDiagnostics, ...activationResult.diagnostics, ...releaseResult.diagnostics];
@@ -1219,6 +1244,7 @@ export class AppController {
         ? []
         : [...fallbackModeSelectorDiagnostics, ...modeSelectorResult.diagnostics];
       if (!this.hotkeyRegistered) {
+        this.macosReleaseHotkeys.unregister();
         this.hotkeyDiagnostics.push("Push-to-talk registration is unavailable because release detection is not ready.");
       }
       if (!modeSelectorResult.registered) {
@@ -1350,6 +1376,23 @@ export class AppController {
     this.modeSelectorHotkeyDiagnostics = options.modeSelector.registered
       ? options.modeSelector.diagnostics
       : [...options.backendDiagnostics, ...options.modeSelector.diagnostics];
+  }
+
+  private handleMacosReleaseWatcherUnavailable(generation: number, accelerator: string, diagnostics: string[]): void {
+    if (this.isQuitting || generation !== this.hotkeyRegistrationGeneration) return;
+
+    globalShortcut.unregister(accelerator);
+    this.macosReleaseHotkeys.unregister();
+    this.hotkeyRegistered = false;
+    this.hotkeyPushToTalkRelease = false;
+    this.hotkeyTriggerDescription = undefined;
+    this.hotkeyDiagnostics = [
+      ...diagnostics,
+      "Push-to-talk was disabled because macOS release detection stopped."
+    ];
+    void this.handlePushToTalkDeactivated()
+      .catch(() => undefined)
+      .finally(() => this.broadcastState());
   }
 
   private async handleActivationHotkey(trigger: string): Promise<AppStateSnapshot> {
