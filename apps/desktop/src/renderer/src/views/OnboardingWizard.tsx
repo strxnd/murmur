@@ -31,6 +31,11 @@ import {
 } from "../lib/audio-inputs";
 import { cn } from "../lib/cn";
 import { murmurClient } from "../lib/murmur-client";
+import {
+  MicrophoneProbeGuard,
+  onboardingDictationControls,
+  type OnboardingDictationStatus
+} from "../lib/onboarding-lifecycle";
 import { runtimeStatusLabel, userRuntimeStatusMessage } from "../lib/runtimes";
 import {
   downloadForModel,
@@ -46,7 +51,7 @@ import {
 import { useMurmurStore } from "../state/murmur-store";
 
 type ProbeStatus = "idle" | "checking" | "passed" | "warning" | "error";
-type DictationTestStatus = "idle" | "starting" | "recording" | "waiting" | "passed" | "error";
+type DictationTestStatus = OnboardingDictationStatus;
 
 const stepMeta: Record<OnboardingStepId, { title: string; label: string; description: string; icon: LucideIcon }> = {
   microphone: {
@@ -97,6 +102,7 @@ export function OnboardingWizard({
   const initialVoiceModelId = onboardingVoiceModel(state)?.id ?? "";
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedInputId, setSelectedInputId] = useState(state.settings.preferredAudioInputId ?? "");
+  const microphoneProbeGuardRef = useRef(new MicrophoneProbeGuard(state.settings.preferredAudioInputId ?? ""));
   const [micStatus, setMicStatus] = useState<ProbeStatus>("idle");
   const [micMessage, setMicMessage] = useState("");
   const [selectedVoiceModelId, setSelectedVoiceModelId] = useState(initialVoiceModelId);
@@ -129,7 +135,9 @@ export function OnboardingWizard({
     if (!opening) return;
 
     setStepIndex(0);
-    setSelectedInputId(state.settings.preferredAudioInputId ?? "");
+    const preferredAudioInputId = state.settings.preferredAudioInputId ?? "";
+    microphoneProbeGuardRef.current.select(preferredAudioInputId);
+    setSelectedInputId(preferredAudioInputId);
     setSelectedVoiceModelId(onboardingVoiceModel(state)?.id ?? "");
     setHotkey(state.settings.activationHotkey);
     setMicStatus("idle");
@@ -144,6 +152,10 @@ export function OnboardingWizard({
     historyLengthBeforeDictationRef.current = state.history.length;
     void refreshAudioDevices();
   }, [open, refreshAudioDevices, state, state.history.length, state.settings.activationHotkey, state.settings.preferredAudioInputId]);
+
+  useEffect(() => {
+    if (!open) microphoneProbeGuardRef.current.invalidate();
+  }, [open]);
 
   useEffect(() => {
     setStepIndex((index) => Math.max(0, Math.min(index, stepIds.length - 1)));
@@ -194,9 +206,11 @@ export function OnboardingWizard({
   };
 
   const selectAudioInput = (value: string): void => {
+    if (micStatus === "checking") return;
     const preferredInputId = audioInputSelectValueToPreferredId(value);
+    if (preferredInputId === selectedInputId) return;
+    microphoneProbeGuardRef.current.select(preferredInputId);
     setSelectedInputId(preferredInputId);
-    if (preferredInputId === selectedInputId || micStatus === "checking") return;
     setMicStatus("idle");
     setMicMessage("");
   };
@@ -247,20 +261,25 @@ export function OnboardingWizard({
       return;
     }
 
+    const probe = microphoneProbeGuardRef.current.begin();
     setMicStatus("checking");
     setMicMessage("");
 
     try {
-      const audio: MediaTrackConstraints | boolean = selectedInputId ? { deviceId: { exact: selectedInputId } } : true;
+      const audio: MediaTrackConstraints | boolean = probe.inputId ? { deviceId: { exact: probe.inputId } } : true;
       const stream = await navigator.mediaDevices.getUserMedia({ audio });
       stream.getTracks().forEach((track) => track.stop());
+      if (!microphoneProbeGuardRef.current.isCurrent(probe)) return;
       await refreshAudioDevices();
-      if ((state.settings.preferredAudioInputId ?? "") !== selectedInputId) {
-        await updateSettings({ preferredAudioInputId: selectedInputId || undefined });
+      if (!microphoneProbeGuardRef.current.isCurrent(probe)) return;
+      if ((state.settings.preferredAudioInputId ?? "") !== probe.inputId) {
+        await updateSettings({ preferredAudioInputId: probe.inputId || undefined });
       }
+      if (!microphoneProbeGuardRef.current.isCurrent(probe)) return;
       setMicStatus("passed");
       setMicMessage("");
     } catch (error) {
+      if (!microphoneProbeGuardRef.current.isCurrent(probe)) return;
       setMicStatus("error");
       setMicMessage(errorMessage(error));
     }
@@ -529,6 +548,7 @@ export function OnboardingWizard({
                         selectedInputValue={selectedAudioInputValue}
                         status={micStatus}
                         message={micMessage}
+                        selectionDisabled={micStatus === "checking"}
                         onSelectedInputChange={selectAudioInput}
                         onProbe={() => void probeMicrophone()}
                       />
@@ -623,6 +643,7 @@ function MicrophoneStep({
   selectedInputValue,
   status,
   message,
+  selectionDisabled,
   onSelectedInputChange,
   onProbe
 }: {
@@ -630,6 +651,7 @@ function MicrophoneStep({
   selectedInputValue: string;
   status: ProbeStatus;
   message: string;
+  selectionDisabled: boolean;
   onSelectedInputChange: (value: string) => void;
   onProbe: () => void;
 }): JSX.Element {
@@ -651,6 +673,7 @@ function MicrophoneStep({
             items={devices}
             value={selectedInputValue}
             onValueChange={onSelectedInputChange}
+            disabled={selectionDisabled}
             aria-label="Audio input"
             positionerClassName="z-[90]"
           />
@@ -826,8 +849,8 @@ function HotkeyTestStep({
   onStop: () => void;
   onCancel: () => void;
 }): JSX.Element {
-  const recording = sessionStatus === "recording" || dictationStatus === "recording";
-  const busy = dictationStatus === "starting" || dictationStatus === "waiting" || ["transcribing", "processing", "pasting"].includes(sessionStatus);
+  const controls = onboardingDictationControls(sessionStatus, dictationStatus);
+  const { recording, busy } = controls;
 
   return (
     <div className="onboarding-test-step">
@@ -881,19 +904,19 @@ function HotkeyTestStep({
           />
         </Field>
         <div className="onboarding-action-row">
-          {recording ? (
-            <>
-              <Button variant="primary" onClick={onStop}>
-                <Check size={18} /> Stop test
-              </Button>
-              <Button variant="secondary" onClick={onCancel}>
-                <X size={18} /> Cancel
-              </Button>
-            </>
-          ) : (
-            <Button variant="primary" onClick={onStart} disabled={changed || saving || busy}>
-              {busy ? <Loader2 className="animate-spin" size={18} /> : <Mic size={18} />}
-              {busy ? "Preparing text..." : "Start dictation test"}
+          {controls.showStop && (
+            <Button variant="primary" onClick={onStop}>
+              <Check size={18} /> Stop test
+            </Button>
+          )}
+          {controls.showCancel && (
+            <Button variant="secondary" onClick={onCancel}>
+              <X size={18} /> Cancel
+            </Button>
+          )}
+          {controls.canStart && (
+            <Button variant="primary" onClick={onStart} disabled={changed || saving}>
+              <Mic size={18} /> Start dictation test
             </Button>
           )}
         </div>

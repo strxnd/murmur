@@ -1,4 +1,4 @@
-import { useEffect, useRef, type CSSProperties, type JSX } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type JSX } from "react";
 import type { PillStateSnapshot } from "../../../shared/types";
 import { cn } from "../lib/cn";
 import { murmurClient } from "../lib/murmur-client";
@@ -7,6 +7,10 @@ const barWeights = [0.36, 0.56, 0.78, 1, 0.78, 0.56, 0.36];
 const idleBarScale = 0.22;
 const levelSettleThreshold = 0.004;
 const levelSmoothing = 0.34;
+
+export function shouldAnimateRecordingLevels(isRecording: boolean, prefersReducedMotion: boolean): boolean {
+  return isRecording && !prefersReducedMotion;
+}
 
 const barStyles = barWeights.map(
   (_, index) =>
@@ -25,6 +29,18 @@ export function RecordingPill({ state }: { state: PillStateSnapshot }): JSX.Elem
   const targetLevelRef = useRef(0);
   const renderedLevelRef = useRef(0);
   const animationFrameRef = useRef<number | null>(null);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(
+    () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return undefined;
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const updatePreference = (): void => setPrefersReducedMotion(query.matches);
+    updatePreference();
+    query.addEventListener("change", updatePreference);
+    return () => query.removeEventListener("change", updatePreference);
+  }, []);
 
   useEffect(() => {
     const stopAnimation = (): void => {
@@ -42,7 +58,7 @@ export function RecordingPill({ state }: { state: PillStateSnapshot }): JSX.Elem
       }
     };
 
-    if (!isRecording) {
+    if (!shouldAnimateRecordingLevels(isRecording, prefersReducedMotion)) {
       stopAnimation();
       targetLevelRef.current = 0;
       renderedLevelRef.current = 0;
@@ -82,7 +98,7 @@ export function RecordingPill({ state }: { state: PillStateSnapshot }): JSX.Elem
       unsubscribe();
       stopAnimation();
     };
-  }, [isRecording, sessionId]);
+  }, [isRecording, prefersReducedMotion, sessionId]);
 
   const ariaLabel = isRecording ? "Murmur recording" : isProcessing ? "Murmur processing" : "Murmur idle";
 

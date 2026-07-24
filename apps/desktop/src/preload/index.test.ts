@@ -12,6 +12,7 @@ describe("preload API", () => {
 
     await harness.api.updateSettings({ theme: "light" });
     await harness.api.setOnboardingDictationScope(true);
+    await harness.api.setRecordingCaptureReady(true);
     await harness.api.refreshCodex();
     await harness.api.startCodexLogin();
     await harness.api.cancelCodexLogin();
@@ -20,6 +21,7 @@ describe("preload API", () => {
 
     expect(harness.invoke).toHaveBeenCalledWith("settings:update", { theme: "light" });
     expect(harness.invoke).toHaveBeenCalledWith("onboarding:dictation-scope", { active: true });
+    expect(harness.invoke).toHaveBeenCalledWith("recording:capture-ready", { ready: true });
     expect(harness.invoke).toHaveBeenCalledWith("codex:refresh");
     expect(harness.invoke).toHaveBeenCalledWith("codex:login-start");
     expect(harness.invoke).toHaveBeenCalledWith("codex:login-cancel");

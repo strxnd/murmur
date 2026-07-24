@@ -39,6 +39,7 @@ import {
   modesSetPayloadSchema,
   modeSelectorMovePayloadSchema,
   onboardingDictationScopePayloadSchema,
+  recordingCaptureReadyPayloadSchema,
   recordingErrorPayloadSchema,
   recordingLevelPayloadSchema,
   settingsUpdatePayloadSchema,
@@ -117,6 +118,7 @@ const modeSelectorWindowMargin = 16;
 const maxRendererRecoveryAttempts = 3;
 const rendererRecoveryWindowMs = 30000;
 const recordingStopAckTimeoutMs = 15000;
+const recordingCaptureReadyTimeoutMs = 3000;
 const maxRecordingDurationNotice = "Maximum recording length reached; finishing this dictation.";
 const trayIconDataUrl =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAbklEQVR4nO3WQQ7AIAgEQJ7B/1/JrV4bg4kKXbTZTbzqoEYUYZgbo6qPN2CLm5k7PkeMKoftxLv6PpBdIIAAOKCfbAcQAhFwJGD1KU4FyEYzSgfIYjsOAyITpHTH2XMvac3w3xABpYDyy0fAb9MAo3Ifzf1J6oQAAAAASUVORK5CYII=";
@@ -172,6 +174,8 @@ export class AppController {
   private modeSelectorHotkeyDiagnostics: string[] = [];
   private hotkeyCaptureLeases = new Map<number, number>();
   private onboardingDictationLeases = new Set<number>();
+  private recordingCaptureReadyRenderers = new Set<number>();
+  private recordingCaptureReadyWaiters = new Set<(ready: boolean) => void>();
   private rendererRoles = new Map<number, RendererRole>();
   private rendererRecoveryAttempts = new Map<RendererRole, number[]>();
   private ipcHandlerChannels = new Set<string>();
@@ -239,6 +243,8 @@ export class AppController {
     this.hotkeyRegistrationGeneration += 1;
     this.hotkeyCaptureLeases.clear();
     this.onboardingDictationLeases.clear();
+    this.recordingCaptureReadyRenderers.clear();
+    this.resolveRecordingCaptureReadyWaiters(false);
 
     const registrationResults = await Promise.allSettled([this.hotkeyRegistrationQueue]);
     const preparationResults = await Promise.allSettled([
@@ -645,6 +651,10 @@ export class AppController {
   private releaseRendererLeases(senderId: number): void {
     const hadHotkeyLease = this.hotkeyCaptureLeases.delete(senderId);
     this.onboardingDictationLeases.delete(senderId);
+    const lostRecordingCapture = this.recordingCaptureReadyRenderers.delete(senderId);
+    if (lostRecordingCapture && this.isPillSessionActive()) {
+      this.failSession("The recording window stopped unexpectedly. Try again.", undefined, "failed");
+    }
     if (hadHotkeyLease && !this.isQuitting) {
       void this.registerHotkeys()
         .catch(() => undefined)
@@ -655,6 +665,44 @@ export class AppController {
   private releaseRendererOwnership(senderId: number): void {
     this.releaseRendererLeases(senderId);
     this.rendererRoles.delete(senderId);
+  }
+
+  private setRecordingCaptureReady(senderId: number, ready: boolean): void {
+    if (ready) {
+      this.recordingCaptureReadyRenderers.add(senderId);
+      this.resolveRecordingCaptureReadyWaiters(true);
+      return;
+    }
+
+    const wasReady = this.recordingCaptureReadyRenderers.delete(senderId);
+    if (wasReady && this.isPillSessionActive()) {
+      this.failSession("The recording window stopped unexpectedly. Try again.", undefined, "failed");
+    }
+  }
+
+  private isRecordingCaptureReady(): boolean {
+    const senderId = this.mainWindow?.webContents.id;
+    return senderId !== undefined && this.recordingCaptureReadyRenderers.has(senderId);
+  }
+
+  private waitForRecordingCaptureReady(): Promise<boolean> {
+    if (this.isRecordingCaptureReady()) return Promise.resolve(true);
+    if (this.isQuitting || this.disposePromise) return Promise.resolve(false);
+
+    return new Promise((resolve) => {
+      const finish = (ready: boolean): void => {
+        clearTimeout(timer);
+        this.recordingCaptureReadyWaiters.delete(finish);
+        resolve(ready);
+      };
+      const timer = setTimeout(() => finish(false), recordingCaptureReadyTimeoutMs);
+      timer.unref();
+      this.recordingCaptureReadyWaiters.add(finish);
+    });
+  }
+
+  private resolveRecordingCaptureReadyWaiters(ready: boolean): void {
+    for (const waiter of [...this.recordingCaptureReadyWaiters]) waiter(ready);
   }
 
   private configureSessionPermissions(): void {
@@ -895,6 +943,11 @@ export class AppController {
       this.sttSetup.skipSttSetup();
       this.broadcastState();
       return this.getSnapshot();
+    });
+    handle("recording:capture-ready", (event, payload) => {
+      const { ready } = parseIpcPayload(recordingCaptureReadyPayloadSchema, payload, "recording:capture-ready");
+      this.setRecordingCaptureReady(event.sender.id, ready);
+      return { ok: true };
     });
     handle("dictation:start", () => this.startRecording("manual"));
     handle("dictation:stop", () => this.stopRecording());
@@ -1408,7 +1461,7 @@ export class AppController {
   }
 
   private async handlePushToTalkActivated(): Promise<AppStateSnapshot> {
-    if (this.session.status !== "idle") return this.getSnapshot();
+    if (["recording", "transcribing", "processing", "pasting"].includes(this.session.status)) return this.getSnapshot();
 
     this.pushToTalkPressed = true;
     const snapshot = await this.startRecording("push_to_talk_global_hotkey");
@@ -1436,6 +1489,10 @@ export class AppController {
     if (["transcribing", "processing", "pasting"].includes(this.session.status)) return this.getSnapshot();
 
     const startGeneration = ++this.dictationStartGeneration;
+    const captureReady = await this.waitForRecordingCaptureReady();
+    if (startGeneration !== this.dictationStartGeneration) return this.getSnapshot();
+    if (!captureReady) return this.failSession("Microphone capture is still starting. Try again.");
+
     const persisted = this.storage.getState();
     const source: RecordingSource = this.onboardingDictationLeases.size > 0 ? "onboarding" : "dictation";
 

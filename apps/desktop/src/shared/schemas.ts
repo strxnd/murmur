@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { codexModel, codexProviderDefaults } from "./codex-provider";
+import { maxRecordingAudioBytes } from "./defaults";
 
 export const maxIpcTextCharacters = 200_000;
-export const maxRecordingAudioBytes = 150 * 1024 * 1024;
+export { maxRecordingAudioBytes };
 
 export const modeIconKeySchema = z.enum(["mic", "message-square", "mail", "notebook-pen", "sliders-horizontal"]);
 export const sttStreamingModeSchema = z.enum(["none", "completed_audio_sse", "live_realtime"]);
@@ -538,6 +539,7 @@ export const vocabularySetPayloadSchema = z.array(vocabularyEntrySchema);
 export const ipcIdPayloadSchema = z.string().min(1).max(512);
 export const ipcTextPayloadSchema = z.string().max(maxIpcTextCharacters);
 export const onboardingDictationScopePayloadSchema = z.object({ active: z.boolean() });
+export const recordingCaptureReadyPayloadSchema = z.object({ ready: z.boolean() });
 export const modeSelectorMovePayloadSchema = z.number().int().min(-1).max(1);
 
 export const completeRecordingPayloadSchema = z.object({

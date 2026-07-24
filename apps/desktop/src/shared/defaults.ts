@@ -25,6 +25,8 @@ export const defaultSettings: AppSettings = {
 };
 
 export const maxRecordingDurationMs = 10 * 60 * 1000;
+export const recordingSampleRate = 16_000;
+export const maxRecordingAudioBytes = 44 + Math.floor((recordingSampleRate * maxRecordingDurationMs) / 1000) * 2;
 
 export const defaultSession: DictationSession = {
   id: "idle",
