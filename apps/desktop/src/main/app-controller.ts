@@ -740,10 +740,16 @@ export class AppController {
     });
     handle("settings:update", async (_event, payload) => {
       const patch = parseIpcPayload(settingsUpdatePayloadSchema, payload, "settings:update") as Partial<AppSettings>;
-      const nextSettings = { ...this.storage.getState().settings, ...patch };
+      const currentSettings = this.storage.getState().settings;
+      const nextSettings = { ...currentSettings, ...patch };
+      const activationModeChanged =
+        patch.activationMode !== undefined && patch.activationMode !== currentSettings.activationMode;
+      const activationHotkeyChanged =
+        patch.activationHotkey !== undefined && patch.activationHotkey !== currentSettings.activationHotkey;
       if (
         process.platform === "darwin" &&
         nextSettings.activationMode === "push_to_talk" &&
+        (activationModeChanged || activationHotkeyChanged) &&
         !isSupportedMacosReleaseAccelerator(nextSettings.activationHotkey)
       ) {
         throw new Error(`macOS push-to-talk does not support shortcut "${nextSettings.activationHotkey}".`);

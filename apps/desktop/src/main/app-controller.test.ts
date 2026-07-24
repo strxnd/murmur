@@ -592,6 +592,33 @@ describe("AppController lifecycle and window ownership", () => {
     processPlatform.mockRestore();
   });
 
+  it("allows unrelated settings updates with a legacy unsupported macOS push-to-talk shortcut", async () => {
+    const harness = createControllerHarness();
+    const processPlatform = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    harness.state.settings.activationMode = "push_to_talk";
+    harness.state.settings.activationHotkey = "CommandOrControl+F8";
+    const updateSettings = vi.fn((patch: Partial<AppSettings>) => {
+      Object.assign(harness.state.settings, patch);
+      return harness.state;
+    });
+    Object.assign(harness.storage, { updateSettings });
+    Object.assign(harness.controller, { applySettings: vi.fn() });
+    vi.mocked(ipcMain.handle).mockClear();
+    harness.controller.registerIpc();
+    const registration = vi.mocked(ipcMain.handle).mock.calls.find(([channel]) => channel === "settings:update");
+    const updateHandler = registration?.[1] as
+      | ((event: unknown, patch: Partial<AppSettings>) => Promise<AppStateSnapshot>)
+      | undefined;
+    if (!updateHandler) throw new Error("Settings update IPC handler was not registered.");
+
+    await expect(updateHandler({}, { selectedTextCapture: "disabled" })).resolves.toEqual(
+      expect.objectContaining({ settings: expect.objectContaining({ selectedTextCapture: "disabled" }) })
+    );
+    expect(updateSettings).toHaveBeenCalledWith({ selectedTextCapture: "disabled" });
+
+    processPlatform.mockRestore();
+  });
+
   it("allows only trusted main-renderer audio permission requests", () => {
     expect(isAllowedRendererPermission("media", ["audio"])).toBe(true);
     expect(isAllowedRendererPermission("media", ["video"])).toBe(false);
