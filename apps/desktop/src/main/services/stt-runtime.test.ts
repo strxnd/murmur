@@ -17,7 +17,8 @@ import { dirname, join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import { SttRuntimeService } from "./stt-runtime";
-import { sttRuntimeCatalog } from "../../shared/stt-runtime-catalog";
+import { getSttRuntimeVariantAsset, sttRuntimeCatalog } from "../../shared/stt-runtime-catalog";
+import type { SttRuntimeId } from "../../shared/types";
 
 let tempDirs: string[] = [];
 
@@ -282,6 +283,29 @@ describe("SttRuntimeService", () => {
     expect(state.canRepair).toBe(true);
   });
 
+  it("rejects cache receipts from a different pinned release asset", () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const cacheRoot = join(runtimeDir, "linux-x64", "whisper.cpp", "cpu", "0.1.0");
+    writeRuntimeReceipt(cacheRoot, "whisper.cpp", "linux-x64", "0.1.0");
+    const catalog = structuredClone(sttRuntimeCatalog);
+    catalog["whisper.cpp"].platforms["linux-x64"].url = "https://example.test/runtime.tar.gz";
+    catalog["whisper.cpp"].platforms["linux-x64"].sha256 = "f".repeat(64);
+
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      runtimeDir,
+      env: {},
+      catalog
+    });
+
+    const state = service.getInstallState("whisper.cpp");
+    expect(state.status).toBe("repairable");
+    expect(state.error).toContain("pinned release asset");
+  });
+
   it("cleans partial downloads and staging dirs on startup", () => {
     const root = tempRoot();
     const runtimeDir = join(root, "cache", "runtimes", "stt");
@@ -508,6 +532,27 @@ describe("SttRuntimeService", () => {
     expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "cpu", "runtime.tar.gz.part"))).toBe(false);
   });
 
+  it("stops chunked runtime responses at the pinned cumulative size", async () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const catalog = downloadableCatalog(4, sha256("four"));
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      runtimeDir,
+      env: {},
+      catalog,
+      fetch: async () => new Response("oversized", { status: 200 })
+    });
+
+    const state = await service.downloadRuntime("whisper.cpp|linux-x64|cpu|0.1.0");
+
+    expect(state.status).toBe("error");
+    expect(state.error).toContain("exceeded the pinned size");
+    expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "cpu", "runtime.tar.gz.part"))).toBe(false);
+  });
+
   it("enforces a total runtime download deadline after headers arrive", async () => {
     const root = tempRoot();
     const runtimeDir = join(root, "cache", "runtimes", "stt");
@@ -575,19 +620,44 @@ describe("SttRuntimeService", () => {
     expect(extractCalls).toBe(0);
   });
 
+  it("rejects runtime archives with external hard-link targets", async () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const archive = gzipSync(tarWithHardLink("whisper-server", "../external-runtime"));
+    const catalog = downloadableCatalog(archive.byteLength, sha256(archive));
+    let extractCalls = 0;
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      runtimeDir,
+      env: {},
+      catalog,
+      fetch: async () => new Response(arrayBufferFromBuffer(archive), { status: 200 }),
+      extractArchive: async () => { extractCalls += 1; }
+    });
+
+    const state = await service.downloadRuntime("whisper.cpp|linux-x64|cpu|0.1.0");
+
+    expect(state.status).toBe("error");
+    expect(state.error).toContain("unsafe hard link");
+    expect(extractCalls).toBe(0);
+  });
+
   it("marks modified and non-executable managed runtimes as repairable", () => {
     const root = tempRoot();
     const runtimeDir = join(root, "cache", "runtimes", "stt");
     const cacheRoot = join(runtimeDir, "linux-x64", "whisper.cpp", "cpu", "0.1.0");
-    touch(join(cacheRoot, "whisper-server"));
-    writeRuntimeReceipt(cacheRoot, "whisper.cpp", "linux-x64", "0.1.0");
-    writeFileSync(join(cacheRoot, "whisper-server"), "tampered");
     const catalog = downloadableCatalog(10, "0".repeat(64));
+    const asset = getSttRuntimeVariantAsset(catalog["whisper.cpp"], "linux-x64", "cpu");
+    touch(join(cacheRoot, "whisper-server"));
+    writeRuntimeReceipt(cacheRoot, "whisper.cpp", "linux-x64", "0.1.0", asset);
+    writeFileSync(join(cacheRoot, "whisper-server"), "tampered");
 
     const modified = new SttRuntimeService({ platform: "linux", arch: "x64", projectRoot: root, runtimeDir, env: {}, catalog });
     expect(modified.getInstallState("whisper.cpp").status).toBe("repairable");
 
-    writeRuntimeReceipt(cacheRoot, "whisper.cpp", "linux-x64", "0.1.0");
+    writeRuntimeReceipt(cacheRoot, "whisper.cpp", "linux-x64", "0.1.0", asset);
     chmodSync(join(cacheRoot, "whisper-server"), 0o644);
     const nonExecutable = new SttRuntimeService({ platform: "linux", arch: "x64", projectRoot: root, runtimeDir, env: {}, catalog });
     expect(nonExecutable.getInstallState("whisper.cpp").error).toContain("not executable");
@@ -641,8 +711,16 @@ function touch(path: string): string {
   return path;
 }
 
-function writeRuntimeReceipt(root: string, id: string, platformKey: string, version: string): void {
+function writeRuntimeReceipt(
+  root: string,
+  id: SttRuntimeId,
+  platformKey: string,
+  version: string,
+  asset = getSttRuntimeVariantAsset(sttRuntimeCatalog[id], platformKey, "cpu")
+): void {
+  if (!asset?.sha256) throw new Error(`Missing test asset metadata for ${id} on ${platformKey}.`);
   const binaryPath = join(root, "whisper-server");
+  mkdirSync(root, { recursive: true });
   writeFileSync(binaryPath, "runtime");
   chmodSync(binaryPath, 0o755);
   writeFileSync(
@@ -651,8 +729,8 @@ function writeRuntimeReceipt(root: string, id: string, platformKey: string, vers
       id,
       platformKey,
       version,
-      archiveName: "runtime.tar.gz",
-      archiveSha256: "0".repeat(64),
+      archiveName: asset.assetName,
+      archiveSha256: asset.sha256,
       installedAt: new Date().toISOString(),
       tree: {
         files: {
@@ -726,6 +804,24 @@ function tarWithSingleFile(name: string, contents: string): Buffer {
   writeTarOctal(header, 148, 8, checksum);
   const padding = Buffer.alloc((512 - (body.length % 512)) % 512, 0);
   return Buffer.concat([header, body, padding, Buffer.alloc(1024, 0)]);
+}
+
+function tarWithHardLink(name: string, target: string): Buffer {
+  const header = Buffer.alloc(512, 0);
+  header.write(name, 0, Math.min(Buffer.byteLength(name), 100), "utf8");
+  writeTarOctal(header, 100, 8, 0o755);
+  writeTarOctal(header, 108, 8, 0);
+  writeTarOctal(header, 116, 8, 0);
+  writeTarOctal(header, 124, 12, 0);
+  writeTarOctal(header, 136, 12, 0);
+  header.fill(0x20, 148, 156);
+  header.write("1", 156, "ascii");
+  header.write(target, 157, Math.min(Buffer.byteLength(target), 100), "utf8");
+  header.write("ustar", 257, "ascii");
+  header.write("00", 263, "ascii");
+  const checksum = header.reduce((total, byte) => total + byte, 0);
+  writeTarOctal(header, 148, 8, checksum);
+  return Buffer.concat([header, Buffer.alloc(1024, 0)]);
 }
 
 function writeTarOctal(header: Buffer, offset: number, length: number, value: number): void {

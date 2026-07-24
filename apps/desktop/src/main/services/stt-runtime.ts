@@ -723,7 +723,16 @@ export class SttRuntimeService {
       return "Runtime receipt does not match the required accelerator.";
     }
     const asset = getSttRuntimeVariantAsset(definition, platformKey, accelerator);
-    if (!asset?.sizeBytes || !receipt.tree) return "Runtime receipt is missing required file integrity metadata.";
+    if (!asset?.sizeBytes || !asset.sha256 || !receipt.tree) {
+      return "Runtime receipt is missing required file integrity metadata.";
+    }
+    if (receipt.archiveName !== asset.assetName || receipt.archiveSha256 !== asset.sha256) {
+      return "Runtime receipt does not match the pinned release asset.";
+    }
+    const expectedVariantKey = this.variantKey(definition, platformKey, accelerator);
+    if (receipt.variantKey && receipt.variantKey !== expectedVariantKey) {
+      return "Runtime receipt does not match the required runtime variant.";
+    }
     const treeProblem = verifyInstalledTreeReceipt(root, receipt.tree, asset.sizeBytes * maxArchiveExpansionRatio);
     if (treeProblem) return treeProblem;
     return validateRuntimeExecutable(root, definition);

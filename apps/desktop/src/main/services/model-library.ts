@@ -246,6 +246,38 @@ export class ModelLibraryService {
     };
   }
 
+  verifyModelPathForUse(modelPath: string): boolean {
+    const item = this.storage
+      .getState()
+      .modelLibrary.catalog.find(
+        (candidate) =>
+          (candidate.downloadStrategy === "direct_file" || candidate.downloadStrategy === "archive") &&
+          this.expectedLocalPath(candidate) === modelPath
+      );
+    if (!item) return existsSync(modelPath);
+
+    const existing = this.getDownloadState(item.id);
+    if (!existsSync(modelPath) || existing?.status !== "downloaded") return false;
+    const validation = this.validateExistingModelArtifact(item, modelPath, existing);
+    if (!validation.valid) {
+      this.persistDownload({
+        modelId: item.id,
+        status: "error",
+        progressBytes: 0,
+        totalBytes: item.sizeBytes,
+        localPath: modelPath,
+        error: validation.error,
+        favorite: Boolean(existing.favorite)
+      });
+      this.clearActiveModel(item);
+      return false;
+    }
+    if (validation.verification && validation.verification !== existing.verification) {
+      this.persistDownload({ ...existing, verification: validation.verification });
+    }
+    return true;
+  }
+
   private async downloadDirectFile(item: ModelCatalogItem, signal: AbortSignal): Promise<void> {
     if (!item.downloadUrl || !item.filename) return;
 
@@ -849,26 +881,7 @@ export class ModelLibraryService {
     if (item.downloadStrategy === "none") return true;
     if (item.downloadStrategy === "direct_file" || item.downloadStrategy === "archive") {
       const expectedPath = this.expectedLocalPath(item);
-      const existing = this.getDownloadState(item.id);
-      if (!expectedPath || !existsSync(expectedPath) || existing?.status !== "downloaded") return false;
-      const validation = this.validateExistingModelArtifact(item, expectedPath, existing);
-      if (!validation.valid) {
-        this.persistDownload({
-          modelId: item.id,
-          status: "error",
-          progressBytes: 0,
-          totalBytes: item.sizeBytes,
-          localPath: expectedPath,
-          error: validation.error,
-          favorite: Boolean(existing.favorite)
-        });
-        this.clearActiveModel(item);
-        return false;
-      }
-      if (validation.verification && validation.verification !== existing.verification) {
-        this.persistDownload({ ...existing, verification: validation.verification });
-      }
-      return true;
+      return expectedPath ? this.verifyModelPathForUse(expectedPath) : false;
     }
     return this.getDownloadState(item.id)?.status === "downloaded";
   }

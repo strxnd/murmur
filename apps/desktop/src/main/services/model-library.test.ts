@@ -541,6 +541,32 @@ describe("ModelLibraryService", () => {
     }
   });
 
+  it("rejects a managed direct-file model changed after startup before provider use", () => {
+    const paths = testPaths();
+    const modelPath = join(paths.modelDir, "ggml-tiny.en.bin");
+    const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en")!;
+    const original = { size: item.sizeBytes, sha: item.sha256 };
+    mkdirSync(dirname(modelPath), { recursive: true });
+    writeFileSync(modelPath, "verified-model");
+    item.sizeBytes = Buffer.byteLength("verified-model");
+    item.sha256 = sha256("verified-model");
+    const storage = new StorageService(paths);
+
+    try {
+      const service = new ModelLibraryService(paths, storage, () => undefined, fakeRuntimeService("available"));
+      storage.setActiveModel("voice", item.id);
+      writeFileSync(modelPath, "corrupt");
+
+      expect(service.verifyModelPathForUse(modelPath)).toBe(false);
+      const download = service.snapshot().downloads.find((candidate) => candidate.modelId === item.id);
+      expect(download?.status).toBe("error");
+      expect(service.snapshot().activeModelIds.voice).toBeUndefined();
+    } finally {
+      item.sizeBytes = original.size;
+      item.sha256 = original.sha;
+    }
+  });
+
   it("discovers Ollama models and remembers them when the provider is unavailable", async () => {
     const paths = testPaths();
     const storage = new StorageService(paths);

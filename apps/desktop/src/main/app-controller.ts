@@ -1728,7 +1728,7 @@ export class AppController {
     if (this.runtimeService.getAutomaticAvailability(runtimeId).status !== "available") return false;
     if (!provider.defaultModel) return false;
     const modelPath = isAbsolute(provider.defaultModel) ? provider.defaultModel : join(this.paths.modelDir, provider.defaultModel);
-    return existsSync(modelPath);
+    return this.modelLibrary.verifyModelPathForUse(modelPath);
   }
 
   private showPill(): void {

@@ -2,10 +2,12 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { open, type FileHandle } from "node:fs/promises";
 import {
+  closeSync,
   lstatSync,
   mkdirSync,
-  readFileSync,
+  openSync,
   readlinkSync,
+  readSync,
   realpathSync,
   readdirSync,
   statfsSync,
@@ -252,9 +254,22 @@ function assertContainedRealpath(canonicalRoot: string, path: string): void {
 }
 
 function sha256File(path: string): string {
-  const handle = statSync(path);
-  if (!handle.isFile()) throw new Error(`Integrity receipt path is not a regular file: ${path}`);
-  return createHash("sha256").update(readFileSync(path)).digest("hex");
+  const stats = statSync(path);
+  if (!stats.isFile()) throw new Error(`Integrity receipt path is not a regular file: ${path}`);
+
+  const fd = openSync(path, "r");
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  try {
+    while (true) {
+      const bytesRead = readSync(fd, buffer, 0, buffer.byteLength, null);
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    closeSync(fd);
+  }
+  return hash.digest("hex");
 }
 
 function archiveEntrySize(detail: string): number {
