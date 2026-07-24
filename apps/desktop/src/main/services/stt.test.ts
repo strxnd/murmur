@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SttRuntimeAvailability, SttRuntimeId, TranscriptionProviderConfig } from "../../shared/types";
 import { resolveAppPaths, type AppPaths } from "./app-paths";
+import { providerSuccessBodyMaxBytes, providerTranscriptMaxChars } from "./http";
 import { BoundedTextBuffer, buildSherpaArgs, buildWhisperServerArgs, TranscriptionService } from "./stt";
 import type { ResolvedSttRuntime, SttRuntimeService } from "./stt-runtime";
 
@@ -110,6 +111,73 @@ describe("TranscriptionService", () => {
 
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/^Provider connection failed:/);
+    await service.dispose();
+  });
+
+  it("rejects non-2xx OpenAI-compatible validation responses", async () => {
+    const { url } = await startServer((response) => {
+      response.writeHead(429, { "Content-Type": "application/json" });
+      response.write('{"error":"rate limited"}');
+    });
+    const service = new TranscriptionService(testPaths(), fakeRuntimeService("available"));
+
+    const result = await service.validate(openAiCompatibleProvider(url));
+
+    expect(result).toEqual({ ok: false, message: "Provider validation failed with HTTP 429." });
+    await service.dispose();
+  });
+
+  it("rejects unknown successful STT response schemas", async () => {
+    const { url } = await startServer((response) => {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "upstream failed" } }));
+    });
+    const service = new TranscriptionService(testPaths(), fakeRuntimeService("available"));
+
+    await expect(
+      service.transcribe({
+        audio: wavWithSamples(160),
+        mimeType: "audio/wav",
+        provider: openAiCompatibleProvider(url)
+      })
+    ).rejects.toThrow("unrecognized success response");
+    await service.dispose();
+  });
+
+  it("sanitizes STT error bodies that echo transcript metadata", async () => {
+    const secretMarker = "CAPTURED_CONTEXT_SECRET";
+    const { url } = await startServer((response) => {
+      response.writeHead(400, { "x-request-id": "stt_req-123" });
+      response.end(`gateway echoed ${secretMarker}`);
+    });
+    const service = new TranscriptionService(testPaths(), fakeRuntimeService("available"));
+
+    const request = service.transcribe({
+      audio: wavWithSamples(160),
+      mimeType: "audio/wav",
+      provider: openAiCompatibleProvider(url),
+      vocabularyPrompt: secretMarker
+    });
+
+    await expect(request).rejects.toThrow("STT failed with HTTP 400 (request ID stt_req-123).");
+    await expect(request).rejects.not.toThrow(secretMarker);
+    await service.dispose();
+  });
+
+  it("rejects STT response bodies above the configured byte ceiling", async () => {
+    const { url } = await startServer((response) => {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end("x".repeat(providerSuccessBodyMaxBytes + 1));
+    });
+    const service = new TranscriptionService(testPaths(), fakeRuntimeService("available"));
+
+    await expect(
+      service.transcribe({
+        audio: wavWithSamples(160),
+        mimeType: "audio/wav",
+        provider: openAiCompatibleProvider(url)
+      })
+    ).rejects.toThrow(`exceeded ${providerSuccessBodyMaxBytes} bytes`);
     await service.dispose();
   });
 
@@ -241,6 +309,26 @@ describe("TranscriptionService", () => {
         provider: streamingProvider(url)
       })
     ).rejects.toThrow("ended before a terminal completion event");
+    await service.dispose();
+  });
+
+  it("bounds accumulated streaming transcripts", async () => {
+    const delta = "x".repeat(200000);
+    const { url } = await startSseServer([
+      `data: ${JSON.stringify({ type: "transcript.text.delta", delta })}\n\n`,
+      `data: ${JSON.stringify({ type: "transcript.text.delta", delta })}\n\n`,
+      `data: ${JSON.stringify({ type: "transcript.text.delta", delta })}\n\n`,
+      "data: [DONE]\n\n"
+    ]);
+    const service = new TranscriptionService(testPaths(), fakeRuntimeService("available"));
+
+    await expect(
+      service.transcribe({
+        audio: wavWithSamples(160),
+        mimeType: "audio/wav",
+        provider: streamingProvider(url)
+      })
+    ).rejects.toThrow(`transcript exceeded ${providerTranscriptMaxChars} characters`);
     await service.dispose();
   });
 

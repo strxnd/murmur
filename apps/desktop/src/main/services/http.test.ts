@@ -53,6 +53,22 @@ describe("HTTP response body timeouts", () => {
       /test response body/
     );
   });
+
+  it("uses one deadline across response headers and body consumption", async () => {
+    const { url } = await startServer((response) => {
+      setTimeout(() => {
+        response.writeHead(200, { "Content-Type": "text/plain" });
+        response.write("partial");
+        setTimeout(() => response.end(" complete"), 80);
+      }, 80);
+    });
+
+    const response = await fetchWithTimeout(url, {}, 120);
+
+    await expect(readResponseText(response, { totalTimeoutMs: 120, idleTimeoutMs: 120, label: "test" })).rejects.toThrow(
+      "Request timed out after 120ms."
+    );
+  });
 });
 
 function startServer(handler: (response: ServerResponse) => void): Promise<{ url: string }> {
