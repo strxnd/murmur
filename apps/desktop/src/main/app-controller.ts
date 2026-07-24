@@ -574,8 +574,8 @@ export class AppController {
     window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
       console.error(`[renderer:${role}:load-failed] ${errorCode} ${errorDescription} ${validatedUrl}`);
     });
-    window.webContents.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
-      if (isMainFrame) this.releaseRendererLeases(window.webContents.id);
+    window.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+      if (isMainFrame && !isInPlace) this.releaseRendererLeases(window.webContents.id);
     });
     window.webContents.on("will-prevent-unload", () => {
       this.cancelQuit();

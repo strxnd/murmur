@@ -440,6 +440,27 @@ describe("AppController lifecycle and window ownership", () => {
     expect(cancelQuit).toHaveBeenCalledOnce();
   });
 
+  it("keeps renderer leases during same-document navigation", () => {
+    const listeners = new Map<string, (...args: unknown[]) => void>();
+    const releaseRendererLeases = vi.fn();
+    const controller = Object.create(AppController.prototype) as AppController & Record<string, unknown>;
+    Object.assign(controller, {
+      rendererSource: { kind: "packaged", filePath: "/tmp/index.html" },
+      releaseRendererLeases
+    });
+    (controller as unknown as { attachWindowDiagnostics(window: unknown, role: string): void }).attachWindowDiagnostics(
+      { webContents: { id: 41, on: (event: string, listener: (...args: unknown[]) => void) => listeners.set(event, listener) } },
+      "main"
+    );
+
+    const navigate = listeners.get("did-start-navigation");
+    navigate?.({}, "file:///tmp/index.html#/home", true, true);
+    expect(releaseRendererLeases).not.toHaveBeenCalled();
+
+    navigate?.({}, "file:///tmp/index.html", false, true);
+    expect(releaseRendererLeases).toHaveBeenCalledWith(41);
+  });
+
   it("awaits initial renderer navigation before initialization succeeds", async () => {
     const navigationFailure = new Error("renderer missing");
     const controller = Object.create(AppController.prototype) as AppController & Record<string, unknown>;
