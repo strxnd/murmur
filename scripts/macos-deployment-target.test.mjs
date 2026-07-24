@@ -1,4 +1,5 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,10 +23,11 @@ afterEach(() => {
 
 describe("macOS deployment target inputs", () => {
   it("uses the bundle minimum for Swift and CMake native builds", () => {
-    const desktopPackage = JSON.parse(readFileSync(join(repoRoot, "apps", "desktop", "package.json"), "utf8"));
+    const require = createRequire(import.meta.url);
+    const buildConfig = require(join(repoRoot, "apps", "desktop", "electron-builder.base.cjs"));
 
     expect(MACOS_DEPLOYMENT_TARGET).toBe("13.0");
-    expect(desktopPackage.build.mac.minimumSystemVersion).toBe(MACOS_DEPLOYMENT_TARGET);
+    expect(buildConfig.mac.minimumSystemVersion).toBe(MACOS_DEPLOYMENT_TARGET);
     expect(swiftTargetTriple("arm64")).toBe("arm64-apple-macosx13.0");
     expect(swiftTargetTriple("x64")).toBe("x86_64-apple-macosx13.0");
     expect(cmakeDeploymentTargetArgs("darwin-arm64")).toEqual(["-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0"]);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DesktopMetadataService,
   detectContextMetadataBackends,
   parseGnomeShellEvalOutput,
   parseHyprlandActiveWindow,
@@ -53,6 +54,13 @@ describe("detectContextMetadataBackends", () => {
     ).toEqual([]);
   });
 
+  it("reports the macOS backend only when the helper is available", () => {
+    expect(detectContextMetadataBackends({ platform: "darwin", macosHelperAvailable: false })).toEqual([]);
+    expect(detectContextMetadataBackends({ platform: "darwin", macosHelperAvailable: true })).toEqual([
+      "macos_accessibility_helper"
+    ]);
+  });
+
   it("uses X11 tools before desktop-specific metadata on X11 sessions", () => {
     expect(
       detectContextMetadataBackends({
@@ -65,6 +73,51 @@ describe("detectContextMetadataBackends", () => {
         platform: "linux"
       })
     ).toEqual(["x11", "kde_kwin"]);
+  });
+});
+
+describe("DesktopMetadataService macOS helper lifecycle", () => {
+  it("does not advertise app metadata when the helper is missing at initialization", async () => {
+    const service = new DesktopMetadataService(
+      {
+        status: () => ({ helperAvailable: false, trusted: false, diagnostics: ["macOS automation helper was not found."] }),
+        activeWindow: () => ({ ok: false, error: "missing" })
+      },
+      "darwin"
+    );
+
+    await service.initialize();
+
+    expect(service.hasAppMetadataProvider()).toBe(false);
+    expect(service.getDiagnostics()).toEqual(["Active app metadata unavailable: macOS automation helper was not found."]);
+  });
+
+  it("withdraws app metadata capability when an initialized helper becomes unusable", async () => {
+    let available = true;
+    const service = new DesktopMetadataService(
+      {
+        status: () => ({
+          helperAvailable: available,
+          trusted: available,
+          diagnostics: available ? [] : ["macOS automation helper status check failed."]
+        }),
+        activeWindow: () => {
+          available = false;
+          return { ok: false, error: "helper exited" };
+        }
+      },
+      "darwin"
+    );
+    await service.initialize();
+    expect(service.hasAppMetadataProvider()).toBe(true);
+
+    const diagnostics: string[] = [];
+    await expect(service.capture(diagnostics)).resolves.toEqual({});
+
+    expect(service.hasAppMetadataProvider()).toBe(false);
+    expect(service.getDiagnostics()).toEqual([
+      "Active app metadata unavailable: macOS automation helper status check failed."
+    ]);
   });
 });
 

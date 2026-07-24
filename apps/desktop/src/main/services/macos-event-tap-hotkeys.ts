@@ -20,11 +20,16 @@ export class MacosEventTapReleaseService {
   constructor(private readonly helper = new MacosAutomationHelper()) {}
 
   unregister(): void {
-    this.child?.kill();
+    const child = this.child;
     this.child = null;
+    child?.kill();
   }
 
-  async register(accelerator: string, onReleased: () => void): Promise<MacosReleaseRegistration> {
+  async register(
+    accelerator: string,
+    onReleased: () => void,
+    onUnavailable: (diagnostics: string[]) => void = () => undefined
+  ): Promise<MacosReleaseRegistration> {
     this.unregister();
 
     if (process.platform !== "darwin") {
@@ -53,7 +58,17 @@ export class MacosEventTapReleaseService {
     this.child = child;
     const diagnostics: string[] = [];
     let stdoutBuffer = "";
+    let ready = false;
     let settled = false;
+    let unavailableReported = false;
+
+    const reportUnavailable = (fallback: string): void => {
+      if (this.child !== child || unavailableReported) return;
+      unavailableReported = true;
+      this.child = null;
+      child.kill();
+      onUnavailable(diagnostics.length ? [...diagnostics] : [fallback]);
+    };
 
     child.stderr.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf8").trim();
@@ -79,11 +94,12 @@ export class MacosEventTapReleaseService {
         for (const line of lines) {
           const event = parseHelperEvent(line);
           if (event?.event === "released") {
-            onReleased();
+            if (ready && this.child === child) onReleased();
             continue;
           }
           if (event?.event === "ready" && event.ok) {
             if (settled) continue;
+            ready = true;
             settled = true;
             clearTimeout(timer);
             resolve({ registered: true, triggerDescription: accelerator, diagnostics });
@@ -91,17 +107,36 @@ export class MacosEventTapReleaseService {
           }
           if (event?.ok === false) {
             diagnostics.push(event.error ?? "macOS event-tap helper failed.");
+            if (ready) reportUnavailable("macOS event-tap helper reported a failure.");
           }
         }
       });
 
-      child.on("exit", (code) => {
+      child.on("error", (error) => {
+        diagnostics.push(error.message);
+        if (ready) {
+          reportUnavailable("macOS event-tap helper failed.");
+          return;
+        }
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        resolve({ registered: false, diagnostics: [...diagnostics] });
+      });
+
+      child.on("exit", (code) => {
+        const fallback = `macOS event-tap helper exited with code ${code ?? "unknown"}.`;
+        if (ready) {
+          reportUnavailable(fallback);
+          return;
+        }
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (this.child === child) this.child = null;
         resolve({
           registered: false,
-          diagnostics: diagnostics.length ? diagnostics : [`macOS event-tap helper exited with code ${code ?? "unknown"}.`]
+          diagnostics: diagnostics.length ? diagnostics : [fallback]
         });
       });
     });
@@ -119,6 +154,10 @@ function parseHelperEvent(line: string): { ok?: boolean; event?: string; error?:
   }
 }
 
+export function isSupportedMacosReleaseAccelerator(accelerator: string): boolean {
+  return parseMacosAccelerator(accelerator) !== null;
+}
+
 function parseMacosAccelerator(accelerator: string): { keyCode: number; modifierMask: bigint } | null {
   const parts = accelerator.split("+").map((part) => part.trim()).filter(Boolean);
   const key = parts.at(-1);
@@ -133,6 +172,8 @@ function parseMacosAccelerator(accelerator: string): { keyCode: number; modifier
       modifierMask |= commandFlag;
     } else if (normalized === "alt" || normalized === "option") {
       modifierMask |= optionFlag;
+    } else {
+      return null;
     }
   }
 

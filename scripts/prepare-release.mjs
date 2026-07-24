@@ -266,7 +266,7 @@ export function buildSteps({ runDist, runRuntimePackage, runChecksums }, platfor
   steps.push(commandStep("Verify current-platform STT runtimes", "bun", ["run", "runtimes:doctor"]));
 
   if (runDist) {
-    steps.push(commandStep("Build current-platform app artifacts", "bun", ["run", "dist"]));
+    steps.push(commandStep("Build current-platform release artifacts", "bun", ["run", "dist:release"]));
   }
 
   if (runRuntimePackage) {

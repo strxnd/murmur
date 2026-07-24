@@ -574,6 +574,24 @@ describe("AppController lifecycle and window ownership", () => {
     expect(() => authorize("settings:update")).toThrow("Unauthorized IPC sender");
   });
 
+  it("rejects unsupported macOS push-to-talk shortcuts before persistence", async () => {
+    const harness = createControllerHarness();
+    const processPlatform = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.mocked(ipcMain.handle).mockClear();
+    harness.controller.registerIpc();
+    const registration = vi.mocked(ipcMain.handle).mock.calls.find(([channel]) => channel === "settings:update");
+    const updateHandler = registration?.[1] as
+      | ((event: unknown, patch: Partial<AppSettings>) => Promise<AppStateSnapshot>)
+      | undefined;
+    if (!updateHandler) throw new Error("Settings update IPC handler was not registered.");
+
+    await expect(
+      updateHandler({}, { activationMode: "push_to_talk", activationHotkey: "CommandOrControl+F8" })
+    ).rejects.toThrow('macOS push-to-talk does not support shortcut "CommandOrControl+F8".');
+
+    processPlatform.mockRestore();
+  });
+
   it("allows only trusted main-renderer audio permission requests", () => {
     expect(isAllowedRendererPermission("media", ["audio"])).toBe(true);
     expect(isAllowedRendererPermission("media", ["video"])).toBe(false);
@@ -654,6 +672,91 @@ describe("AppController lifecycle and window ownership", () => {
     cleanup.resolve();
     await disposal;
     expect(settled).toBe(true);
+  });
+
+  it("does not register macOS push-to-talk activation before release detection is ready", async () => {
+    const harness = createControllerHarness();
+    const processPlatform = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const portalHotkeys = {
+      register: vi.fn(async () => ({
+        registered: false,
+        diagnostics: [],
+        actionResults: {
+          activation: { registered: false, pushToTalkRelease: false, diagnostics: [] },
+          "mode-selector": { registered: false, pushToTalkRelease: false, diagnostics: [] }
+        }
+      })),
+      unregister: vi.fn(async () => undefined)
+    };
+    const nativeHotkeys = {
+      register: vi.fn(async () => ({
+        registered: false,
+        backend: undefined,
+        pushToTalkRelease: false,
+        diagnostics: [],
+        actionResults: {
+          activation: { registered: false, pushToTalkRelease: false, diagnostics: [] },
+          "mode-selector": { registered: false, pushToTalkRelease: false, diagnostics: [] }
+        }
+      })),
+      unregister: vi.fn(async () => undefined)
+    };
+    const macosReleaseHotkeys = {
+      register: vi.fn(async () => ({ registered: false, diagnostics: ["helper unavailable"] })),
+      unregister: vi.fn()
+    };
+    harness.state.settings.activationMode = "push_to_talk";
+    Object.assign(harness.controller, {
+      automationPermissions: { status: vi.fn(() => ({ status: "trusted", diagnostics: [] })) },
+      portalHotkeys,
+      nativeHotkeys,
+      macosReleaseHotkeys,
+      hotkeyRegistrationGeneration: 0,
+      hotkeyRegistrationQueue: Promise.resolve(),
+      resetHotkeyCapabilities: vi.fn(),
+      hideModeSelectorWindow: vi.fn()
+    });
+    delete (harness.controller as unknown as Record<string, unknown>).registerHotkeys;
+    vi.mocked(globalShortcut.register).mockClear();
+    vi.mocked(globalShortcut.isRegistered).mockReturnValue(true);
+
+    await (harness.controller as unknown as { registerHotkeys(): Promise<void> }).registerHotkeys();
+
+    expect(globalShortcut.register).toHaveBeenCalledOnce();
+    expect(globalShortcut.register).toHaveBeenCalledWith(harness.state.settings.modeSelectorHotkey, expect.any(Function));
+    expect(globalShortcut.register).not.toHaveBeenCalledWith(harness.state.settings.activationHotkey, expect.any(Function));
+    expect(macosReleaseHotkeys.unregister).toHaveBeenCalled();
+    vi.mocked(globalShortcut.isRegistered).mockReturnValue(false);
+    processPlatform.mockRestore();
+  });
+
+  it("unregisters activation and stops recording when macOS release detection dies", async () => {
+    const harness = createControllerHarness();
+    const handleRelease = vi.fn(async () => undefined);
+    Object.assign(harness.controller, {
+      isQuitting: false,
+      hotkeyRegistrationGeneration: 4,
+      hotkeyRegistered: true,
+      hotkeyPushToTalkRelease: true,
+      hotkeyTriggerDescription: "CommandOrControl+Shift+Space",
+      macosReleaseHotkeys: { unregister: vi.fn() },
+      handlePushToTalkDeactivated: handleRelease
+    });
+    vi.mocked(globalShortcut.unregister).mockClear();
+
+    (harness.controller as unknown as {
+      handleMacosReleaseWatcherUnavailable(generation: number, accelerator: string, diagnostics: string[]): void;
+    }).handleMacosReleaseWatcherUnavailable(4, "CommandOrControl+Shift+Space", ["helper exited"]);
+    await Promise.resolve();
+
+    expect(globalShortcut.unregister).toHaveBeenCalledWith("CommandOrControl+Shift+Space");
+    expect(handleRelease).toHaveBeenCalledOnce();
+    expect(harness.controller).toMatchObject({
+      hotkeyRegistered: false,
+      hotkeyPushToTalkRelease: false,
+      hotkeyTriggerDescription: undefined,
+      hotkeyDiagnostics: ["helper exited", "Push-to-talk was disabled because macOS release detection stopped."]
+    });
   });
 
   it("quiesces deferred macOS hotkey registration before final cleanup", async () => {
