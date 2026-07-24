@@ -197,7 +197,7 @@ export class AppController {
         this.pillWindow?.webContents.send("stt-runtime:progress", state);
         this.broadcastState();
       },
-      onBeforeRuntimeMutation: (state) => this.stt?.stopRuntime(state.id)
+      onBeforeRuntimeMutation: (state, signal) => this.stt.beginRuntimeMutation(state.variantKey, signal)
     });
     this.stt = new TranscriptionService(this.paths, this.runtimeService);
     this.modelLibrary = new ModelLibraryService(
@@ -209,7 +209,10 @@ export class AppController {
         this.broadcastState();
       },
       this.runtimeService,
-      { getProviderRuntime: () => this.getProviderRuntime() }
+      {
+        getProviderRuntime: () => this.getProviderRuntime(),
+        beginModelMutation: (modelPath, signal) => this.stt.beginModelMutation(modelPath, signal)
+      }
     );
     this.sttSetup = new SttSetupService(this.paths, this.storage, this.modelLibrary, this.runtimeService);
   }

@@ -172,6 +172,44 @@ describe("ModelLibraryService", () => {
     expect(existsSync(modelPath)).toBe(false);
   });
 
+  it("waits for the exact model mutation lease before deleting an artifact", async () => {
+    const paths = testPaths();
+    const storage = new StorageService(paths);
+    const modelPath = join(paths.modelDir, "ggml-tiny.en.bin");
+    touch(modelPath);
+    storage.upsertModelDownload(downloaded("whisper-tiny-en", paths));
+    let allowMutation!: () => void;
+    const mutationAllowed = new Promise<void>((resolve) => {
+      allowMutation = resolve;
+    });
+    let mutationPath: string | undefined;
+    let mutationStarted!: () => void;
+    const mutationStartedPromise = new Promise<void>((resolve) => {
+      mutationStarted = resolve;
+    });
+    let released = false;
+    const service = new ModelLibraryService(paths, storage, () => undefined, fakeRuntimeService("available"), {
+      beginModelMutation: async (path) => {
+        mutationPath = path;
+        mutationStarted();
+        await mutationAllowed;
+        return () => {
+          released = true;
+        };
+      }
+    });
+
+    const deletion = service.deleteDownloadedModel("whisper-tiny-en");
+    await mutationStartedPromise;
+    expect(mutationPath).toBe(modelPath);
+    expect(existsSync(modelPath)).toBe(true);
+
+    allowMutation();
+    await deletion;
+    expect(existsSync(modelPath)).toBe(false);
+    expect(released).toBe(true);
+  });
+
   it("downloads direct files to the cache model dir", async () => {
     const { service, paths } = setup("available");
     const server = await modelServer("model-bytes");

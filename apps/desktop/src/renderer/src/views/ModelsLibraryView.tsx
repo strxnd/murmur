@@ -43,7 +43,12 @@ import { Toolbar } from "../components/ui/Toolbar";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { cn } from "../lib/cn";
 import { downloadProgressSummary, formatBytes } from "../lib/download-progress";
-import { runtimeInstallForModel, runtimeStatusLabel } from "../lib/runtimes";
+import {
+  canCancelRuntimeOperation,
+  hasReadyRuntimeForModel,
+  runtimeInstallForModel,
+  runtimeStatusLabel
+} from "../lib/runtimes";
 import { useMurmurStore } from "../state/murmur-store";
 
 type ModelFilter = "all" | "voice" | "language" | "offline" | "favorites" | "downloaded";
@@ -272,9 +277,9 @@ function ModelDetails({
   const canDownload = item.downloadStrategy !== "none" && status !== "downloading" && status !== "downloaded";
   const canCancelDownload = item.downloadStrategy !== "none" && status === "downloading";
   const canDelete = item.downloadStrategy !== "none" && status === "downloaded";
-  const runtimeReady = !runtime || runtime.status === "ready";
+  const runtimeReady = !runtime || hasReadyRuntimeForModel(state, item);
   const runtimeBusy = runtime?.status === "downloading" || runtime?.status === "installing";
-  const canCancelRuntimeDownload = runtime?.status === "downloading";
+  const canCancelRuntimeDownload = canCancelRuntimeOperation(runtime);
   const canActivate =
     canActivateModel(item) &&
     isModelProviderUsable(item, state) &&

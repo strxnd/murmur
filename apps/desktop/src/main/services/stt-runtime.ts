@@ -50,7 +50,7 @@ import type {
 type RuntimeSource = SttRuntimeSource;
 type RuntimeCatalog = Record<SttRuntimeId, SttRuntimeCatalogEntry>;
 type ProgressEmitter = (state: SttRuntimeInstallState) => void;
-type RuntimeMutationHook = (state: SttRuntimeInstallState) => void | Promise<void>;
+type RuntimeMutationHook = (state: SttRuntimeInstallState, signal: AbortSignal) => Promise<() => void>;
 type DownloadableSttRuntimeAsset = SttRuntimeAsset & { url: string; sizeBytes: number; sha256: string; archiveFormat: "tar.gz" };
 export type SttRuntimeActionTarget =
   | SttRuntimeVariantKey
@@ -522,9 +522,14 @@ export class SttRuntimeService {
         progressBytes: asset.sizeBytes,
         totalBytes: asset.sizeBytes
       });
-      await this.onBeforeRuntimeMutation?.(installingState);
-      backupDir = replaceDirectory(extractedRoot, finalDir);
-      promotedFinal = true;
+      const finishMutation = await this.onBeforeRuntimeMutation?.(installingState, controller.signal);
+      try {
+        if (controller.signal.aborted) throw abortError();
+        backupDir = replaceDirectory(extractedRoot, finalDir);
+        promotedFinal = true;
+      } finally {
+        finishMutation?.();
+      }
 
       this.activeStates.delete(variantKey);
       const ready = this.getInstallState(id, accelerator);

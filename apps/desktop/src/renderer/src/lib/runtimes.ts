@@ -58,7 +58,19 @@ export function runtimeInstallForModel(state: AppStateSnapshot, item: ModelCatal
   if (!runtimeId) return undefined;
   const variants = runtimeVariantsForModel(state, runtimeId);
   const cpu = variants.find((runtime) => runtime.accelerator === "cpu");
-  return variants.find((runtime) => runtime.accelerator !== "cpu" && runtime.status === "ready") ?? cpu ?? variants[0];
+  return (
+    variants.find((runtime) => runtime.accelerator !== "cpu" && isRuntimeBusy(runtime)) ??
+    variants.find((runtime) => runtime.accelerator !== "cpu" && runtime.status === "ready") ??
+    cpu ??
+    variants[0]
+  );
+}
+
+export function hasReadyRuntimeForModel(state: AppStateSnapshot, item: ModelCatalogItem): boolean {
+  if (item.kind !== "voice") return true;
+  const runtimeId = runtimeIdForModel(item);
+  if (!runtimeId) return true;
+  return runtimeVariantsForModel(state, runtimeId).some((runtime) => runtime.status === "ready");
 }
 
 export function runtimeStatusLabel(runtime: SttRuntimeInstallState): string {
@@ -92,6 +104,10 @@ export function canInstallRuntime(runtime: SttRuntimeInstallState): boolean {
 
 export function isRuntimeBusy(runtime: SttRuntimeInstallState): boolean {
   return runtime.status === "downloading" || runtime.status === "installing";
+}
+
+export function canCancelRuntimeOperation(runtime: SttRuntimeInstallState | undefined): boolean {
+  return Boolean(runtime && isRuntimeBusy(runtime));
 }
 
 export function runtimeProgressValue(runtime: SttRuntimeInstallState | undefined): number | null {

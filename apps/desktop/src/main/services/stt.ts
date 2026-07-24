@@ -13,6 +13,7 @@ import type {
 } from "../../shared/types";
 import type { AppPaths } from "./app-paths";
 import { ensureOwnerOnlyDirectory, ensureOwnerOnlyFile, ownerOnlyFileMode } from "./app-paths";
+import { ArtifactMutationCoordinator } from "./artifact-mutation-coordinator";
 import {
   closeResponseBody,
   extractTextFromTranscriptionResponse,
@@ -47,7 +48,9 @@ interface RuntimeProcessResult {
 interface WhisperServerProcess {
   key: string;
   runtimeId: SttRuntimeId;
+  variantKey: string;
   accelerator: SttRuntimeAccelerator;
+  modelPath: string;
   baseUrl: string;
   requestPath: string;
   scratchDir: string;
@@ -77,6 +80,7 @@ export class TranscriptionService {
   private lastRuntimeDiagnostics: string[] = [];
   private ownedChildren = new Map<ChildProcessWithoutNullStreams, OwnedChildProcess>();
   private scratchFiles = new Set<string>();
+  private artifactMutations = new ArtifactMutationCoordinator();
   private disposed = false;
 
   constructor(
@@ -102,6 +106,28 @@ export class TranscriptionService {
   async stopRuntime(runtimeId?: SttRuntimeId): Promise<void> {
     if (!runtimeId || runtimeId === "whisper.cpp") {
       await this.stopWhisperServer();
+    }
+  }
+
+  async beginRuntimeMutation(variantKey: string, signal?: AbortSignal): Promise<() => void> {
+    const finishMutation = await this.artifactMutations.beginMutation(runtimeResourceKey(variantKey), signal);
+    try {
+      await this.stopWhisperServer((server) => server.variantKey === variantKey);
+      return finishMutation;
+    } catch (error) {
+      finishMutation();
+      throw error;
+    }
+  }
+
+  async beginModelMutation(modelPath: string, signal?: AbortSignal): Promise<() => void> {
+    const finishMutation = await this.artifactMutations.beginMutation(modelResourceKey(modelPath), signal);
+    try {
+      await this.stopWhisperServer((server) => server.modelPath === modelPath);
+      return finishMutation;
+    } catch (error) {
+      finishMutation();
+      throw error;
     }
   }
 
@@ -221,19 +247,26 @@ export class TranscriptionService {
       throw new Error("Bundled whisper.cpp expects WAV input. Restart recording so Murmur can capture WAV audio.");
     }
 
-    const modelPath = this.requiredModelPath(options.provider.defaultModel, "Bundled whisper.cpp");
-    return this.withRuntimeFallback("whisper.cpp", async (runtime) => {
-      const endpoint = await this.ensureWhisperServer(modelPath, runtime, options.signal);
-      const result = await this.transcribeWhisperCpp({
-        ...options,
-        provider: {
-          ...options.provider,
-          baseUrl: endpoint.baseUrl,
-          endpointPath: `${endpoint.requestPath}/inference`
+    const modelPath = this.resolveConfiguredModelPath(options.provider.defaultModel, "Bundled whisper.cpp");
+    return this.withRuntimeFallback("whisper.cpp", async (runtime) =>
+      this.artifactMutations.withUse(
+        [modelResourceKey(modelPath), runtimeResourceKey(runtime.variantKey)],
+        options.signal,
+        async () => {
+          this.requireExistingModelPath(modelPath, "Bundled whisper.cpp");
+          const endpoint = await this.ensureWhisperServer(modelPath, runtime, options.signal);
+          const result = await this.transcribeWhisperCpp({
+            ...options,
+            provider: {
+              ...options.provider,
+              baseUrl: endpoint.baseUrl,
+              endpointPath: `${endpoint.requestPath}/inference`
+            }
+          });
+          return { ...result, accelerator: runtime.accelerator };
         }
-      });
-      return { ...result, accelerator: runtime.accelerator };
-    });
+      )
+    );
   }
 
   private async transcribeWhisperCpp(options: TranscribeOptions): Promise<TranscriptionResult> {
@@ -270,28 +303,35 @@ export class TranscriptionService {
       throw new Error("Sherpa ONNX expects WAV input. Restart recording so Murmur can capture WAV audio.");
     }
 
-    const modelPath = this.requiredModelPath(options.provider.defaultModel, "Sherpa ONNX");
+    const modelPath = this.resolveConfiguredModelPath(options.provider.defaultModel, "Sherpa ONNX");
     const audioPath = this.writeTempAudio(options.audio, "wav");
 
     try {
-      return await this.withRuntimeFallback("sherpa-onnx", async (runtime) => {
-        const result = await this.runProcess(
-          runtime.binaryPath,
-          buildSherpaArgs(modelPath, audioPath, undefined, runtime.accelerator),
-          transcriptionRuntimeTimeoutMs(),
-          runtime,
-          options.signal
-        );
-        this.lastRuntimeDiagnostics = runtimeDiagnostics(runtime.label, result.stdout, result.stderr);
-        const text = extractSherpaText(result.stdout) || extractSherpaText(result.stderr);
-        return {
-          text,
-          providerId: options.provider.id,
-          model: options.provider.defaultModel,
-          streamingMode: "none",
-          accelerator: runtime.accelerator
-        };
-      });
+      return await this.withRuntimeFallback("sherpa-onnx", async (runtime) =>
+        this.artifactMutations.withUse(
+          [modelResourceKey(modelPath), runtimeResourceKey(runtime.variantKey)],
+          options.signal,
+          async () => {
+            this.requireExistingModelPath(modelPath, "Sherpa ONNX");
+            const result = await this.runProcess(
+              runtime.binaryPath,
+              buildSherpaArgs(modelPath, audioPath, undefined, runtime.accelerator),
+              transcriptionRuntimeTimeoutMs(),
+              runtime,
+              options.signal
+            );
+            this.lastRuntimeDiagnostics = runtimeDiagnostics(runtime.label, result.stdout, result.stderr);
+            const text = extractSherpaText(result.stdout) || extractSherpaText(result.stderr);
+            return {
+              text,
+              providerId: options.provider.id,
+              model: options.provider.defaultModel,
+              streamingMode: "none",
+              accelerator: runtime.accelerator
+            };
+          }
+        )
+      );
     } catch (error) {
       if (isAbortError(error)) throw error;
       this.lastRuntimeDiagnostics = [`Sherpa ONNX error: ${tail(error instanceof Error ? error.message : String(error))}`];
@@ -452,7 +492,9 @@ export class TranscriptionService {
     this.whisperServer = {
       key,
       runtimeId: "whisper.cpp",
+      variantKey: runtime.variantKey,
       accelerator: runtime.accelerator,
+      modelPath,
       baseUrl,
       requestPath,
       scratchDir,
@@ -480,14 +522,15 @@ export class TranscriptionService {
     return { baseUrl, requestPath };
   }
 
-  private async stopWhisperServer(): Promise<void> {
+  private async stopWhisperServer(matches: (server: WhisperServerProcess) => boolean = () => true): Promise<void> {
+    const existing = this.whisperServer;
+    if (!existing || !matches(existing)) return;
     if (this.whisperServerIdleTimer) {
       clearTimeout(this.whisperServerIdleTimer);
       this.whisperServerIdleTimer = null;
     }
-    const existing = this.whisperServer;
     this.whisperServer = null;
-    if (existing) await this.terminateChild(existing.process);
+    await this.terminateChild(existing.process);
   }
 
   private scheduleWhisperServerIdleShutdown(): void {
@@ -496,11 +539,13 @@ export class TranscriptionService {
     this.whisperServerIdleTimer.unref();
   }
 
-  private requiredModelPath(model: string | undefined, label: string): string {
+  private resolveConfiguredModelPath(model: string | undefined, label: string): string {
     if (!model) throw new Error(`${label} needs a downloaded model selected as default.`);
-    const modelPath = this.resolveModelPath(model);
+    return this.resolveModelPath(model);
+  }
+
+  private requireExistingModelPath(modelPath: string, label: string): void {
     if (!existsSync(modelPath)) throw new Error(`${label} model is not downloaded at ${modelPath}.`);
-    return modelPath;
   }
 
   private resolveModelPath(model: string): string {
@@ -730,6 +775,14 @@ export class TranscriptionService {
     if (mimeType.includes("mp4")) return "dictation.m4a";
     return "dictation.webm";
   }
+}
+
+function runtimeResourceKey(variantKey: string): string {
+  return `runtime:${variantKey}`;
+}
+
+function modelResourceKey(modelPath: string): string {
+  return `model:${modelPath}`;
 }
 
 export class BoundedTextBuffer {

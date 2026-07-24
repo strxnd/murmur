@@ -279,6 +279,49 @@ describe("TranscriptionService", () => {
     expect(existsSync(publicDir)).toBe(false);
   });
 
+  it("invalidates only the cached server that uses the mutated runtime variant or model path", async () => {
+    const paths = testPaths();
+    const modelPath = join(paths.modelDir, "ggml-tiny.en.bin");
+    const otherModelPath = join(paths.modelDir, "ggml-other.bin");
+    const argsPath = join(paths.tempDir, "whisper-args.json");
+    const requestPath = join(paths.tempDir, "whisper-request.txt");
+    const launchesPath = join(paths.tempDir, "whisper-launches.txt");
+    touch(modelPath);
+    touch(otherModelPath);
+    const runtimePath = whisperServerShim(tempRoot());
+    const service = new TranscriptionService(
+      paths,
+      fakeRuntimeService("available", runtimePath, {
+        MURMUR_ARGS_PATH: argsPath,
+        MURMUR_REQUEST_PATH: requestPath,
+        MURMUR_LAUNCHES_PATH: launchesPath
+      })
+    );
+    const transcribe = (): Promise<unknown> =>
+      service.transcribe({
+        audio: wavWithSamples(160),
+        mimeType: "audio/wav",
+        provider: bundledWhisperCppProvider("ggml-tiny.en.bin")
+      });
+
+    await transcribe();
+    expect(readFileSync(launchesPath, "utf8").trim().split("\n")).toHaveLength(1);
+
+    const finishCudaMutation = await service.beginRuntimeMutation("whisper.cpp|linux-x64|cuda|0.0.0-test");
+    finishCudaMutation();
+    const finishOtherModelMutation = await service.beginModelMutation(otherModelPath);
+    finishOtherModelMutation();
+    await transcribe();
+    expect(readFileSync(launchesPath, "utf8").trim().split("\n")).toHaveLength(1);
+
+    const finishActiveModelMutation = await service.beginModelMutation(modelPath);
+    finishActiveModelMutation();
+    await transcribe();
+    expect(readFileSync(launchesPath, "utf8").trim().split("\n")).toHaveLength(2);
+
+    await service.dispose();
+  });
+
   it("rejects a local endpoint that cannot answer the per-launch identity challenge", async () => {
     process.env.MURMUR_RUNTIME_READY_TIMEOUT_MS = "120";
     const paths = testPaths();
@@ -607,6 +650,7 @@ function whisperServerShim(root: string): string {
     "const args = process.argv.slice(2);",
     "const value = (name) => args[args.indexOf(name) + 1];",
     'fs.writeFileSync(process.env.MURMUR_ARGS_PATH, JSON.stringify(args));',
+    'if (process.env.MURMUR_LAUNCHES_PATH) fs.appendFileSync(process.env.MURMUR_LAUNCHES_PATH, String(process.pid) + "\\n");',
     'const requestPath = value("--request-path");',
     'const challenge = fs.readFileSync(value("--public") + "/index.html", "utf8");',
     "const server = http.createServer((request, response) => {",
