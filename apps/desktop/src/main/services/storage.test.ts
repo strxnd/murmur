@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultLlmProviders, defaultModes, defaultSettings } from "../../shared/defaults";
 import type { DictationHistoryItem, ModelCatalogItem } from "../../shared/types";
@@ -884,6 +885,249 @@ describe("StorageService", () => {
     expect(diagnosticText).not.toContain("sqlite disabled for test");
   });
 
+  it("refuses to create a JSON history branch when an existing SQLite store is temporarily unavailable", () => {
+    const paths = testPaths();
+    const storage = new StorageService(paths);
+    storage.addHistory(historyItem({ id: "sqlite-authority" }));
+    closeStorage(storage);
+
+    expect(
+      () =>
+        new StorageService(paths, () => {
+          throw new Error("temporary sqlite failure");
+        })
+    ).toThrow("refusing to create a second writable history");
+    expect(existsSync(paths.historyJsonPath)).toBe(false);
+
+    const reopened = new StorageService(paths);
+    expect(reopened.getState().history.map((item) => item.id)).toEqual(["sqlite-authority"]);
+    closeStorage(reopened);
+  });
+
+  it("reconciles fallback additions and deletions into SQLite before restoring authority", () => {
+    const paths = testPaths();
+    const initial = new StorageService(paths);
+    initial.addHistory(historyItem({ id: "retained", createdAt: recentIso(0) }));
+    initial.addHistory(historyItem({ id: "deleted-during-fallback", createdAt: recentIso(1) }));
+    closeStorage(initial);
+    writeFileSync(
+      paths.historyJsonPath,
+      JSON.stringify([
+        historyItem({ id: "fallback-addition", createdAt: recentIso(0) }),
+        historyItem({ id: "retained", createdAt: recentIso(0) })
+      ])
+    );
+
+    const recovered = new StorageService(paths);
+
+    expect(recovered.backend).toBe("sqlite");
+    expect(recovered.getState().history.map((item) => item.id)).toEqual(["fallback-addition", "retained"]);
+    expect(existsSync(paths.historyJsonPath)).toBe(false);
+    expect(recovered.getDiagnostics()).toContain("Recovered JSON fallback history into SQLite.");
+    closeStorage(recovered);
+  });
+
+  it("recovers valid persisted sections and quarantines malformed configuration and JSON history", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      paths.configPath,
+      JSON.stringify({
+        settings: { ...defaultSettings, theme: "light" },
+        autoModeRules: { invalid: true }
+      })
+    );
+    writeFileSync(
+      paths.historyJsonPath,
+      JSON.stringify([historyItem({ id: "valid-history" }), { id: "missing-required-fields" }])
+    );
+
+    const storage = jsonStorage(paths);
+    const state = storage.getState();
+    const quarantinedConfig = readdirSync(paths.configDir).filter((name) => name.startsWith("murmur-config.json.corrupt-"));
+    const quarantinedHistory = readdirSync(paths.dataDir).filter((name) => name.startsWith("murmur-history.json.corrupt-"));
+
+    expect(state.settings.theme).toBe("light");
+    expect(state.autoModeRules).toEqual([]);
+    expect(state.history.map((item) => item.id)).toEqual(["valid-history"]);
+    expect(quarantinedConfig).toHaveLength(1);
+    expect(quarantinedHistory).toHaveLength(1);
+    expect(storage.getDiagnostics()).toEqual(
+      expect.arrayContaining([
+        "Recovered valid configuration sections; rejected bytes were quarantined.",
+        "Recovered valid JSON history rows; rejected bytes were quarantined."
+      ])
+    );
+  });
+
+  it("skips and quarantines malformed SQLite rows without aborting history loading", () => {
+    const paths = testPaths();
+    const storage = new StorageService(paths);
+    storage.addHistory(historyItem({ id: "valid-sqlite-row" }));
+    closeStorage(storage);
+    const db = new DatabaseSync(paths.historyDbPath);
+    db.prepare(`
+      INSERT INTO dictations
+      (id, created_at, mode_name, app_name, window_title, raw_transcript, processed_output, data)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("malformed-row", new Date().toISOString(), "Default", "", "", "raw", "processed", "{");
+    db.close();
+
+    const recovered = new StorageService(paths);
+    const state = recovered.getState();
+    const quarantines = readdirSync(paths.dataDir).filter((name) => name.startsWith("murmur-history.sqlite-rows.corrupt-"));
+
+    expect(state.history.map((item) => item.id)).toEqual(["valid-sqlite-row"]);
+    expect(quarantines).toHaveLength(1);
+    expect(recovered.getDiagnostics()).toContain(
+      "Skipped malformed SQLite history rows; the original bytes were quarantined."
+    );
+    closeStorage(recovered);
+  });
+
+  it("does not touch locked history for configuration-only mutations", () => {
+    const paths = testPaths();
+    const storage = new StorageService(paths);
+    storage.addHistory(historyItem({ id: "locked-history" }));
+    const lock = new DatabaseSync(paths.historyDbPath);
+    lock.exec("BEGIN IMMEDIATE;");
+
+    try {
+      expect(storage.updateSettings({ theme: "light" }).settings.theme).toBe("light");
+    } finally {
+      lock.exec("ROLLBACK;");
+      lock.close();
+      closeStorage(storage);
+    }
+
+    const config = JSON.parse(readFileSync(paths.configPath, "utf8")) as { settings: { theme: string } };
+    expect(config.settings.theme).toBe("light");
+  });
+
+  it("does not commit retention settings when the corresponding history update fails", () => {
+    const paths = testPaths();
+    const storage = new StorageService(paths);
+    storage.addHistory(historyItem({ id: "old-history", createdAt: recentIso(3) }));
+    const lock = new DatabaseSync(paths.historyDbPath);
+    lock.exec("BEGIN IMMEDIATE;");
+
+    try {
+      expect(() => storage.updateSettings({ textRetentionDays: 1 })).toThrow();
+    } finally {
+      lock.exec("ROLLBACK;");
+      lock.close();
+      closeStorage(storage);
+    }
+
+    const reopened = new StorageService(paths);
+    expect(reopened.getState().settings.textRetentionDays).toBe(defaultSettings.textRetentionDays);
+    expect(reopened.getState().history.map((item) => item.id)).toEqual(["old-history"]);
+    closeStorage(reopened);
+  });
+
+  it("recovers retention changes interrupted after the history commit", () => {
+    const paths = testPaths();
+    const storage = new StorageService(paths);
+    const audioPath = join(paths.audioDir, "retention-transaction.wav");
+    writeFileSync(audioPath, "sensitive audio");
+    storage.addHistory(historyItem({ id: "expired-history", audioPath, createdAt: recentIso(3) }));
+    const now = Date.now();
+    const configTempPath = join(paths.configDir, `.murmur-config.json.${process.pid}.${now}.tmp`);
+    mkdirSync(configTempPath);
+    vi.spyOn(Date, "now").mockReturnValue(now);
+
+    try {
+      expect(() => storage.updateSettings({ textRetentionDays: 1 })).toThrow("Storage transaction is pending recovery");
+    } finally {
+      vi.restoreAllMocks();
+      closeStorage(storage);
+      rmSync(configTempPath, { recursive: true, force: true });
+    }
+
+    expect(existsSync(`${paths.configPath}.storage-transaction`)).toBe(true);
+    const recovered = new StorageService(paths);
+    expect(recovered.getState().settings.textRetentionDays).toBe(1);
+    expect(recovered.getState().history).toEqual([]);
+    expect(existsSync(audioPath)).toBe(false);
+    expect(existsSync(`${paths.configPath}.storage-transaction`)).toBe(false);
+    expect(existsSync(`${paths.configPath}.storage-transaction.next`)).toBe(false);
+    expect(existsSync(`${paths.historyJsonPath}.storage-transaction.next`)).toBe(false);
+    closeStorage(recovered);
+  });
+
+  it("securely removes cleared transcript content from SQLite storage", () => {
+    const paths = testPaths();
+    const sensitiveText = "sensitive-transcript-content-that-must-not-remain";
+    const storage = new StorageService(paths);
+    storage.addHistory(historyItem({ id: "secure-delete", rawTranscript: sensitiveText, processedOutput: sensitiveText }));
+    const secureDelete = (storage as unknown as { db: DatabaseSync }).db
+      .prepare("PRAGMA secure_delete")
+      .get() as { secure_delete: number };
+
+    storage.clearHistory();
+    closeStorage(storage);
+
+    const sqliteBytes = [paths.historyDbPath, `${paths.historyDbPath}-wal`, `${paths.historyDbPath}-shm`]
+      .filter(existsSync)
+      .map((path) => readFileSync(path).toString("utf8"))
+      .join("");
+
+    expect(secureDelete.secure_delete).toBe(1);
+    expect(sqliteBytes).not.toContain(sensitiveText);
+  });
+
+  it("skips no-op provider migrations for current configuration snapshots", () => {
+    const paths = testPaths();
+    const storage = jsonStorage(paths);
+    storage.updateSettings({ theme: "light" });
+    const now = 864209753;
+    const migrationTempPath = join(
+      paths.configDir,
+      `.murmur-config.json.provider-transaction.next.${process.pid}.${now}.tmp`
+    );
+    mkdirSync(migrationTempPath);
+    vi.spyOn(Date, "now").mockReturnValue(now);
+
+    try {
+      expect(() => jsonStorage(paths)).not.toThrow();
+    } finally {
+      vi.restoreAllMocks();
+      rmSync(migrationTempPath, { recursive: true, force: true });
+    }
+  });
+
+  it("removes audio linked from records pruned by the history count cap", () => {
+    const paths = testPaths();
+    const prunedAudio = join(paths.audioDir, "count-pruned.wav");
+    writeFileSync(prunedAudio, "legacy audio");
+    const history = Array.from({ length: 2000 }, (_, index) =>
+      historyItem({
+        id: `history-${index}`,
+        audioPath: index === 1999 ? prunedAudio : null,
+        createdAt: new Date(Date.now() - index).toISOString()
+      })
+    );
+    writeFileSync(paths.historyJsonPath, JSON.stringify(history));
+    const storage = jsonStorage(paths);
+
+    storage.addHistory(historyItem({ id: "history-newest" }));
+
+    expect(existsSync(prunedAudio)).toBe(false);
+    expect(storage.getState().history).toHaveLength(2000);
+  });
+
+  it("repairs settings-only configuration permissions before reading", () => {
+    const paths = testPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(paths.configPath, JSON.stringify({ settings: { ...defaultSettings, theme: "light" } }));
+    chmodSync(paths.configPath, 0o644);
+
+    const storage = jsonStorage(paths);
+
+    expect(storage.getState().settings.theme).toBe("light");
+    expect(modeOf(paths.configPath)).toBe(0o600);
+  });
+
   it("filters the old initial release note while preserving other release notes", () => {
     const paths = testPaths();
     mkdirSync(paths.configDir, { recursive: true });
@@ -924,8 +1168,10 @@ describe("StorageService", () => {
     const storage = jsonStorage(paths);
     const firstAudio = join(paths.audioDir, "first.wav");
     const secondAudio = join(paths.audioDir, "second.wav");
+    const historyQuarantine = `${paths.historyJsonPath}.corrupt-test`;
     writeFileSync(firstAudio, "first");
     writeFileSync(secondAudio, "second");
+    writeFileSync(historyQuarantine, "sensitive corrupt history");
     storage.addHistory(historyItem({ id: "first", audioPath: firstAudio, createdAt: recentIso(1) }));
     storage.addHistory(historyItem({ id: "second", audioPath: secondAudio, createdAt: recentIso(2) }));
 
@@ -934,6 +1180,7 @@ describe("StorageService", () => {
 
     expect(existsSync(firstAudio)).toBe(false);
     expect(existsSync(secondAudio)).toBe(false);
+    expect(existsSync(historyQuarantine)).toBe(false);
   });
 
   it("prunes history beyond text retention days and removes linked audio", () => {
@@ -995,8 +1242,12 @@ describe("StorageService", () => {
     const storage = jsonStorage(paths);
     const audioPath = join(paths.audioDir, "retained.wav");
     const modelPath = join(paths.modelDir, "ggml-test.bin");
+    const configQuarantine = `${paths.configPath}.corrupt-test`;
+    const sqliteQuarantine = join(paths.dataDir, "murmur-history.sqlite-rows.corrupt-test");
     writeFileSync(audioPath, "audio");
     writeFileSync(modelPath, "model");
+    writeFileSync(configQuarantine, "legacy secret");
+    writeFileSync(sqliteQuarantine, "corrupt transcript");
     storage.updateSettings({ theme: "light" });
     storage.addHistory(historyItem({ audioPath }));
 
@@ -1005,6 +1256,8 @@ describe("StorageService", () => {
     expect(state.settings.theme).toBe(defaultSettings.theme);
     expect(state.history).toEqual([]);
     expect(existsSync(audioPath)).toBe(false);
+    expect(existsSync(configQuarantine)).toBe(false);
+    expect(existsSync(sqliteQuarantine)).toBe(false);
     expect(existsSync(modelPath)).toBe(true);
   });
 
@@ -1036,6 +1289,10 @@ describe("StorageService", () => {
     expect(modelLibrary.activeModelIds.language).toBe(discovered.id);
   });
 });
+
+function closeStorage(storage: StorageService): void {
+  (storage as unknown as { closeDatabase: () => void }).closeDatabase();
+}
 
 function jsonStorage(paths: AppPaths, providerSecretCodec?: ProviderSecretCodec): StorageService {
   return new StorageService(
