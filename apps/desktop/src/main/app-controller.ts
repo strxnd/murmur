@@ -1196,7 +1196,7 @@ export class AppController {
     const persisted = this.storage.getState();
     const source: RecordingSource = this.onboardingDictationScopeActive ? "onboarding" : "dictation";
 
-    const sttUsability = getSttUsability(persisted, this.runtimeService, this.paths);
+    const sttUsability = getSttUsability(persisted, this.runtimeService, this.paths, this.modelLibrary);
     if (!sttUsability.usable) {
       this.session = {
         ...defaultSession,
@@ -1970,10 +1970,11 @@ export class AppController {
   }
 
   private getSnapshot(): AppStateSnapshot {
+    const sttSetup = this.sttSetup.getSnapshot();
     const state = this.storage.getState();
     return {
       ...state,
-      sttSetup: this.sttSetup.getSnapshot(),
+      sttSetup,
       session: this.session,
       capabilities: this.getCapabilities(),
       providerRuntime: this.getProviderRuntime()

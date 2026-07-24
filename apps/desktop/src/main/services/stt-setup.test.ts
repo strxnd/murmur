@@ -42,16 +42,21 @@ describe("SttSetupService", () => {
 
   it("does not require setup for existing users with an active downloaded model and runtime", async () => {
     const { setup, storage, modelLibrary, paths } = createSetup("ready");
-    const modelPath = join(paths.modelDir, "ggml-tiny.en.bin");
-    writeFileSync(modelPath, "model");
-    const modelStats = statSync(modelPath);
     const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en")!;
+    const original = { size: item.sizeBytes, sha: item.sha256 };
+    const modelContents = "model";
+    const modelPath = join(paths.modelDir, item.filename!);
+    item.sizeBytes = Buffer.byteLength(modelContents);
+    item.sha256 = sha256(modelContents);
+    writeFileSync(modelPath, modelContents);
+    const modelStats = statSync(modelPath);
     storage.upsertModelDownload({
-      modelId: "whisper-tiny-en",
+      modelId: item.id,
       status: "downloaded",
-      progressBytes: 1,
+      progressBytes: modelStats.size,
+      totalBytes: item.sizeBytes,
       localPath: modelPath,
-      verification: { sizeBytes: modelStats.size, mtimeMs: modelStats.mtimeMs, sha256: item.sha256! },
+      verification: { sizeBytes: modelStats.size, mtimeMs: modelStats.mtimeMs, sha256: item.sha256 },
       favorite: false
     });
     storage.setTranscriptionProviders(
@@ -59,12 +64,56 @@ describe("SttSetupService", () => {
         provider.id === "local-whisper-cpp" ? { ...provider, enabled: true } : provider
       )
     );
-    storage.setActiveModel("voice", "whisper-tiny-en");
-    await modelLibrary.getLibrary();
+    storage.setActiveModel("voice", item.id);
 
-    const snapshot = setup.getSnapshot();
+    try {
+      await modelLibrary.getLibrary();
+      expect(setup.getSnapshot().needsSetup).toBe(false);
+    } finally {
+      item.sizeBytes = original.size;
+      item.sha256 = original.sha;
+    }
+  });
 
-    expect(snapshot.needsSetup).toBe(false);
+  it("requires setup when an active managed model is corrupted after startup", () => {
+    const { setup, storage, paths } = createSetup("ready");
+    const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en")!;
+    const original = { size: item.sizeBytes, sha: item.sha256 };
+    const modelContents = "verified-model";
+    const modelPath = join(paths.modelDir, item.filename!);
+    item.sizeBytes = Buffer.byteLength(modelContents);
+    item.sha256 = sha256(modelContents);
+    writeFileSync(modelPath, modelContents);
+    const modelStats = statSync(modelPath);
+    storage.upsertModelDownload({
+      modelId: item.id,
+      status: "downloaded",
+      progressBytes: modelStats.size,
+      totalBytes: item.sizeBytes,
+      localPath: modelPath,
+      verification: { sizeBytes: modelStats.size, mtimeMs: modelStats.mtimeMs, sha256: item.sha256 },
+      favorite: false
+    });
+    storage.setTranscriptionProviders(
+      storage.getState().transcriptionProviders.map((provider) =>
+        provider.id === "local-whisper-cpp" ? { ...provider, enabled: true } : provider
+      )
+    );
+    storage.setActiveModel("voice", item.id);
+
+    try {
+      expect(setup.getSnapshot().needsSetup).toBe(false);
+
+      writeFileSync(modelPath, "corrupted-managed-model");
+
+      expect(setup.getSnapshot().needsSetup).toBe(true);
+      const state = storage.getState();
+      expect(state.modelLibrary.downloads.find((download) => download.modelId === item.id)?.status).toBe("error");
+      expect(state.modelLibrary.activeModelIds.voice).toBeUndefined();
+    } finally {
+      item.sizeBytes = original.size;
+      item.sha256 = original.sha;
+    }
   });
 
   it("repairs the required runtime before activating a downloaded model", async () => {
