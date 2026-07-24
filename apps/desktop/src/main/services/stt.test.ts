@@ -1,6 +1,6 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,11 +11,18 @@ import type { ResolvedSttRuntime, SttRuntimeService } from "./stt-runtime";
 
 let tempDirs: string[] = [];
 const servers: Array<() => Promise<void>> = [];
-const originalTotalTimeout = process.env.MURMUR_PROVIDER_RESPONSE_TIMEOUT_MS;
-const originalIdleTimeout = process.env.MURMUR_PROVIDER_RESPONSE_IDLE_TIMEOUT_MS;
+const originalEnv = new Map(
+  [
+    "MURMUR_PROVIDER_RESPONSE_TIMEOUT_MS",
+    "MURMUR_PROVIDER_RESPONSE_IDLE_TIMEOUT_MS",
+    "MURMUR_RUNTIME_READY_TIMEOUT_MS",
+    "MURMUR_STT_PROCESS_TIMEOUT_MS",
+    "MURMUR_STT_PROCESS_TERMINATION_GRACE_MS"
+  ].map((name) => [name, process.env[name]])
+);
 
 afterEach(async () => {
-  restoreTimeoutEnv();
+  restoreTestEnv();
   await Promise.all(servers.splice(0).map((close) => close()));
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
   tempDirs = [];
@@ -52,8 +59,15 @@ describe("STT runtime args", () => {
     expect(args).toContain("--debug=false");
   });
 
-  it("builds whisper-server args", () => {
-    const args = buildWhisperServerArgs(49152, "/models/ggml-tiny.en.bin", "8");
+  it("builds whisper-server args with private scratch and capability paths", () => {
+    const args = buildWhisperServerArgs(
+      49152,
+      "/models/ggml-tiny.en.bin",
+      "/private/stt",
+      "/murmur-secret",
+      "/private/challenge",
+      "8"
+    );
 
     expect(args).toEqual([
       "--host",
@@ -62,32 +76,30 @@ describe("STT runtime args", () => {
       "49152",
       "--model",
       "/models/ggml-tiny.en.bin",
+      "--request-path",
+      "/murmur-secret",
       "--inference-path",
       "/inference",
+      "--tmp-dir",
+      "/private/stt",
+      "--public",
+      "/private/challenge",
       "--threads",
       "8"
     ]);
   });
+});
 
+describe("TranscriptionService", () => {
   it("resolves relative bundled model names through the cache model dir", async () => {
     const paths = testPaths();
     touch(join(paths.modelDir, "ggml-tiny.en.bin"));
     const service = new TranscriptionService(paths, fakeRuntimeService("available"));
 
-    const result = await service.validate({
-      id: "local-whisper-cpp",
-      type: "whisper_cpp",
-      name: "Bundled whisper.cpp",
-      baseUrl: "murmur://runtime/whisper.cpp",
-      endpointPath: "/inference",
-      isCloud: false,
-      isLocal: true,
-      defaultModel: "ggml-tiny.en.bin",
-      streamingMode: "none",
-      enabled: true
-    });
+    const result = await service.validate(bundledWhisperCppProvider("ggml-tiny.en.bin"));
 
     expect(result.ok).toBe(true);
+    await service.dispose();
   });
 
   it("returns a failed validation result when the provider connection fails", async () => {
@@ -98,16 +110,17 @@ describe("STT runtime args", () => {
 
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/^Provider connection failed:/);
+    await service.dispose();
   });
 
-  it("writes Sherpa scratch audio under the temp dir", async () => {
+  it("writes Sherpa scratch audio under the private STT temp dir", async () => {
     const paths = testPaths();
     const modelDir = join(paths.modelDir, "sherpa-test-model");
     const argsPath = join(paths.tempDir, "sherpa-args.json");
     touch(join(modelDir, "tokens.txt"));
     touch(join(modelDir, "model.int8.onnx"));
-    const runtimePath = runtimeShim(tempRoot());
-    const service = new TranscriptionService(paths, fakeRuntimeService("available", runtimePath, argsPath));
+    const runtimePath = sherpaResultShim(tempRoot());
+    const service = new TranscriptionService(paths, fakeRuntimeService("available", runtimePath, { MURMUR_ARGS_PATH: argsPath }));
 
     const result = await service.transcribe({
       audio: wavWithSamples(160),
@@ -118,11 +131,206 @@ describe("STT runtime args", () => {
     const args = JSON.parse(readFileSync(argsPath, "utf8")) as string[];
     const audioPath = args.at(-1);
     if (!audioPath) throw new Error("Sherpa shim did not record an audio path.");
-    const relativeAudioPath = relative(paths.tempDir, audioPath);
+    const relativeAudioPath = relative(paths.sttTempDir, audioPath);
     expect(result.text).toBe("shim transcript");
     expect(relativeAudioPath.startsWith("..")).toBe(false);
     expect(isAbsolute(relativeAudioPath)).toBe(false);
     expect(existsSync(audioPath)).toBe(false);
+    await service.dispose();
+  });
+
+  it("sweeps stale owned scratch audio at startup and Clear local data", async () => {
+    const paths = testPaths();
+    const staleSherpa = join(paths.sttTempDir, "dictation-stale.wav");
+    const staleWhisper = join(paths.sttTempDir, "whisper-server-stale.wav");
+    const unrelated = join(paths.sttTempDir, "keep.txt");
+    writeFileSync(staleSherpa, "sensitive audio");
+    writeFileSync(staleWhisper, "sensitive audio");
+    writeFileSync(unrelated, "keep");
+
+    const service = new TranscriptionService(paths, fakeRuntimeService("available"));
+
+    expect(existsSync(staleSherpa)).toBe(false);
+    expect(existsSync(staleWhisper)).toBe(false);
+    expect(existsSync(unrelated)).toBe(true);
+
+    const laterScratch = join(paths.sttTempDir, "dictation-later.wav");
+    writeFileSync(laterScratch, "sensitive audio");
+    await service.clearLocalData();
+
+    expect(existsSync(laterScratch)).toBe(false);
+    expect(existsSync(unrelated)).toBe(true);
+    await service.dispose();
+  });
+
+  it("turns whisper-server launch errors into managed transcription failures", async () => {
+    const paths = testPaths();
+    touch(join(paths.modelDir, "ggml-tiny.en.bin"));
+    const missingRuntime = join(paths.tempDir, "missing-whisper-server");
+    const service = new TranscriptionService(paths, fakeRuntimeService("available", missingRuntime));
+
+    await expect(
+      service.transcribe({
+        audio: wavWithSamples(160),
+        mimeType: "audio/wav",
+        provider: bundledWhisperCppProvider("ggml-tiny.en.bin")
+      })
+    ).rejects.toThrow(/failed to launch|ENOENT/);
+    expect(service.getDiagnostics().join("\n")).toMatch(/launch error/i);
+    await service.dispose();
+  });
+
+  it("uses authenticated managed paths and a writable temp dir for whisper-server", async () => {
+    const paths = testPaths();
+    const modelPath = join(paths.modelDir, "ggml-tiny.en.bin");
+    const argsPath = join(paths.tempDir, "whisper-args.json");
+    const requestPath = join(paths.tempDir, "whisper-request.txt");
+    touch(modelPath);
+    const runtimePath = whisperServerShim(tempRoot());
+    const service = new TranscriptionService(
+      paths,
+      fakeRuntimeService("available", runtimePath, { MURMUR_ARGS_PATH: argsPath, MURMUR_REQUEST_PATH: requestPath })
+    );
+
+    const result = await service.transcribe({
+      audio: wavWithSamples(160),
+      mimeType: "audio/wav",
+      provider: bundledWhisperCppProvider("ggml-tiny.en.bin")
+    });
+
+    const args = JSON.parse(readFileSync(argsPath, "utf8")) as string[];
+    const configuredRequestPath = optionValue(args, "--request-path");
+    const publicDir = optionValue(args, "--public");
+    expect(result.text).toBe("managed transcript");
+    expect(optionValue(args, "--tmp-dir")).toBe(paths.sttTempDir);
+    expect(configuredRequestPath).toMatch(/^\/murmur-[0-9a-f-]+$/);
+    expect(relative(paths.sttTempDir, publicDir).startsWith("..")).toBe(false);
+    expect(readFileSync(requestPath, "utf8")).toBe(`${configuredRequestPath}/inference`);
+
+    await service.dispose();
+    expect(existsSync(publicDir)).toBe(false);
+  });
+
+  it("rejects a local endpoint that cannot answer the per-launch identity challenge", async () => {
+    process.env.MURMUR_RUNTIME_READY_TIMEOUT_MS = "120";
+    const paths = testPaths();
+    touch(join(paths.modelDir, "ggml-tiny.en.bin"));
+    const runtimePath = unauthenticatedWhisperServerShim(tempRoot());
+    const service = new TranscriptionService(paths, fakeRuntimeService("available", runtimePath));
+
+    await expect(
+      service.transcribe({
+        audio: wavWithSamples(160),
+        mimeType: "audio/wav",
+        provider: bundledWhisperCppProvider("ggml-tiny.en.bin")
+      })
+    ).rejects.toThrow(/did not become ready/);
+    await service.dispose();
+  });
+
+  it("requires a terminal event for completed-audio SSE", async () => {
+    const { url } = await startSseServer([
+      'data: {"type":"transcript.text.delta","delta":"partial"}\n\n'
+    ]);
+    const service = new TranscriptionService(testPaths(), fakeRuntimeService("available"));
+
+    await expect(
+      service.transcribe({
+        audio: wavWithSamples(160),
+        mimeType: "audio/wav",
+        provider: streamingProvider(url)
+      })
+    ).rejects.toThrow("ended before a terminal completion event");
+    await service.dispose();
+  });
+
+  it("processes the terminal SSE event before generic delta extraction", async () => {
+    const { url } = await startSseServer([
+      'data: {"type":"transcript.text.delta","delta":"draft"}\n\n',
+      'data: {"type":"transcript.text.done","text":"final transcript"}\n\n'
+    ]);
+    const service = new TranscriptionService(testPaths(), fakeRuntimeService("available"));
+    const deltas: string[] = [];
+
+    const result = await service.transcribe({
+      audio: wavWithSamples(160),
+      mimeType: "audio/wav",
+      provider: streamingProvider(url),
+      onDelta: (delta) => deltas.push(delta)
+    });
+
+    expect(result.text).toBe("final transcript");
+    expect(deltas).toEqual(["draft"]);
+    await service.dispose();
+  });
+
+  it("waits for a timed-out Sherpa child to terminate and escalates to SIGKILL", async () => {
+    process.env.MURMUR_STT_PROCESS_TIMEOUT_MS = "800";
+    process.env.MURMUR_STT_PROCESS_TERMINATION_GRACE_MS = "30";
+    const paths = testPaths();
+    const modelDir = join(paths.modelDir, "sherpa-test-model");
+    const pidPath = join(paths.tempDir, "sherpa.pid");
+    const readyPath = join(paths.tempDir, "sherpa.ready");
+    const signalPath = join(paths.tempDir, "sherpa.sigterm");
+    touch(join(modelDir, "tokens.txt"));
+    touch(join(modelDir, "model.int8.onnx"));
+    const runtimePath = stubbornProcessShim(tempRoot());
+    const service = new TranscriptionService(
+      paths,
+      fakeRuntimeService("available", runtimePath, {
+        MURMUR_PID_PATH: pidPath,
+        MURMUR_READY_PATH: readyPath,
+        MURMUR_SIGNAL_PATH: signalPath
+      })
+    );
+    const transcription = service.transcribe({
+      audio: wavWithSamples(160),
+      mimeType: "audio/wav",
+      provider: sherpaProvider("sherpa-test-model")
+    });
+    await waitForFile(readyPath);
+
+    await expect(transcription).rejects.toThrow("Sherpa ONNX transcription failed");
+
+    const pid = Number(readFileSync(pidPath, "utf8"));
+    expect(existsSync(signalPath)).toBe(true);
+    expectProcessMissing(pid);
+    expect(readdirSync(paths.sttTempDir).filter((name) => name.startsWith("dictation-"))).toEqual([]);
+    await service.dispose();
+  });
+
+  it("awaits active one-shot children during disposal", async () => {
+    process.env.MURMUR_STT_PROCESS_TIMEOUT_MS = "5000";
+    process.env.MURMUR_STT_PROCESS_TERMINATION_GRACE_MS = "30";
+    const paths = testPaths();
+    const modelDir = join(paths.modelDir, "sherpa-test-model");
+    const pidPath = join(paths.tempDir, "dispose-sherpa.pid");
+    const readyPath = join(paths.tempDir, "dispose-sherpa.ready");
+    const signalPath = join(paths.tempDir, "dispose-sherpa.sigterm");
+    touch(join(modelDir, "tokens.txt"));
+    touch(join(modelDir, "model.int8.onnx"));
+    const runtimePath = stubbornProcessShim(tempRoot());
+    const service = new TranscriptionService(
+      paths,
+      fakeRuntimeService("available", runtimePath, {
+        MURMUR_PID_PATH: pidPath,
+        MURMUR_READY_PATH: readyPath,
+        MURMUR_SIGNAL_PATH: signalPath
+      })
+    );
+    const transcription = service.transcribe({
+      audio: wavWithSamples(160),
+      mimeType: "audio/wav",
+      provider: sherpaProvider("sherpa-test-model")
+    });
+    await waitForFile(readyPath);
+
+    await service.dispose();
+    await expect(transcription).rejects.toThrow("Sherpa ONNX transcription failed");
+
+    const pid = Number(readFileSync(pidPath, "utf8"));
+    expect(existsSync(signalPath)).toBe(true);
+    expectProcessMissing(pid);
   });
 
   it("rejects stalled OpenAI-compatible response bodies", async () => {
@@ -141,6 +349,7 @@ describe("STT runtime args", () => {
         provider: openAiCompatibleProvider(url)
       })
     ).rejects.toThrow(/STT transcription response body/);
+    await service.dispose();
   });
 
   it("rejects empty WAV recordings before sending them to whisper.cpp", async () => {
@@ -160,6 +369,7 @@ describe("STT runtime args", () => {
       })
     ).rejects.toThrow("Recording did not capture any audio");
     expect(requestCount).toBe(0);
+    await service.dispose();
   });
 
   it("bounds retained runtime diagnostics text", () => {
@@ -186,6 +396,21 @@ function sherpaProvider(defaultModel: string): TranscriptionProviderConfig {
   };
 }
 
+function bundledWhisperCppProvider(defaultModel: string): TranscriptionProviderConfig {
+  return {
+    id: "local-whisper-cpp",
+    type: "whisper_cpp",
+    name: "Bundled whisper.cpp",
+    baseUrl: "murmur://runtime/whisper.cpp",
+    endpointPath: "/inference",
+    isCloud: false,
+    isLocal: true,
+    defaultModel,
+    streamingMode: "none",
+    enabled: true
+  };
+}
+
 function openAiCompatibleProvider(baseUrl: string): TranscriptionProviderConfig {
   return {
     id: "local-openai-stt",
@@ -199,6 +424,14 @@ function openAiCompatibleProvider(baseUrl: string): TranscriptionProviderConfig 
     defaultLanguage: "auto",
     streamingMode: "none",
     enabled: true
+  };
+}
+
+function streamingProvider(baseUrl: string): TranscriptionProviderConfig {
+  return {
+    ...openAiCompatibleProvider(baseUrl),
+    defaultModel: "gpt-4o-mini-transcribe",
+    streamingMode: "completed_audio_sse"
   };
 }
 
@@ -220,7 +453,7 @@ function whisperCppProvider(baseUrl: string): TranscriptionProviderConfig {
 function fakeRuntimeService(
   status: SttRuntimeAvailability["status"],
   binaryPath = "/tmp/runtime",
-  argsPath = "/tmp/sherpa-args.json"
+  runtimeEnv: NodeJS.ProcessEnv = {}
 ): SttRuntimeService {
   const service = {
     getAvailability(id: SttRuntimeId): SttRuntimeAvailability {
@@ -251,7 +484,7 @@ function fakeRuntimeService(
         cwd: dirname(binaryPath),
         source: "env",
         version: "0.0.0-test",
-        env: { ...process.env, MURMUR_ARGS_PATH: argsPath }
+        env: { ...process.env, ...runtimeEnv }
       };
     },
     requireAutomaticRuntime(id: SttRuntimeId): ResolvedSttRuntime {
@@ -261,28 +494,80 @@ function fakeRuntimeService(
   return service as unknown as SttRuntimeService;
 }
 
-function runtimeShim(root: string): string {
-  const path = join(root, "sherpa-shim.cjs");
-  writeFileSync(
-    path,
-    [
-      "#!/usr/bin/env node",
-      'const fs = require("node:fs");',
-      "fs.writeFileSync(process.env.MURMUR_ARGS_PATH, JSON.stringify(process.argv.slice(2)));",
-      'process.stdout.write(JSON.stringify({ text: "shim transcript" }) + "\\n");'
-    ].join("\n")
-  );
+function sherpaResultShim(root: string): string {
+  return executableShim(root, "sherpa-result.cjs", [
+    'const fs = require("node:fs");',
+    "fs.writeFileSync(process.env.MURMUR_ARGS_PATH, JSON.stringify(process.argv.slice(2)));",
+    'process.stdout.write(JSON.stringify({ text: "shim transcript" }) + "\\n");'
+  ]);
+}
+
+function stubbornProcessShim(root: string): string {
+  return executableShim(root, "stubborn-process.cjs", [
+    'const fs = require("node:fs");',
+    "fs.writeFileSync(process.env.MURMUR_PID_PATH, String(process.pid));",
+    'process.on("SIGTERM", () => fs.writeFileSync(process.env.MURMUR_SIGNAL_PATH, "SIGTERM"));',
+    'fs.writeFileSync(process.env.MURMUR_READY_PATH, "ready");',
+    "setInterval(() => {}, 1000);"
+  ]);
+}
+
+function whisperServerShim(root: string): string {
+  return executableShim(root, "whisper-server.cjs", [
+    'const fs = require("node:fs");',
+    'const http = require("node:http");',
+    "const args = process.argv.slice(2);",
+    "const value = (name) => args[args.indexOf(name) + 1];",
+    'fs.writeFileSync(process.env.MURMUR_ARGS_PATH, JSON.stringify(args));',
+    'const requestPath = value("--request-path");',
+    'const challenge = fs.readFileSync(value("--public") + "/index.html", "utf8");',
+    "const server = http.createServer((request, response) => {",
+    '  if (request.url === requestPath + "/") { response.end(challenge); return; }',
+    '  if (request.url === requestPath + "/health") { response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify({ status: "ok" })); return; }',
+    '  if (request.url === requestPath + "/inference") { request.resume(); request.on("end", () => { fs.writeFileSync(process.env.MURMUR_REQUEST_PATH, request.url); response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify({ text: "managed transcript" })); }); return; }',
+    "  response.statusCode = 404; response.end();",
+    "});",
+    'server.listen(Number(value("--port")), "127.0.0.1");',
+    'process.on("SIGTERM", () => server.close(() => process.exit(0)));'
+  ]);
+}
+
+function unauthenticatedWhisperServerShim(root: string): string {
+  return executableShim(root, "unauthenticated-whisper-server.cjs", [
+    'const http = require("node:http");',
+    "const args = process.argv.slice(2);",
+    "const value = (name) => args[args.indexOf(name) + 1];",
+    'const server = http.createServer((_request, response) => { response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify({ status: "ok" })); });',
+    'server.listen(Number(value("--port")), "127.0.0.1");',
+    'process.on("SIGTERM", () => server.close(() => process.exit(0)));'
+  ]);
+}
+
+function executableShim(root: string, name: string, lines: string[]): string {
+  const path = join(root, name);
+  writeFileSync(path, ["#!/usr/bin/env node", ...lines].join("\n"));
   chmodSync(path, 0o755);
   return path;
 }
 
+function optionValue(args: string[], option: string): string {
+  const index = args.indexOf(option);
+  const value = index >= 0 ? args[index + 1] : undefined;
+  if (!value) throw new Error(`Missing ${option} in runtime arguments.`);
+  return value;
+}
+
 function testPaths(): AppPaths {
   const root = tempRoot();
-  return resolveAppPaths(fakeApp(root), {
-    XDG_CONFIG_HOME: join(root, "config"),
-    XDG_DATA_HOME: join(root, "data"),
-    XDG_CACHE_HOME: join(root, "cache")
-  });
+  return resolveAppPaths(
+    fakeApp(root),
+    {
+      XDG_CONFIG_HOME: join(root, "config"),
+      XDG_DATA_HOME: join(root, "data"),
+      XDG_CACHE_HOME: join(root, "cache")
+    },
+    { platform: "linux", uid: 1000 }
+  );
 }
 
 function fakeApp(root: string) {
@@ -333,14 +618,19 @@ function writeAscii(view: DataView, offset: number, value: string): void {
   }
 }
 
-function restoreTimeoutEnv(): void {
-  restoreEnvValue("MURMUR_PROVIDER_RESPONSE_TIMEOUT_MS", originalTotalTimeout);
-  restoreEnvValue("MURMUR_PROVIDER_RESPONSE_IDLE_TIMEOUT_MS", originalIdleTimeout);
+function restoreTestEnv(): void {
+  for (const [name, value] of originalEnv) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
 }
 
-function restoreEnvValue(name: string, value: string | undefined): void {
-  if (value === undefined) delete process.env[name];
-  else process.env[name] = value;
+function startSseServer(chunks: string[]): Promise<{ url: string }> {
+  return startServer((response) => {
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    for (const chunk of chunks) response.write(chunk);
+    response.end();
+  });
 }
 
 function startServer(handler: (response: ServerResponse) => void): Promise<{ url: string }> {
@@ -376,4 +666,16 @@ function closeServer(server: Server, sockets: Set<Socket>): Promise<void> {
       else resolve();
     });
   });
+}
+
+async function waitForFile(path: string): Promise<void> {
+  const startedAt = Date.now();
+  while (!existsSync(path)) {
+    if (Date.now() - startedAt > 2000) throw new Error(`Timed out waiting for ${path}.`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+function expectProcessMissing(pid: number): void {
+  expect(() => process.kill(pid, 0)).toThrow();
 }

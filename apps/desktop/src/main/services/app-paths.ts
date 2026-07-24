@@ -9,6 +9,7 @@ export interface AppPaths {
   dataDir: string;
   cacheDir: string;
   tempDir: string;
+  sttTempDir: string;
   audioDir: string;
   modelDir: string;
   runtimeDir: string;
@@ -41,11 +42,12 @@ export function resolveAppPaths(
   const dataDir = join(dataBase, "murmur");
   const cacheDir = join(cacheBase, "murmur");
   const tempDir = resolveTempDir(app.getPath("temp"), runtime.platform ?? process.platform, runtime.uid ?? process.getuid?.());
+  const sttTempDir = join(tempDir, "stt");
   const audioDir = join(dataDir, "audio");
   const modelDir = join(cacheDir, "models", "stt");
   const runtimeDir = join(cacheDir, "runtimes", "stt");
 
-  for (const dir of [configDir, dataDir, cacheDir, tempDir, audioDir, modelDir, runtimeDir]) {
+  for (const dir of [configDir, dataDir, cacheDir, tempDir, sttTempDir, audioDir, modelDir, runtimeDir]) {
     ensureOwnerOnlyDirectory(dir);
   }
 
@@ -54,6 +56,7 @@ export function resolveAppPaths(
     dataDir,
     cacheDir,
     tempDir,
+    sttTempDir,
     audioDir,
     modelDir,
     runtimeDir,

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { isAbsolute, join } from "node:path";
 import type {
@@ -36,32 +36,59 @@ interface WhisperServerProcess {
   runtimeId: SttRuntimeId;
   accelerator: SttRuntimeAccelerator;
   baseUrl: string;
+  requestPath: string;
+  scratchDir: string;
   process: ChildProcessWithoutNullStreams;
+}
+
+interface OwnedChildProcess {
+  child: ChildProcessWithoutNullStreams;
+  closed: Promise<void>;
+}
+
+interface RuntimeProcessFailure {
+  error: Error;
 }
 
 const bundledWhisperCppRuntimeUrl = "murmur://runtime/whisper.cpp";
 const transcriptionTimeoutMs = 120000;
 const transcriptionIdleTimeoutMs = 30000;
 const whisperServerIdleShutdownMs = 10 * 60 * 1000;
+const defaultProcessTerminationGraceMs = 1000;
 const maxRuntimeDiagnosticsChars = 16000;
+const scratchPathPattern = /^(?:dictation-.+\.wav|whisper-server-.+)$/;
 
 export class TranscriptionService {
   private whisperServer: WhisperServerProcess | null = null;
   private whisperServerIdleTimer: NodeJS.Timeout | null = null;
   private lastRuntimeDiagnostics: string[] = [];
+  private ownedChildren = new Map<ChildProcessWithoutNullStreams, OwnedChildProcess>();
+  private scratchFiles = new Set<string>();
+  private disposed = false;
 
   constructor(
     private paths: AppPaths,
     private runtimeService = new SttRuntimeService()
-  ) {}
-
-  dispose(): void {
-    this.stopWhisperServer();
+  ) {
+    this.prepareScratchDirectory();
   }
 
-  stopRuntime(runtimeId?: SttRuntimeId): void {
+  async dispose(): Promise<void> {
+    this.disposed = true;
+    await this.stopWhisperServer();
+    await Promise.all([...this.ownedChildren.values()].map(({ child }) => this.terminateChild(child)));
+    this.clearScratchFiles();
+  }
+
+  async clearLocalData(): Promise<void> {
+    await this.stopWhisperServer();
+    await Promise.all([...this.ownedChildren.values()].map(({ child }) => this.terminateChild(child)));
+    this.clearScratchFiles();
+  }
+
+  async stopRuntime(runtimeId?: SttRuntimeId): Promise<void> {
     if (!runtimeId || runtimeId === "whisper.cpp") {
-      this.stopWhisperServer();
+      await this.stopWhisperServer();
     }
   }
 
@@ -165,13 +192,13 @@ export class TranscriptionService {
 
     const modelPath = this.requiredModelPath(options.provider.defaultModel, "Bundled whisper.cpp");
     return this.withRuntimeFallback("whisper.cpp", async (runtime) => {
-      const baseUrl = await this.ensureWhisperServer(modelPath, runtime, options.signal);
+      const endpoint = await this.ensureWhisperServer(modelPath, runtime, options.signal);
       const result = await this.transcribeWhisperCpp({
         ...options,
         provider: {
           ...options.provider,
-          baseUrl,
-          endpointPath: "/inference"
+          baseUrl: endpoint.baseUrl,
+          endpointPath: `${endpoint.requestPath}/inference`
         }
       });
       return { ...result, accelerator: runtime.accelerator };
@@ -212,10 +239,10 @@ export class TranscriptionService {
 
     try {
       return await this.withRuntimeFallback("sherpa-onnx", async (runtime) => {
-        const result = await runProcess(
+        const result = await this.runProcess(
           runtime.binaryPath,
           buildSherpaArgs(modelPath, audioPath, undefined, runtime.accelerator),
-          transcriptionTimeoutMs,
+          transcriptionRuntimeTimeoutMs(),
           runtime,
           options.signal
         );
@@ -235,6 +262,7 @@ export class TranscriptionService {
       throw new Error("Sherpa ONNX transcription failed. Check runtime diagnostics for details.");
     } finally {
       rmSync(audioPath, { force: true });
+      this.scratchFiles.delete(audioPath);
     }
   }
 
@@ -302,7 +330,7 @@ export class TranscriptionService {
         throw error;
       }
 
-      this.stopRuntime(runtimeId);
+      await this.stopRuntime(runtimeId);
       this.lastRuntimeDiagnostics = [
         `${primary.label} failed; retrying ${primary.id} CPU once because automatic acceleration failed.`,
         primaryMessage,
@@ -320,24 +348,53 @@ export class TranscriptionService {
     }
   }
 
-  private async ensureWhisperServer(modelPath: string, runtime: ResolvedSttRuntime, signal?: AbortSignal): Promise<string> {
+  private async ensureWhisperServer(
+    modelPath: string,
+    runtime: ResolvedSttRuntime,
+    signal?: AbortSignal
+  ): Promise<Pick<WhisperServerProcess, "baseUrl" | "requestPath">> {
+    if (this.disposed) throw new Error("Transcription service is disposed.");
     const key = [runtime.variantKey, runtime.source, runtime.rootDir, runtime.version, modelPath].join("|");
     const existing = this.whisperServer;
     if (existing?.key === key && existing.process.exitCode === null && !existing.process.killed) {
       this.scheduleWhisperServerIdleShutdown();
-      return existing.baseUrl;
+      return { baseUrl: existing.baseUrl, requestPath: existing.requestPath };
     }
 
-    this.stopWhisperServer();
+    await this.stopWhisperServer();
     throwIfAborted(signal);
     const port = await findOpenPort();
     throwIfAborted(signal);
     const baseUrl = `http://127.0.0.1:${port}`;
-    const args = buildWhisperServerArgs(port, modelPath, undefined, runtime.accelerator, runtime.env.MURMUR_STT_GPU_DEVICE);
+    const requestPath = `/murmur-${randomUUID()}`;
+    const challenge = randomUUID();
+    const scratchDir = join(this.paths.sttTempDir, `whisper-server-${randomUUID()}`);
+    ensureOwnerOnlyDirectory(scratchDir);
+    const challengePath = join(scratchDir, "index.html");
+    writeFileSync(challengePath, challenge, { mode: ownerOnlyFileMode });
+    ensureOwnerOnlyFile(challengePath);
+    this.scratchFiles.add(scratchDir);
+    const args = buildWhisperServerArgs(
+      port,
+      modelPath,
+      this.paths.sttTempDir,
+      requestPath,
+      scratchDir,
+      undefined,
+      runtime.accelerator,
+      runtime.env.MURMUR_STT_GPU_DEVICE
+    );
     const child = spawn(runtime.binaryPath, args, { stdio: ["pipe", "pipe", "pipe"], env: runtime.env, cwd: runtime.cwd });
+    this.ownChild(child);
     const stdout = new BoundedTextBuffer(maxRuntimeDiagnosticsChars);
     const stderr = new BoundedTextBuffer(maxRuntimeDiagnosticsChars);
+    let launchError: Error | null = null;
 
+    child.on("error", (error) => {
+      launchError = error;
+      this.lastRuntimeDiagnostics = [`${runtime.label} launch error: ${tail(error.message)}`];
+      if (this.whisperServer?.process === child) this.whisperServer = null;
+    });
     child.stdout.on("data", (chunk: Buffer) => {
       stdout.append(chunk.toString());
       this.lastRuntimeDiagnostics = runtimeDiagnostics(runtime.label, stdout.text(), stderr.text());
@@ -348,42 +405,53 @@ export class TranscriptionService {
     });
     child.on("close", () => {
       if (this.whisperServer?.process === child) this.whisperServer = null;
+      this.removeScratchPath(scratchDir);
     });
 
-    this.whisperServer = { key, runtimeId: "whisper.cpp", accelerator: runtime.accelerator, baseUrl, process: child };
+    this.whisperServer = {
+      key,
+      runtimeId: "whisper.cpp",
+      accelerator: runtime.accelerator,
+      baseUrl,
+      requestPath,
+      scratchDir,
+      process: child
+    };
     try {
-      await waitForHttp(
+      await waitForWhisperServer(
         baseUrl,
+        requestPath,
+        challenge,
         child,
+        () => launchError,
         () => {
-          this.lastRuntimeDiagnostics = runtimeDiagnostics(runtime.label, stdout.text(), stderr.text());
-          return [stdout.text(), stderr.text()].filter(Boolean).join("\n");
+          const diagnostics = runtimeDiagnostics(runtime.label, stdout.text(), stderr.text());
+          if (diagnostics.length > 0) this.lastRuntimeDiagnostics = diagnostics;
         },
         signal
       );
     } catch (error) {
-      if (isAbortError(error) && this.whisperServer?.process === child) this.stopWhisperServer();
+      if (this.whisperServer?.process === child) this.whisperServer = null;
+      await this.terminateChild(child);
       throw error;
     }
     this.scheduleWhisperServerIdleShutdown();
-    return baseUrl;
+    return { baseUrl, requestPath };
   }
 
-  private stopWhisperServer(): void {
+  private async stopWhisperServer(): Promise<void> {
     if (this.whisperServerIdleTimer) {
       clearTimeout(this.whisperServerIdleTimer);
       this.whisperServerIdleTimer = null;
     }
     const existing = this.whisperServer;
     this.whisperServer = null;
-    if (existing && existing.process.exitCode === null && !existing.process.killed) {
-      existing.process.kill();
-    }
+    if (existing) await this.terminateChild(existing.process);
   }
 
   private scheduleWhisperServerIdleShutdown(): void {
     if (this.whisperServerIdleTimer) clearTimeout(this.whisperServerIdleTimer);
-    this.whisperServerIdleTimer = setTimeout(() => this.stopWhisperServer(), whisperServerIdleShutdownMs);
+    this.whisperServerIdleTimer = setTimeout(() => void this.stopWhisperServer(), whisperServerIdleShutdownMs);
     this.whisperServerIdleTimer.unref();
   }
 
@@ -399,11 +467,130 @@ export class TranscriptionService {
   }
 
   private writeTempAudio(audio: Uint8Array, extension: string): string {
-    ensureOwnerOnlyDirectory(this.paths.tempDir);
-    const path = join(this.paths.tempDir, `dictation-${Date.now()}-${randomUUID()}.${extension}`);
+    ensureOwnerOnlyDirectory(this.paths.sttTempDir);
+    const path = join(this.paths.sttTempDir, `dictation-${Date.now()}-${randomUUID()}.${extension}`);
     writeFileSync(path, audio, { mode: ownerOnlyFileMode });
     ensureOwnerOnlyFile(path);
+    this.scratchFiles.add(path);
     return path;
+  }
+
+  private prepareScratchDirectory(): void {
+    ensureOwnerOnlyDirectory(this.paths.sttTempDir);
+    this.clearScratchFiles();
+  }
+
+  private clearScratchFiles(): void {
+    ensureOwnerOnlyDirectory(this.paths.sttTempDir);
+    for (const entry of readdirSync(this.paths.sttTempDir, { withFileTypes: true })) {
+      if (scratchPathPattern.test(entry.name)) {
+        rmSync(join(this.paths.sttTempDir, entry.name), { recursive: true, force: true });
+      }
+    }
+    for (const path of this.scratchFiles) rmSync(path, { recursive: true, force: true });
+    this.scratchFiles.clear();
+  }
+
+  private removeScratchPath(path: string): void {
+    rmSync(path, { recursive: true, force: true });
+    this.scratchFiles.delete(path);
+  }
+
+  private runProcess(
+    command: string,
+    args: string[],
+    timeoutMs: number,
+    runtime?: Pick<ResolvedSttRuntime, "env" | "cwd">,
+    signal?: AbortSignal
+  ): Promise<RuntimeProcessResult> {
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(abortError());
+        return;
+      }
+      if (this.disposed) {
+        reject(new Error("Transcription service is disposed."));
+        return;
+      }
+
+      const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env: runtime?.env, cwd: runtime?.cwd });
+      this.ownChild(child);
+      let stdout = "";
+      let stderr = "";
+      let failure: RuntimeProcessFailure | null = null;
+      let settled = false;
+      const finish = (error?: Error, result?: RuntimeProcessResult): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        signal?.removeEventListener("abort", onAbort);
+        if (error) reject(error);
+        else resolve(result!);
+      };
+      const terminateWith = (error: Error): void => {
+        if (failure) return;
+        failure = { error };
+        void this.terminateChild(child);
+      };
+      const onAbort = (): void => terminateWith(abortError());
+      const timeout = setTimeout(() => terminateWith(new Error(`${command} timed out after ${timeoutMs}ms.`)), timeoutMs);
+      signal?.addEventListener("abort", onAbort, { once: true });
+
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      child.on("error", (error) => {
+        failure = { error };
+      });
+      child.on("close", (code) => {
+        if (failure) {
+          finish(failure.error);
+          return;
+        }
+        if (code === 0) {
+          finish(undefined, { stdout, stderr });
+          return;
+        }
+        finish(new Error(`${command} failed with exit code ${code}: ${stderr.trim() || stdout.trim()}`));
+      });
+    });
+  }
+
+  private ownChild(child: ChildProcessWithoutNullStreams): OwnedChildProcess {
+    const existing = this.ownedChildren.get(child);
+    if (existing) return existing;
+
+    let resolveClosed: () => void = () => undefined;
+    const closed = new Promise<void>((resolve) => {
+      resolveClosed = resolve;
+    });
+    const owned = { child, closed };
+    this.ownedChildren.set(child, owned);
+    child.on("error", () => {
+      // Every owned child has a listener before the event loop can deliver spawn errors.
+    });
+    child.once("close", () => {
+      this.ownedChildren.delete(child);
+      resolveClosed();
+    });
+    return owned;
+  }
+
+  private async terminateChild(child: ChildProcessWithoutNullStreams): Promise<void> {
+    const owned = this.ownedChildren.get(child);
+    if (!owned) return;
+    if (child.exitCode !== null) {
+      await owned.closed;
+      return;
+    }
+
+    child.kill("SIGTERM");
+    if (await closesWithin(owned.closed, processTerminationGraceMs())) return;
+    child.kill("SIGKILL");
+    await owned.closed;
   }
 
   private isBundledWhisperCppProvider(provider: TranscriptionProviderConfig): boolean {
@@ -424,6 +611,7 @@ export class TranscriptionService {
     const decoder = new TextDecoder();
     let buffer = "";
     let transcript = "";
+    let completed = false;
 
     const consumeEvents = (final = false): void => {
       const events = buffer.split("\n\n");
@@ -440,20 +628,29 @@ export class TranscriptionService {
           .map((line) => line.slice("data:".length).trim());
 
         for (const dataLine of dataLines) {
-          if (!dataLine || dataLine === "[DONE]") continue;
+          if (!dataLine) continue;
+          if (dataLine === "[DONE]") {
+            completed = true;
+            continue;
+          }
+
+          let data: unknown;
           try {
-            const data = JSON.parse(dataLine);
-            const delta = data.delta ?? data.text ?? "";
-            if (typeof delta === "string" && delta) {
-              transcript += delta;
-              onDelta?.(delta);
-            }
-            if (data.type === "transcript.text.done" && typeof data.text === "string") {
-              transcript = data.text;
-            }
+            data = JSON.parse(dataLine);
           } catch {
-            transcript += dataLine;
-            onDelta?.(dataLine);
+            throw new Error("STT SSE returned a malformed JSON event.");
+          }
+          if (!isRecord(data)) continue;
+          if (data.type === "transcript.text.done") {
+            if (typeof data.text === "string") transcript = data.text;
+            completed = true;
+            continue;
+          }
+
+          const delta = data.delta;
+          if (typeof delta === "string" && delta) {
+            transcript += delta;
+            onDelta?.(delta);
           }
         }
       }
@@ -469,6 +666,7 @@ export class TranscriptionService {
     );
     buffer += decoder.decode();
     consumeEvents(true);
+    if (!completed) throw new Error("STT SSE ended before a terminal completion event.");
 
     return transcript.trim();
   }
@@ -552,6 +750,9 @@ export function buildSherpaArgs(
 export function buildWhisperServerArgs(
   port: number,
   modelPath: string,
+  tempDir: string,
+  requestPath: string,
+  publicDir: string,
   threadCount = process.env.MURMUR_STT_THREADS || "4",
   accelerator: SttRuntimeAccelerator = "cpu",
   gpuDevice = process.env.MURMUR_STT_GPU_DEVICE
@@ -563,8 +764,14 @@ export function buildWhisperServerArgs(
     String(port),
     "--model",
     modelPath,
+    "--request-path",
+    requestPath,
     "--inference-path",
     "/inference",
+    "--tmp-dir",
+    tempDir,
+    "--public",
+    publicDir,
     "--threads",
     threadCount
   ];
@@ -572,58 +779,6 @@ export function buildWhisperServerArgs(
     args.push("--device", gpuDevice);
   }
   return args;
-}
-
-function runProcess(
-  command: string,
-  args: string[],
-  timeoutMs: number,
-  runtime?: Pick<ResolvedSttRuntime, "env" | "cwd">,
-  signal?: AbortSignal
-): Promise<RuntimeProcessResult> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(abortError());
-      return;
-    }
-
-    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env: runtime?.env, cwd: runtime?.cwd });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    const finish = (error?: Error, result?: RuntimeProcessResult): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      signal?.removeEventListener("abort", onAbort);
-      if (error) reject(error);
-      else resolve(result!);
-    };
-    const onAbort = (): void => {
-      child.kill();
-      finish(abortError());
-    };
-    const timeout = setTimeout(() => {
-      child.kill();
-      finish(new Error(`${command} timed out after ${timeoutMs}ms.`));
-    }, timeoutMs);
-    signal?.addEventListener("abort", onAbort, { once: true });
-
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", (error) => finish(error));
-    child.on("close", (code) => {
-      if (code === 0) {
-        finish(undefined, { stdout, stderr });
-        return;
-      }
-      finish(new Error(`${command} failed with exit code ${code}: ${stderr.trim() || stdout.trim()}`));
-    });
-  });
 }
 
 function extractSherpaText(output: string): string {
@@ -670,31 +825,60 @@ function findOpenPort(): Promise<number> {
   });
 }
 
-async function waitForHttp(
+async function waitForWhisperServer(
   baseUrl: string,
+  requestPath: string,
+  challenge: string,
   child: ChildProcessWithoutNullStreams,
-  output: () => string,
+  launchError: () => Error | null,
+  updateDiagnostics: () => void,
   signal?: AbortSignal
 ): Promise<void> {
   const startedAt = Date.now();
   const timeoutMs = runtimeReadyTimeoutMs();
   while (Date.now() - startedAt < timeoutMs) {
     throwIfAborted(signal);
+    const spawnFailure = launchError();
+    if (spawnFailure) {
+      updateDiagnostics();
+      throw new Error(`whisper-server failed to launch: ${spawnFailure.message}`);
+    }
     if (child.exitCode !== null) {
-      output();
+      updateDiagnostics();
       throw new Error("whisper-server exited before becoming ready. Check runtime diagnostics for details.");
     }
+
     try {
-      await fetchWithTimeout(baseUrl, { signal }, 500);
-      return;
+      const challengeResponse = await fetchWithTimeout(`${baseUrl}${requestPath}/`, { signal }, 500);
+      const challengeBody = await readResponseText(challengeResponse, {
+        totalTimeoutMs: 500,
+        idleTimeoutMs: 500,
+        maxBytes: 1024,
+        label: "whisper-server identity",
+        signal
+      });
+      if (challengeResponse.status !== 200 || challengeBody !== challenge) {
+        await delay(150, signal);
+        continue;
+      }
+
+      const healthResponse = await fetchWithTimeout(`${baseUrl}${requestPath}/health`, { signal }, 500);
+      const healthBody = await readResponseText(healthResponse, {
+        totalTimeoutMs: 500,
+        idleTimeoutMs: 500,
+        maxBytes: 1024,
+        label: "whisper-server health",
+        signal
+      });
+      const health = JSON.parse(healthBody) as unknown;
+      if (healthResponse.status === 200 && isRecord(health) && health.status === "ok") return;
     } catch (error) {
       if (isAbortError(error)) throw error;
-      await delay(150, signal);
     }
+    await delay(150, signal);
   }
 
-  child.kill();
-  output();
+  updateDiagnostics();
   throw new Error(`whisper-server did not become ready within ${timeoutMs}ms. Check runtime diagnostics for details.`);
 }
 
@@ -716,6 +900,21 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+async function closesWithin(closed: Promise<void>, timeoutMs: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), timeoutMs);
+    timer.unref();
+  });
+  const result = await Promise.race([closed.then(() => true), timedOut]);
+  if (timer) clearTimeout(timer);
+  return result;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw abortError();
 }
@@ -731,6 +930,14 @@ function isAbortError(error: unknown): boolean {
 function runtimeReadyTimeoutMs(): number {
   const value = Number(process.env.MURMUR_RUNTIME_READY_TIMEOUT_MS);
   return Number.isFinite(value) && value > 0 ? value : 45000;
+}
+
+function processTerminationGraceMs(): number {
+  return envPositiveInteger("MURMUR_STT_PROCESS_TERMINATION_GRACE_MS", defaultProcessTerminationGraceMs);
+}
+
+function transcriptionRuntimeTimeoutMs(): number {
+  return envPositiveInteger("MURMUR_STT_PROCESS_TIMEOUT_MS", transcriptionTimeoutMs);
 }
 
 function transcriptionHttpTimeouts(): { totalTimeoutMs: number; idleTimeoutMs: number } {
