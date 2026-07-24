@@ -142,13 +142,13 @@ export function ConfigurationView({
   }, [hasUnsavedChanges, isPromptMounted]);
 
   useEffect(() => {
-    if (form.formState.isDirty) return;
+    if (!shouldReconcileConfigurationSnapshot(isSaving, hasUnsavedChanges)) return;
     const values = {
       settings: state.settings
     };
     persistedValuesRef.current = cloneConfigurationValues(values);
     form.reset(values);
-  }, [form, form.formState.isDirty, state.settings]);
+  }, [form, hasUnsavedChanges, isSaving, state.settings]);
 
   const saveChanges = useCallback(async (): Promise<void> => {
     setSaveError(null);
@@ -174,8 +174,9 @@ export function ConfigurationView({
     try {
       if (shouldSaveSettings) await updateSettings(settingsPatch);
 
-      persistedValuesRef.current = cloneConfigurationValues(values);
-      form.reset(cloneConfigurationValues(values));
+      const reconciliation = reconcileConfigurationSave(values, form.getValues());
+      persistedValuesRef.current = reconciliation.persistedValues;
+      form.reset(reconciliation.draftValues);
     } catch (error) {
       setSaveError(`Could not save configuration: ${errorMessage(error)}`);
     } finally {
@@ -526,6 +527,20 @@ function changedSettingsPatch(values: AppSettings, persistedValues: AppSettings)
 
 function cloneConfigurationValues(values: ConfigurationFormValues): ConfigurationFormValues {
   return JSON.parse(JSON.stringify(values)) as ConfigurationFormValues;
+}
+
+export function shouldReconcileConfigurationSnapshot(isSaving: boolean, hasUnsavedChanges: boolean): boolean {
+  return !isSaving && !hasUnsavedChanges;
+}
+
+export function reconcileConfigurationSave(
+  submittedValues: ConfigurationFormValues,
+  currentValues: ConfigurationFormValues
+): { persistedValues: ConfigurationFormValues; draftValues: ConfigurationFormValues } {
+  return {
+    persistedValues: cloneConfigurationValues(submittedValues),
+    draftValues: cloneConfigurationValues(currentValues)
+  };
 }
 
 function errorMessage(error: unknown): string {

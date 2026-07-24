@@ -12,6 +12,7 @@ export type GuardedSectionId = keyof typeof mainRoutePaths;
 export type MainRoutePath = (typeof mainRoutePaths)[GuardedSectionId];
 
 const unsavedModeChangesMessage = "You have an unsaved mode draft or edits. Discard them and switch views?";
+const unsavedProviderChangesMessage = "You have unsaved provider credentials or connection changes. Discard them and switch views?";
 const unsavedConfigurationChangesMessage = "You have unsaved configuration changes. Discard them and switch views?";
 
 export function sectionIdFromPathname(pathname: string): GuardedSectionId | null {
@@ -25,11 +26,13 @@ export function shouldGuardNavigation(options: {
   nextSection: GuardedSectionId | null;
   hasUnsavedConfigurationChanges: boolean;
   hasUnsavedModeChanges: boolean;
+  hasUnsavedProviderChanges: boolean;
 }): boolean {
   return (
     options.nextSection !== options.currentSection &&
     ((options.currentSection === "configuration" && options.hasUnsavedConfigurationChanges) ||
-      (options.currentSection === "modes" && options.hasUnsavedModeChanges))
+      (options.currentSection === "modes" && options.hasUnsavedModeChanges) ||
+      (options.currentSection === "providers" && options.hasUnsavedProviderChanges))
   );
 }
 
@@ -38,6 +41,7 @@ export function navigationGuardMessage(options: {
   nextPathname: string;
   hasUnsavedConfigurationChanges: boolean;
   hasUnsavedModeChanges: boolean;
+  hasUnsavedProviderChanges: boolean;
 }): string | null {
   const currentSection = sectionIdFromPathname(options.currentPathname);
   if (!currentSection) return null;
@@ -47,18 +51,22 @@ export function navigationGuardMessage(options: {
       currentSection,
       nextSection: sectionIdFromPathname(options.nextPathname),
       hasUnsavedConfigurationChanges: options.hasUnsavedConfigurationChanges,
-      hasUnsavedModeChanges: options.hasUnsavedModeChanges
+      hasUnsavedModeChanges: options.hasUnsavedModeChanges,
+      hasUnsavedProviderChanges: options.hasUnsavedProviderChanges
     })
   ) {
     return null;
   }
 
-  return currentSection === "modes" ? unsavedModeChangesMessage : unsavedConfigurationChangesMessage;
+  if (currentSection === "modes") return unsavedModeChangesMessage;
+  if (currentSection === "providers") return unsavedProviderChangesMessage;
+  return unsavedConfigurationChangesMessage;
 }
 
 export function hasUnsavedNavigationChanges(options: {
   hasUnsavedConfigurationChanges: boolean;
   hasUnsavedModeChanges: boolean;
+  hasUnsavedProviderChanges: boolean;
 }): boolean {
-  return options.hasUnsavedConfigurationChanges || options.hasUnsavedModeChanges;
+  return options.hasUnsavedConfigurationChanges || options.hasUnsavedModeChanges || options.hasUnsavedProviderChanges;
 }

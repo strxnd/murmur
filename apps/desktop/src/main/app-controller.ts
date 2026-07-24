@@ -303,6 +303,7 @@ export class AppController {
     this.applySettings(this.storage.getState().settings);
     await this.registerHotkeys();
     this.assertStartupActive();
+    this.broadcastState();
   }
 
   private assertStartupActive(): void {

@@ -32,6 +32,7 @@ interface AppShellRouteActions {
   openOnboarding: () => void;
   setConfigurationHasUnsavedChanges: (hasUnsavedChanges: boolean) => void;
   setModesHaveUnsavedChanges: (hasUnsavedChanges: boolean) => void;
+  setProvidersHaveUnsavedChanges: (hasUnsavedChanges: boolean) => void;
 }
 
 const AppShellRouteActionsContext = createContext<AppShellRouteActions | null>(null);
@@ -54,6 +55,7 @@ export const routePanelClassName = "h-full min-h-0 overflow-auto outline-none";
 export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
   const [configurationHasUnsavedChanges, setConfigurationHasUnsavedChanges] = useState(false);
   const [modesHaveUnsavedChanges, setModesHaveUnsavedChanges] = useState(false);
+  const [providersHaveUnsavedChanges, setProvidersHaveUnsavedChanges] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [autoPromptedOnboarding, setAutoPromptedOnboarding] = useState(false);
 
@@ -69,15 +71,17 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
         currentPathname: current.pathname,
         nextPathname: next.pathname,
         hasUnsavedConfigurationChanges: configurationHasUnsavedChanges,
-        hasUnsavedModeChanges: modesHaveUnsavedChanges
+        hasUnsavedModeChanges: modesHaveUnsavedChanges,
+        hasUnsavedProviderChanges: providersHaveUnsavedChanges
       });
       return message ? !window.confirm(message) : false;
     },
-    [configurationHasUnsavedChanges, modesHaveUnsavedChanges]
+    [configurationHasUnsavedChanges, modesHaveUnsavedChanges, providersHaveUnsavedChanges]
   );
   const hasUnsavedChanges = hasUnsavedNavigationChanges({
     hasUnsavedConfigurationChanges: configurationHasUnsavedChanges,
-    hasUnsavedModeChanges: modesHaveUnsavedChanges
+    hasUnsavedModeChanges: modesHaveUnsavedChanges,
+    hasUnsavedProviderChanges: providersHaveUnsavedChanges
   });
 
   useBlocker({
@@ -91,7 +95,8 @@ export function AppShell({ state }: { state: AppStateSnapshot }): JSX.Element {
     () => ({
       openOnboarding,
       setConfigurationHasUnsavedChanges,
-      setModesHaveUnsavedChanges
+      setModesHaveUnsavedChanges,
+      setProvidersHaveUnsavedChanges
     }),
     [openOnboarding]
   );

@@ -4,9 +4,99 @@ import type { AppStateSnapshot } from "../../../shared/types";
 import { useMurmurStore } from "./murmur-store";
 
 afterEach(() => {
+  useMurmurStore.getState().dispose();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   useMurmurStore.setState({ status: "loading", snapshot: null, error: null, actionError: null });
+});
+
+describe("useMurmurStore initialization", () => {
+  it("subscribes before fetching and keeps a newer event snapshot", async () => {
+    const initial = deferred<AppStateSnapshot>();
+    const eventSnapshot = testSnapshot();
+    eventSnapshot.settings = { ...eventSnapshot.settings, theme: "dark" };
+    let onStateChanged: ((snapshot: AppStateSnapshot) => void) | undefined;
+    const unsubscribeState = vi.fn();
+    vi.stubGlobal("window", {
+      murmur: {
+        getState: vi.fn(() => initial.promise),
+        onStateChanged: vi.fn((listener: (snapshot: AppStateSnapshot) => void) => {
+          onStateChanged = listener;
+          return unsubscribeState;
+        }),
+        onModelDownloadProgress: vi.fn(() => vi.fn()),
+        onSttRuntimeProgress: vi.fn(() => vi.fn())
+      }
+    });
+
+    const initialization = useMurmurStore.getState().init();
+    onStateChanged?.(eventSnapshot);
+    initial.resolve(testSnapshot());
+    await initialization;
+
+    expect(useMurmurStore.getState().snapshot?.settings.theme).toBe("dark");
+    useMurmurStore.getState().dispose();
+    expect(unsubscribeState).toHaveBeenCalledOnce();
+  });
+
+  it("keeps live subscriptions when the initial fetch fails after a state event", async () => {
+    const initial = deferred<AppStateSnapshot>();
+    let onStateChanged: ((snapshot: AppStateSnapshot) => void) | undefined;
+    const unsubscribeState = vi.fn();
+    vi.stubGlobal("window", {
+      murmur: {
+        getState: vi.fn(() => initial.promise),
+        onStateChanged: vi.fn((listener: (snapshot: AppStateSnapshot) => void) => {
+          onStateChanged = listener;
+          return unsubscribeState;
+        }),
+        onModelDownloadProgress: vi.fn(() => vi.fn()),
+        onSttRuntimeProgress: vi.fn(() => vi.fn())
+      }
+    });
+
+    const initialization = useMurmurStore.getState().init();
+    const firstEvent = testSnapshot();
+    firstEvent.settings = { ...firstEvent.settings, theme: "dark" };
+    onStateChanged?.(firstEvent);
+    initial.reject(new Error("stale fetch failed"));
+    await initialization;
+
+    const secondEvent = testSnapshot();
+    secondEvent.settings = { ...secondEvent.settings, theme: "light" };
+    onStateChanged?.(secondEvent);
+    expect(useMurmurStore.getState().snapshot?.settings.theme).toBe("light");
+    expect(unsubscribeState).not.toHaveBeenCalled();
+
+    useMurmurStore.getState().dispose();
+    expect(unsubscribeState).toHaveBeenCalledOnce();
+  });
+
+  it("shares concurrent initialization and disposes listeners from a stale run", async () => {
+    const initial = deferred<AppStateSnapshot>();
+    const unsubscribers = [vi.fn(), vi.fn(), vi.fn()];
+    const getState = vi.fn(() => initial.promise);
+    vi.stubGlobal("window", {
+      murmur: {
+        getState,
+        onStateChanged: vi.fn(() => unsubscribers[0]),
+        onModelDownloadProgress: vi.fn(() => unsubscribers[1]),
+        onSttRuntimeProgress: vi.fn(() => unsubscribers[2])
+      }
+    });
+
+    const first = useMurmurStore.getState().init();
+    const second = useMurmurStore.getState().init();
+    expect(first).toBe(second);
+    expect(getState).toHaveBeenCalledOnce();
+
+    useMurmurStore.getState().dispose();
+    initial.resolve(testSnapshot());
+    await first;
+
+    expect(unsubscribers.every((unsubscribe) => unsubscribe.mock.calls.length === 1)).toBe(true);
+    expect(useMurmurStore.getState().snapshot).toBeNull();
+  });
 });
 
 describe("useMurmurStore action errors", () => {
@@ -62,6 +152,16 @@ describe("useMurmurStore action errors", () => {
     });
   });
 });
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void } {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolver, rejecter) => {
+    resolve = resolver;
+    reject = rejecter;
+  });
+  return { promise, resolve, reject };
+}
 
 function testSnapshot(): AppStateSnapshot {
   return {
