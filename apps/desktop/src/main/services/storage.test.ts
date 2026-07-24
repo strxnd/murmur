@@ -1138,8 +1138,10 @@ describe("StorageService", () => {
     const storage = jsonStorage(paths);
     const firstAudio = join(paths.audioDir, "first.wav");
     const secondAudio = join(paths.audioDir, "second.wav");
+    const historyQuarantine = `${paths.historyJsonPath}.corrupt-test`;
     writeFileSync(firstAudio, "first");
     writeFileSync(secondAudio, "second");
+    writeFileSync(historyQuarantine, "sensitive corrupt history");
     storage.addHistory(historyItem({ id: "first", audioPath: firstAudio, createdAt: recentIso(1) }));
     storage.addHistory(historyItem({ id: "second", audioPath: secondAudio, createdAt: recentIso(2) }));
 
@@ -1148,6 +1150,7 @@ describe("StorageService", () => {
 
     expect(existsSync(firstAudio)).toBe(false);
     expect(existsSync(secondAudio)).toBe(false);
+    expect(existsSync(historyQuarantine)).toBe(false);
   });
 
   it("prunes history beyond text retention days and removes linked audio", () => {
@@ -1209,8 +1212,12 @@ describe("StorageService", () => {
     const storage = jsonStorage(paths);
     const audioPath = join(paths.audioDir, "retained.wav");
     const modelPath = join(paths.modelDir, "ggml-test.bin");
+    const configQuarantine = `${paths.configPath}.corrupt-test`;
+    const sqliteQuarantine = join(paths.dataDir, "murmur-history.sqlite-rows.corrupt-test");
     writeFileSync(audioPath, "audio");
     writeFileSync(modelPath, "model");
+    writeFileSync(configQuarantine, "legacy secret");
+    writeFileSync(sqliteQuarantine, "corrupt transcript");
     storage.updateSettings({ theme: "light" });
     storage.addHistory(historyItem({ audioPath }));
 
@@ -1219,6 +1226,8 @@ describe("StorageService", () => {
     expect(state.settings.theme).toBe(defaultSettings.theme);
     expect(state.history).toEqual([]);
     expect(existsSync(audioPath)).toBe(false);
+    expect(existsSync(configQuarantine)).toBe(false);
+    expect(existsSync(sqliteQuarantine)).toBe(false);
     expect(existsSync(modelPath)).toBe(true);
   });
 

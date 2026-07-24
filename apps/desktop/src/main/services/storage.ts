@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fsyncSync, lstatSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -325,7 +325,9 @@ export class StorageService {
     const state = this.getState();
     const removed = state.history;
     state.history = [];
-    return this.writeHistoryState(state, removed, true);
+    const nextState = this.writeHistoryState(state, removed, true);
+    this.removeHistoryQuarantines();
+    return nextState;
   }
 
   clearLocalData(): PersistedState {
@@ -335,6 +337,8 @@ export class StorageService {
     this.providerSecrets.clear();
     rmSync(this.paths.historyDbPath, { force: true });
     rmSync(this.paths.historyJsonPath, { force: true });
+    this.removeHistoryQuarantines();
+    removeQuarantineFiles(this.paths.configPath);
     rmSync(this.paths.audioDir, { recursive: true, force: true });
     ensureOwnerOnlyDirectory(this.paths.audioDir);
     this.open();
@@ -815,6 +819,11 @@ export class StorageService {
     }
   }
 
+  private removeHistoryQuarantines(): void {
+    removeQuarantineFiles(this.paths.historyJsonPath);
+    removeQuarantineFiles(join(this.paths.dataDir, "murmur-history.sqlite-rows"));
+  }
+
   private deleteRetainedAudioItems(items: DictationHistoryItem[]): void {
     for (const item of items) this.deleteRetainedAudio(item.audioPath);
   }
@@ -1195,6 +1204,18 @@ function nextQuarantinePath(path: string): string {
 
 function removeSqliteFiles(path: string): void {
   for (const candidate of [path, `${path}-shm`, `${path}-wal`]) rmSync(candidate, { force: true });
+}
+
+function removeQuarantineFiles(path: string): void {
+  const dir = dirname(path);
+  const prefix = `${basename(path)}.corrupt-`;
+  let removed = false;
+  for (const name of readdirSync(dir)) {
+    if (!name.startsWith(prefix)) continue;
+    rmSync(join(dir, name), { force: true });
+    removed = true;
+  }
+  if (removed) fsyncDirectory(dir);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
