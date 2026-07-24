@@ -13,15 +13,19 @@ export function watchAudioDevices(
   onDevicesChanged: (devices: MediaDeviceInfo[]) => void
 ): () => void {
   let cancelled = false;
+  let refreshGeneration = 0;
 
   const refresh = (): void => {
+    const generation = ++refreshGeneration;
     mediaDevices
       ?.enumerateDevices()
       .then((items) => {
-        if (!cancelled) onDevicesChanged(items.filter((item) => item.kind === "audioinput"));
+        if (!cancelled && generation === refreshGeneration) {
+          onDevicesChanged(items.filter((item) => item.kind === "audioinput"));
+        }
       })
       .catch(() => {
-        if (!cancelled) onDevicesChanged([]);
+        if (!cancelled && generation === refreshGeneration) onDevicesChanged([]);
       });
   };
 

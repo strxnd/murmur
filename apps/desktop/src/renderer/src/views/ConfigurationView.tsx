@@ -142,13 +142,13 @@ export function ConfigurationView({
   }, [hasUnsavedChanges, isPromptMounted]);
 
   useEffect(() => {
-    if (hasUnsavedChanges) return;
+    if (!shouldReconcileConfigurationSnapshot(isSaving, hasUnsavedChanges)) return;
     const values = {
       settings: state.settings
     };
     persistedValuesRef.current = cloneConfigurationValues(values);
     form.reset(values);
-  }, [form, hasUnsavedChanges, state.settings]);
+  }, [form, hasUnsavedChanges, isSaving, state.settings]);
 
   const saveChanges = useCallback(async (): Promise<void> => {
     setSaveError(null);
@@ -527,6 +527,10 @@ function changedSettingsPatch(values: AppSettings, persistedValues: AppSettings)
 
 function cloneConfigurationValues(values: ConfigurationFormValues): ConfigurationFormValues {
   return JSON.parse(JSON.stringify(values)) as ConfigurationFormValues;
+}
+
+export function shouldReconcileConfigurationSnapshot(isSaving: boolean, hasUnsavedChanges: boolean): boolean {
+  return !isSaving && !hasUnsavedChanges;
 }
 
 export function reconcileConfigurationSave(

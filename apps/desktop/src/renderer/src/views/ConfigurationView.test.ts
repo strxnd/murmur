@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { defaultSettings } from "../../../shared/defaults";
-import { editableSettingsKeys, reconcileConfigurationSave } from "./ConfigurationView";
+import {
+  editableSettingsKeys,
+  reconcileConfigurationSave,
+  shouldReconcileConfigurationSnapshot
+} from "./ConfigurationView";
 
 describe("ConfigurationView privacy settings", () => {
   it("persists the selected-text capture control with normal settings", () => {
     expect(editableSettingsKeys).toContain("selectedTextCapture");
+  });
+
+  it("keeps snapshot reconciliation paused for the full save request", () => {
+    expect(shouldReconcileConfigurationSnapshot(true, false)).toBe(false);
+    expect(shouldReconcileConfigurationSnapshot(false, false)).toBe(true);
   });
 
   it("keeps edits made after a save submission as a dirty draft", () => {
