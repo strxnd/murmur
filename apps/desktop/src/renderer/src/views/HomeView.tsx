@@ -11,7 +11,7 @@ import { Panel } from "../components/ui/Panel";
 import { useAutoAnimateRef } from "../hooks/useAutoAnimateRef";
 import { dictationRunwayAction, performDictationRunwayAction } from "../lib/dictation-runway";
 import { accelerationRuntimePromptState, isRuntimeBusy } from "../lib/runtimes";
-import { recordingUnavailableReason } from "../lib/stt-setup";
+import { recordingUnavailableReason, shouldShowSttSetupCallout } from "../lib/stt-setup";
 import { useMurmurStore } from "../state/murmur-store";
 
 export function HomeView({
@@ -31,11 +31,13 @@ export function HomeView({
 
   return (
     <View title="Home" description="Start a dictation or pick up recent text.">
-      <DictationRunway
-        state={state}
-        onOpenModels={onOpenModels}
-        onOpenOnboarding={onOpenOnboarding}
-      />
+      {shouldShowSttSetupCallout(state) && (
+        <DictationRunway
+          state={state}
+          onOpenModels={onOpenModels}
+          onOpenOnboarding={onOpenOnboarding}
+        />
+      )}
       {state.session.error && <SessionNotice status={state.session.status} message={state.session.error} />}
       <GpuRuntimeInstallCallout state={state} />
 
