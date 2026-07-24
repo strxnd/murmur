@@ -29,7 +29,9 @@ export function RecordingPill({ state }: { state: PillStateSnapshot }): JSX.Elem
   const targetLevelRef = useRef(0);
   const renderedLevelRef = useRef(0);
   const animationFrameRef = useRef<number | null>(null);
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(
+    () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return undefined;
