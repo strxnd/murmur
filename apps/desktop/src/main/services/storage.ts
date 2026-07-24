@@ -69,6 +69,11 @@ interface ProviderMutationJournal {
   version: 1;
 }
 
+interface StorageMutationJournal {
+  version: 1;
+  removedAudioPaths: string[];
+}
+
 type LegacyModeConfig = Partial<ModeConfig> & {
   kind?: "built_in" | "custom" | "default";
   presetId?: string;
@@ -164,6 +169,7 @@ export class StorageService {
     ensureOwnerOnlyDirectory(paths.audioDir);
     this.recoverProviderMutation();
     this.open();
+    this.recoverStorageMutation();
     this.migrateProviderSecrets();
   }
 
@@ -178,6 +184,7 @@ export class StorageService {
 
   getState(): PersistedState {
     this.recoverProviderMutationIfNeeded();
+    this.recoverStorageMutationIfNeeded();
     const state = this.normalizeState(this.readState());
     const retention = this.applyTextRetention(state);
     if (retention.removed.length > 0) {
@@ -203,6 +210,7 @@ export class StorageService {
   }
 
   getSettings(): AppSettings {
+    this.recoverStorageMutationIfNeeded();
     const config = this.readConfig();
     const modes = this.normalizeModes(config.modes);
     return this.normalizeSettings(config.settings, modes);
@@ -332,6 +340,7 @@ export class StorageService {
 
   clearLocalData(): PersistedState {
     const state: PersistedState = this.defaults();
+    this.discardStorageMutation();
     this.closeDatabase();
     rmSync(this.paths.configPath, { force: true });
     this.providerSecrets.clear();
@@ -504,14 +513,7 @@ export class StorageService {
       return retention.state;
     }
 
-    this.writeHistory(retention.state.history);
-    try {
-      this.writeConfig(toConfigState(retention.state));
-    } catch (error) {
-      this.writeHistory(state.history);
-      throw error;
-    }
-    this.deleteRetainedAudioItems(retention.removed);
+    this.commitStorageMutation(retention.state, retention.removed);
     return retention.state;
   }
 
@@ -524,6 +526,93 @@ export class StorageService {
     this.writeHistory(retention.state.history, compact);
     this.deleteRetainedAudioItems([...removedAfterWrite, ...retention.removed]);
     return retention.state;
+  }
+
+  private commitStorageMutation(state: PersistedState, removed: DictationHistoryItem[]): void {
+    const journal: StorageMutationJournal = {
+      version: 1,
+      removedAudioPaths: removed.flatMap((item) => (item.audioPath ? [item.audioPath] : []))
+    };
+    try {
+      writeJsonAtomic(this.storageMutationConfigPath(), toConfigState(state));
+      writeJsonAtomic(this.storageMutationHistoryPath(), state.history);
+      writeJsonAtomic(this.storageMutationJournalPath(), journal);
+    } catch (error) {
+      this.discardStorageMutation();
+      throw error;
+    }
+
+    let historyCommitted = false;
+    try {
+      this.writeHistory(state.history);
+      historyCommitted = true;
+      this.writeConfig(toConfigState(state));
+      this.deleteRetainedAudioPaths(journal.removedAudioPaths);
+      removeDurable(this.storageMutationJournalPath());
+      try {
+        this.discardPreparedStorageMutation();
+      } catch {
+        // The durable commit marker is gone; prepared snapshots can be cleaned on restart.
+      }
+    } catch (error) {
+      if (!historyCommitted) {
+        this.discardStorageMutation();
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Storage transaction is pending recovery: ${message}`);
+    }
+  }
+
+  private recoverStorageMutationIfNeeded(): void {
+    if (existsSync(this.storageMutationJournalPath())) this.recoverStorageMutation();
+  }
+
+  private recoverStorageMutation(): void {
+    if (!existsSync(this.storageMutationJournalPath())) {
+      this.discardPreparedStorageMutation();
+      return;
+    }
+
+    const journal = readJsonStrict(this.storageMutationJournalPath(), "Storage transaction");
+    if (!isStorageMutationJournal(journal)) throw new Error("Storage transaction journal is malformed.");
+    const config = readJsonStrict(this.storageMutationConfigPath(), "Storage transaction configuration");
+    if (!isPersistedConfigState(config)) throw new Error("Storage transaction configuration is malformed.");
+    const historyValue = readJsonStrict(this.storageMutationHistoryPath(), "Storage transaction history");
+    const history = parseHistoryItems(historyValue);
+    if (history.rejected) throw new Error("Storage transaction history is malformed.");
+
+    this.writeHistory(history.history);
+    this.writeConfig(config);
+    this.deleteRetainedAudioPaths(journal.removedAudioPaths);
+    removeDurable(this.storageMutationJournalPath());
+    try {
+      this.discardPreparedStorageMutation();
+    } catch {
+      // The durable commit marker is gone; prepared snapshots can be cleaned on restart.
+    }
+  }
+
+  private discardStorageMutation(): void {
+    removeDurable(this.storageMutationJournalPath());
+    this.discardPreparedStorageMutation();
+  }
+
+  private discardPreparedStorageMutation(): void {
+    removeDurable(this.storageMutationConfigPath());
+    removeDurable(this.storageMutationHistoryPath());
+  }
+
+  private storageMutationJournalPath(): string {
+    return `${this.paths.configPath}.storage-transaction`;
+  }
+
+  private storageMutationConfigPath(): string {
+    return `${this.paths.configPath}.storage-transaction.next`;
+  }
+
+  private storageMutationHistoryPath(): string {
+    return `${this.paths.historyJsonPath}.storage-transaction.next`;
   }
 
   private writeConfig(state: PersistedConfigState): void {
@@ -825,7 +914,11 @@ export class StorageService {
   }
 
   private deleteRetainedAudioItems(items: DictationHistoryItem[]): void {
-    for (const item of items) this.deleteRetainedAudio(item.audioPath);
+    this.deleteRetainedAudioPaths(items.flatMap((item) => (item.audioPath ? [item.audioPath] : [])));
+  }
+
+  private deleteRetainedAudioPaths(paths: string[]): void {
+    for (const path of paths) this.deleteRetainedAudio(path);
   }
 
   private deleteRetainedAudio(audioPath: string | null): void {
@@ -1263,6 +1356,15 @@ function readJsonStrict(path: string, label: string): unknown {
 
 function isProviderMutationJournal(value: unknown): value is ProviderMutationJournal {
   return Boolean(value && typeof value === "object" && !Array.isArray(value) && (value as ProviderMutationJournal).version === 1);
+}
+
+function isStorageMutationJournal(value: unknown): value is StorageMutationJournal {
+  return Boolean(
+    isRecord(value) &&
+      value.version === 1 &&
+      Array.isArray(value.removedAudioPaths) &&
+      value.removedAudioPaths.every((path) => typeof path === "string")
+  );
 }
 
 function isPersistedConfigState(value: unknown): value is PersistedConfigState {

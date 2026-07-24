@@ -1025,6 +1025,36 @@ describe("StorageService", () => {
     closeStorage(reopened);
   });
 
+  it("recovers retention changes interrupted after the history commit", () => {
+    const paths = testPaths();
+    const storage = new StorageService(paths);
+    const audioPath = join(paths.audioDir, "retention-transaction.wav");
+    writeFileSync(audioPath, "sensitive audio");
+    storage.addHistory(historyItem({ id: "expired-history", audioPath, createdAt: recentIso(3) }));
+    const now = Date.now();
+    const configTempPath = join(paths.configDir, `.murmur-config.json.${process.pid}.${now}.tmp`);
+    mkdirSync(configTempPath);
+    vi.spyOn(Date, "now").mockReturnValue(now);
+
+    try {
+      expect(() => storage.updateSettings({ textRetentionDays: 1 })).toThrow("Storage transaction is pending recovery");
+    } finally {
+      vi.restoreAllMocks();
+      closeStorage(storage);
+      rmSync(configTempPath, { recursive: true, force: true });
+    }
+
+    expect(existsSync(`${paths.configPath}.storage-transaction`)).toBe(true);
+    const recovered = new StorageService(paths);
+    expect(recovered.getState().settings.textRetentionDays).toBe(1);
+    expect(recovered.getState().history).toEqual([]);
+    expect(existsSync(audioPath)).toBe(false);
+    expect(existsSync(`${paths.configPath}.storage-transaction`)).toBe(false);
+    expect(existsSync(`${paths.configPath}.storage-transaction.next`)).toBe(false);
+    expect(existsSync(`${paths.historyJsonPath}.storage-transaction.next`)).toBe(false);
+    closeStorage(recovered);
+  });
+
   it("securely removes cleared transcript content from SQLite storage", () => {
     const paths = testPaths();
     const sensitiveText = "sensitive-transcript-content-that-must-not-remain";
