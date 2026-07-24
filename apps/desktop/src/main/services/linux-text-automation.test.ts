@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { ExecFileTextError } from "./command";
 import { LinuxTextAutomationService, type LinuxTargetProvider } from "./linux-text-automation";
 import type {
   AutomationResult,
@@ -15,6 +16,7 @@ interface ExecCall {
 
 class FakePortalBackend implements ShortcutAutomationBackend {
   shortcuts: TextAutomationShortcut[] = [];
+  nextResult: AutomationResult | null = null;
   capability: TextAutomationCapability = {
     backend: "clipboard_only",
     automationAvailable: false,
@@ -32,6 +34,7 @@ class FakePortalBackend implements ShortcutAutomationBackend {
   }
   async sendKeyboardShortcut(shortcut: TextAutomationShortcut, action: "paste" | "copy"): Promise<AutomationResult> {
     this.shortcuts.push(shortcut);
+    if (this.nextResult) return this.nextResult;
     return {
       success: this.capability.automationAvailable,
       status: this.capability.automationAvailable ? "success" : "unavailable",
@@ -79,6 +82,7 @@ describe("LinuxTextAutomationService", () => {
       },
       target: {
         appName: "kitty",
+        classification: "terminal",
         diagnostics: [],
         isElectron: false,
         isTerminal: true,
@@ -136,6 +140,7 @@ describe("LinuxTextAutomationService", () => {
       portal,
       target: {
         appName: "gnome-terminal",
+        classification: "terminal",
         diagnostics: [],
         isElectron: false,
         isTerminal: true,
@@ -161,6 +166,7 @@ describe("LinuxTextAutomationService", () => {
       helperPath: "/tmp/linux-fast-paste",
       target: {
         appName: "konsole",
+        classification: "terminal",
         diagnostics: [],
         isElectron: false,
         isTerminal: true,
@@ -174,6 +180,119 @@ describe("LinuxTextAutomationService", () => {
 
     expect(result).toMatchObject({ success: true, backend: "linux_native_helper", attemptedBackends: ["linux_native_helper"] });
     expect(calls).toEqual([{ command: "/tmp/linux-fast-paste", args: ["--shortcut", "shift-insert"] }]);
+  });
+
+  it("uses Shift+Insert for an unclassified native Wayland target", async () => {
+    const calls: ExecCall[] = [];
+    const service = createService({
+      calls,
+      env: {
+        WAYLAND_DISPLAY: "wayland-1",
+        XDG_CURRENT_DESKTOP: "GNOME",
+        XDG_SESSION_TYPE: "wayland"
+      },
+      target: {
+        classification: "unknown",
+        diagnostics: ["Native GNOME target metadata unavailable."],
+        isElectron: false,
+        isTerminal: false
+      },
+      tools: ["wtype"]
+    });
+
+    await service.initialize();
+    const result = await service.pasteClipboard();
+
+    expect(result).toMatchObject({ success: true, backend: "wtype" });
+    expect(calls).toEqual([{ command: "wtype", args: ["-M", "shift", "-P", "Insert", "-p", "Insert", "-m", "shift"] }]);
+  });
+
+  it("does not retry paste after an external backend reports ambiguous delivery", async () => {
+    const calls: ExecCall[] = [];
+    const service = createService({
+      ambiguousCommands: ["xdotool"],
+      calls,
+      env: {
+        DISPLAY: ":0",
+        XDG_SESSION_TYPE: "x11"
+      },
+      tools: ["xdotool", "ydotool"]
+    });
+
+    await service.initialize();
+    const result = await service.pasteClipboard();
+
+    expect(result).toMatchObject({
+      success: false,
+      backend: "xdotool",
+      attemptedBackends: ["xdotool"],
+      failureDelivery: "ambiguous"
+    });
+    expect(calls).toEqual([{ command: "xdotool", args: ["key", "--clearmodifiers", "ctrl+v"] }]);
+  });
+
+  it("does not retry paste after the portal partially dispatches a shortcut", async () => {
+    const calls: ExecCall[] = [];
+    const portal = new FakePortalBackend();
+    portal.capability = {
+      backend: "xdg_remote_desktop_keyboard",
+      automationAvailable: true,
+      permissionRequired: true,
+      diagnostics: ["portal ready"]
+    };
+    portal.nextResult = {
+      success: false,
+      status: "failed",
+      message: "modifier dispatched before the portal connection failed",
+      diagnostics: ["portal failed"],
+      failureDelivery: "partial"
+    };
+    const service = createService({
+      calls,
+      env: {
+        WAYLAND_DISPLAY: "wayland-1",
+        XDG_CURRENT_DESKTOP: "GNOME",
+        XDG_SESSION_TYPE: "wayland"
+      },
+      portal,
+      tools: ["wtype"]
+    });
+
+    await service.initialize();
+    const result = await service.pasteClipboard();
+
+    expect(result).toMatchObject({
+      success: false,
+      backend: "xdg_remote_desktop_keyboard",
+      attemptedBackends: ["xdg_remote_desktop_keyboard"],
+      failureDelivery: "partial"
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it("does not advertise the native helper without write access to uinput", async () => {
+    const service = createService({
+      env: {
+        DISPLAY: ":0",
+        XDG_SESSION_TYPE: "x11"
+      },
+      helperPath: "/tmp/linux-fast-paste",
+      uinputAccessible: false
+    });
+
+    await service.initialize();
+
+    expect(service.getCapability()).toMatchObject({
+      automationAvailable: false,
+      availableBackends: [],
+      backend: "clipboard_only"
+    });
+    expect(service.getDiagnostics()).toContain(
+      "Linux native text automation helper cannot access /dev/uinput; tool and portal fallbacks will be used."
+    );
+    expect(service.getCapability().setupHints).toContain(
+      "Grant the current user write access to /dev/uinput before using the Linux native keyboard helper."
+    );
   });
 
   it("reports clipboard-only fallback when no backend is available", async () => {
@@ -194,14 +313,17 @@ describe("LinuxTextAutomationService", () => {
 function createService(options: {
   calls?: ExecCall[];
   env?: NodeJS.ProcessEnv;
+  ambiguousCommands?: string[];
   failCommands?: string[];
   helperPath?: string;
+  uinputAccessible?: boolean;
   portal?: FakePortalBackend;
   target?: Awaited<ReturnType<LinuxTargetProvider["capture"]>>;
   tools?: string[];
 } = {}): LinuxTextAutomationService {
   const env = options.env ?? {};
   const tools = new Set(options.tools ?? []);
+  const ambiguousCommands = new Set(options.ambiguousCommands ?? []);
   const failCommands = new Set(options.failCommands ?? []);
   const calls = options.calls ?? [];
   const portal = options.portal ?? new FakePortalBackend();
@@ -209,6 +331,7 @@ function createService(options: {
     options.target ??
     ({
       appName: "gedit",
+      classification: "non_terminal",
       diagnostics: [],
       isElectron: false,
       isTerminal: false,
@@ -237,13 +360,15 @@ function createService(options: {
   return new LinuxTextAutomationService({
     accessFile: async (path) => {
       if (path === options.helperPath) return;
-      throw new Error("missing helper");
+      if (path === "/dev/uinput" && options.uinputAccessible !== false) return;
+      throw new Error("path unavailable");
     },
     commandExists: async (command) => tools.has(command),
     env,
     execFileText: vi.fn(async (command: string, args: string[]) => {
       calls.push({ command, args });
-      if (failCommands.has(command)) throw new Error(`${command} failed`);
+      if (failCommands.has(command)) throw new ExecFileTextError(`${command} failed before dispatch`, "spawn");
+      if (ambiguousCommands.has(command)) throw new ExecFileTextError(`${command} failed after dispatch`, "exit");
       return "";
     }),
     helperPaths: options.helperPath ? [options.helperPath] : [],

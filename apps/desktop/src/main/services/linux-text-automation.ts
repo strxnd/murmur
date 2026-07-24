@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { join } from "node:path";
-import { commandExists, execFileText } from "./command";
+import { commandExists, execFileText, ExecFileTextError } from "./command";
 import {
   copyShortcutForTarget,
   detectLinuxDesktopEnvironment,
@@ -11,6 +11,7 @@ import {
   type LinuxTargetInfo
 } from "./linux-desktop-target";
 import type {
+  AutomationFailureDelivery,
   AutomationResult,
   ShortcutAutomationBackend,
   TextAutomationBackend,
@@ -40,6 +41,7 @@ export interface LinuxTextAutomationDependencies {
   platform?: NodeJS.Platform | string;
   portalBackend?: ShortcutAutomationBackend;
   targetService?: LinuxTargetProvider;
+  uinputPath?: string;
 }
 
 export interface LinuxTargetProvider {
@@ -56,12 +58,14 @@ export class LinuxTextAutomationService implements TextAutomationBackend {
   private readonly platform: NodeJS.Platform | string;
   private readonly portalBackend: ShortcutAutomationBackend;
   private readonly targetService: LinuxTargetProvider;
+  private readonly uinputPath: string;
 
   private activeBackend: TextAutomationBackendId = "clipboard_only";
   private availableBackends: TextAutomationBackendId[] = [];
   private baseDiagnostics: string[] = [];
   private commands: LinuxCommandAvailability = { wtype: false, xdotool: false, ydotool: false };
   private helperPath: string | null = null;
+  private helperUinputReady = false;
   private initialized = false;
   private lastAttemptedBackends: TextAutomationBackendId[] = [];
   private missingTools: string[] = [];
@@ -77,6 +81,7 @@ export class LinuxTextAutomationService implements TextAutomationBackend {
     this.portalBackend = dependencies.portalBackend ?? new XdgRemoteDesktopKeyboardService({ env: this.env, platform: this.platform });
     this.targetService = dependencies.targetService ?? new LinuxDesktopTargetService({ env: this.env, platform: this.platform });
     this.helperPaths = dependencies.helperPaths ?? defaultHelperPaths(this.env);
+    this.uinputPath = dependencies.uinputPath ?? "/dev/uinput";
   }
 
   async initialize(): Promise<void> {
@@ -99,6 +104,7 @@ export class LinuxTextAutomationService implements TextAutomationBackend {
       this.commandExists("ydotool")
     ]);
     this.helperPath = helperPath;
+    this.helperUinputReady = helperPath ? await this.canAccessUinput() : false;
     this.commands = { wtype, xdotool, ydotool };
     await this.portalBackend.initialize();
 
@@ -170,10 +176,17 @@ export class LinuxTextAutomationService implements TextAutomationBackend {
         }
         failures.push(`${backendLabel(backend)}: ${result.message}`);
         this.addRuntimeDiagnostic(`${backendLabel(backend)} failed: ${result.message}`);
+        if (action === "paste" && result.failureDelivery !== "pre_dispatch") {
+          return this.ambiguousPasteFailure(result.failureDelivery ?? "ambiguous", result.message, backend, attempted);
+        }
       } catch (error) {
         const message = errorMessage(error);
         failures.push(`${backendLabel(backend)}: ${message}`);
         this.addRuntimeDiagnostic(`${backendLabel(backend)} failed: ${message}`);
+        const failureDelivery = failureDeliveryForError(error);
+        if (action === "paste" && failureDelivery !== "pre_dispatch") {
+          return this.ambiguousPasteFailure(failureDelivery, message, backend, attempted);
+        }
       }
     }
 
@@ -182,6 +195,20 @@ export class LinuxTextAutomationService implements TextAutomationBackend {
         ? failedMessage(action, failures.at(-1) ?? failures.join("; "))
         : unavailableMessage(action);
     return this.result(false, failures.length > 0 ? "failed" : "unavailable", message, "clipboard_only", attempted);
+  }
+
+  private ambiguousPasteFailure(
+    failureDelivery: AutomationFailureDelivery,
+    reason: string,
+    backend: TextAutomationBackendId,
+    attempted: TextAutomationBackendId[]
+  ): AutomationResult {
+    const message = `Paste delivery may already have reached the target; no fallback backend was attempted. Output remains on the clipboard. ${reason}`;
+    this.addRuntimeDiagnostic(`${backendLabel(backend)} paste delivery was ${failureDelivery}; fallback stopped to avoid duplicate insertion.`);
+    return {
+      ...this.result(false, "failed", message, backend, attempted),
+      failureDelivery
+    };
   }
 
   private async runBackend(
@@ -242,7 +269,7 @@ export class LinuxTextAutomationService implements TextAutomationBackend {
   }
 
   private isBackendAvailable(backend: TextAutomationBackendId, environment: LinuxDesktopEnvironment): boolean {
-    if (backend === "linux_native_helper") return Boolean(this.helperPath);
+    if (backend === "linux_native_helper") return Boolean(this.helperPath && this.helperUinputReady);
     if (backend === "wtype") return this.commands.wtype && environment.hasWaylandDisplay;
     if (backend === "xdotool") return this.commands.xdotool && environment.hasDisplay;
     if (backend === "ydotool") return this.commands.ydotool;
@@ -266,6 +293,9 @@ export class LinuxTextAutomationService implements TextAutomationBackend {
   private computeSetupHints(): string[] {
     const hints: string[] = [];
     if (!this.helperPath) hints.push("Run bun run linux-helper:build to build the optional native Linux keyboard helper.");
+    if (this.helperPath && !this.helperUinputReady) {
+      hints.push(`Grant the current user write access to ${this.uinputPath} before using the Linux native keyboard helper.`);
+    }
     if (this.commands.ydotool) hints.push("ydotool requires ydotoold and access to /dev/uinput before it can emit keys.");
     if (!this.commands.wtype) hints.push("Install wtype for wlroots compositors such as Sway and Hyprland.");
     if (!this.commands.xdotool) hints.push("Install xdotool for X11 and XWayland targets.");
@@ -274,15 +304,26 @@ export class LinuxTextAutomationService implements TextAutomationBackend {
 
   private computeBaseDiagnostics(): string[] {
     const diagnostics = [
-      this.helperPath
+      this.helperPath && this.helperUinputReady
         ? `Linux native text automation helper available: ${this.helperPath}.`
-        : "Linux native text automation helper unavailable; tool and portal fallbacks will be used.",
+        : this.helperPath
+          ? `Linux native text automation helper cannot access ${this.uinputPath}; tool and portal fallbacks will be used.`
+          : "Linux native text automation helper unavailable; tool and portal fallbacks will be used.",
       this.commands.wtype ? "wtype keyboard automation available." : "wtype keyboard automation unavailable.",
       this.commands.xdotool ? "xdotool keyboard automation available." : "xdotool keyboard automation unavailable.",
       this.commands.ydotool ? "ydotool keyboard automation available." : "ydotool keyboard automation unavailable."
     ];
     if (this.availableBackends.length === 0) diagnostics.push(unavailableDiagnostic);
     return diagnostics;
+  }
+
+  private async canAccessUinput(): Promise<boolean> {
+    try {
+      await this.accessFile(this.uinputPath, constants.W_OK);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private async findHelperPath(): Promise<string | null> {
@@ -400,6 +441,7 @@ function failedMessage(action: "paste" | "copy", reason: string): string {
 
 function emptyTarget(): LinuxTargetInfo {
   return {
+    classification: "unknown",
     diagnostics: [],
     isElectron: false,
     isTerminal: false
@@ -412,6 +454,10 @@ function uniqueBackends(backends: TextAutomationBackendId[]): TextAutomationBack
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+function failureDeliveryForError(error: unknown): AutomationFailureDelivery {
+  return error instanceof ExecFileTextError && error.phase === "spawn" ? "pre_dispatch" : "ambiguous";
 }
 
 function errorMessage(error: unknown): string {

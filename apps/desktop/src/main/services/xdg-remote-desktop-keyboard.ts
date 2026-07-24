@@ -2,7 +2,13 @@ import { randomBytes } from "node:crypto";
 import * as dbusNative from "@homebridge/dbus-native";
 import { murmurAppId } from "../../shared/app-identity";
 import { DbusSessionConnection, type DbusMessage, type DbusMessageBus } from "./dbus-session-connection";
-import type { AutomationResult, ShortcutAutomationBackend, TextAutomationCapability, TextAutomationShortcut } from "./text-automation";
+import type {
+  AutomationFailureDelivery,
+  AutomationResult,
+  ShortcutAutomationBackend,
+  TextAutomationCapability,
+  TextAutomationShortcut
+} from "./text-automation";
 
 const portalDestination = "org.freedesktop.portal.Desktop";
 const portalPath = "/org/freedesktop/portal/desktop";
@@ -165,12 +171,12 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
     if (!this.capability.automationAvailable) {
       await this.initialize();
       if (!this.capability.automationAvailable) {
-        return this.result(false, "unavailable", unavailableMessage(action));
+        return this.result(false, "unavailable", unavailableMessage(action), "pre_dispatch");
       }
     }
 
     if (this.now() - this.lastPermissionDeniedAt < permissionThrottleMs) {
-      return this.result(false, "denied", permissionDeniedDiagnostic);
+      return this.result(false, "denied", permissionDeniedDiagnostic, "pre_dispatch");
     }
 
     try {
@@ -180,11 +186,12 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
       return this.result(true, "success", action === "paste" ? "Paste shortcut sent." : "Copy shortcut sent.");
     } catch (error) {
       const message = errorMessage(error);
+      const failureDelivery = error instanceof ShortcutDeliveryError ? error.failureDelivery : "pre_dispatch";
       if (error instanceof PortalPermissionError) {
         this.lastPermissionDeniedAt = this.now();
         this.addDiagnostic(permissionDeniedDiagnostic);
         await this.closeSession();
-        return this.result(false, "denied", permissionDeniedDiagnostic);
+        return this.result(false, "denied", permissionDeniedDiagnostic, "pre_dispatch");
       }
 
       await this.resetPortalConnection();
@@ -193,7 +200,7 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
           ? `Paste automation failed; output left on clipboard. ${message}`
           : `Selected text automation failed. ${message}`;
       this.addDiagnostic(failureMessage);
-      return this.result(false, "failed", failureMessage);
+      return this.result(false, "failed", failureMessage, failureDelivery);
     }
   }
 
@@ -283,18 +290,25 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
   private async sendKeyboardShortcutSequence(sessionHandle: string, shortcut: TextAutomationShortcut): Promise<void> {
     const sequence = keySequenceForShortcut(shortcut);
     const pressedModifiers: number[] = [];
+    let dispatchedEvents = 0;
+    let keyPressed = false;
     try {
       for (const modifier of sequence.modifiers) {
         await this.notifyKeycode(sessionHandle, modifier, keyStatePressed);
+        dispatchedEvents += 1;
         pressedModifiers.push(modifier);
         await delay(shortcutEventDelayMs);
       }
       await this.notifyKeycode(sessionHandle, sequence.key, keyStatePressed);
+      dispatchedEvents += 1;
+      keyPressed = true;
       await delay(shortcutEventDelayMs);
       await this.notifyKeycode(sessionHandle, sequence.key, keyStateReleased);
+      dispatchedEvents += 1;
       await delay(shortcutEventDelayMs);
       for (const modifier of [...pressedModifiers].reverse()) {
         await this.notifyKeycode(sessionHandle, modifier, keyStateReleased);
+        dispatchedEvents += 1;
         await delay(shortcutEventDelayMs);
         pressedModifiers.pop();
       }
@@ -302,7 +316,8 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
       for (const modifier of [...pressedModifiers].reverse()) {
         await this.notifyKeycode(sessionHandle, modifier, keyStateReleased).catch(() => undefined);
       }
-      throw error;
+      const failureDelivery: AutomationFailureDelivery = keyPressed ? "ambiguous" : dispatchedEvents > 0 ? "partial" : "pre_dispatch";
+      throw new ShortcutDeliveryError(errorMessage(error), failureDelivery, { cause: error });
     }
   }
 
@@ -560,13 +575,15 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
   private result(
     success: boolean,
     status: AutomationResult["status"],
-    message: string
+    message: string,
+    failureDelivery?: AutomationFailureDelivery
   ): AutomationResult {
     return {
       success,
       status,
       message,
-      diagnostics: this.getDiagnostics()
+      diagnostics: this.getDiagnostics(),
+      failureDelivery
     };
   }
 
@@ -613,6 +630,17 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
 }
 
 class PortalPermissionError extends Error {}
+
+class ShortcutDeliveryError extends Error {
+  constructor(
+    message: string,
+    readonly failureDelivery: AutomationFailureDelivery,
+    options?: ErrorOptions
+  ) {
+    super(message, options);
+    this.name = "ShortcutDeliveryError";
+  }
+}
 
 function unavailableMessage(action: "paste" | "copy"): string {
   return action === "paste"
