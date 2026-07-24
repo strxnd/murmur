@@ -35,7 +35,6 @@ export default defineConfig({
     root: resolve(__dirname, "src/renderer"),
     plugins: [react(), tailwindcss()],
     server: {
-      // Avoid macOS resolving localhost differently in Vite and Chromium.
       host: "127.0.0.1"
     }
   }

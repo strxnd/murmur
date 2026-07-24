@@ -123,6 +123,9 @@ interface TestController {
   stopRecording(notice?: string): Promise<AppStateSnapshot>;
   cancelRecording(): Promise<AppStateSnapshot>;
   clearLocalData(): Promise<AppStateSnapshot>;
+  showPill: ReturnType<typeof vi.fn>;
+  hidePill: ReturnType<typeof vi.fn>;
+  hidePillSoon: ReturnType<typeof vi.fn>;
   registerIpc(): void;
   captureRecordingContext(operation: DictationSessionOperation): Promise<typeof capturedContext>;
   completeRecording(payload: { sessionId: string; audio: ArrayBuffer; mimeType: string }): Promise<AppStateSnapshot>;
@@ -1123,6 +1126,7 @@ describe("AppController dictation ownership", () => {
     await Promise.resolve();
 
     expect(harness.controller.session.status).toBe("idle");
+    expect(harness.controller.showPill).toHaveBeenCalledOnce();
     expect(harness.mainWindowSend).not.toHaveBeenCalledWith("recording:start", expect.anything());
 
     (harness.controller as unknown as { setRecordingCaptureReady(senderId: number, ready: boolean): void })
@@ -1186,6 +1190,23 @@ describe("AppController dictation ownership", () => {
     expect(harness.paste.copyText).toHaveBeenCalledWith("raw transcript", expect.any(AbortSignal));
     expect(harness.paste.insertText).not.toHaveBeenCalled();
     expect(harness.controller.session.status).toBe("complete");
+    expect(harness.controller.hidePill).toHaveBeenCalledTimes(2);
+    expect(harness.controller.hidePillSoon).not.toHaveBeenCalled();
+  });
+
+  it("hides the pill immediately when transcription returns no output", async () => {
+    const harness = createControllerHarness({ aiEnabled: false });
+    harness.stt.transcribe.mockRejectedValueOnce(new Error("STT returned an empty transcript."));
+    const sessionId = await startAndStop(harness.controller);
+
+    await harness.controller.completeRecording({ sessionId, audio: new ArrayBuffer(1), mimeType: "audio/wav" });
+
+    expect(harness.paste.copyText).not.toHaveBeenCalled();
+    expect(harness.paste.insertText).not.toHaveBeenCalled();
+    expect(harness.controller.session.status).toBe("error");
+    expect(harness.controller.session.error).toBe("STT returned an empty transcript.");
+    expect(harness.controller.hidePill).toHaveBeenCalledOnce();
+    expect(harness.controller.hidePillSoon).not.toHaveBeenCalled();
   });
 
   it("copies output without automation when an identically titled window in the same app becomes active", async () => {
@@ -1267,6 +1288,7 @@ describe("AppController dictation ownership", () => {
     const start = harness.controller.startRecording("test");
     await Promise.resolve();
     expect(harness.controller.session.status).toBe("idle");
+    expect(harness.controller.showPill).toHaveBeenCalledOnce();
 
     harness.setCodexStatus({ status: "signed_out", message: "Sign in required", modelAvailable: false });
     refresh.resolve();

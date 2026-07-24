@@ -24,7 +24,7 @@ const barStyles = barWeights.map(
 export function RecordingPill({ state }: { state: PillStateSnapshot }): JSX.Element {
   const { id: sessionId, status } = state.session;
   const isRecording = status === "recording";
-  const isProcessing = status === "transcribing" || status === "processing";
+  const isProcessing = status === "transcribing" || status === "processing" || status === "pasting";
   const barRefs = useRef<Array<HTMLSpanElement | null>>([]);
   const targetLevelRef = useRef(0);
   const renderedLevelRef = useRef(0);

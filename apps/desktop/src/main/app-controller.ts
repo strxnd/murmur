@@ -1490,6 +1490,7 @@ export class AppController {
     if (["transcribing", "processing", "pasting"].includes(this.session.status)) return this.getSnapshot();
 
     const startGeneration = ++this.dictationStartGeneration;
+    this.showPill();
     const captureReady = await this.waitForRecordingCaptureReady();
     if (startGeneration !== this.dictationStartGeneration) return this.getSnapshot();
     if (!captureReady) return this.failSession("Microphone capture is still starting. Try again.");
@@ -1506,6 +1507,7 @@ export class AppController {
         modeId: persisted.settings.activeModeId,
         error: sttUsability.reason
       };
+      this.hidePillSoon();
       this.broadcastState();
       return this.getSnapshot();
     }
@@ -1544,7 +1546,6 @@ export class AppController {
       streamingMode: plan.sttProvider.streamingMode
     };
 
-    this.showPill();
     this.mainWindow?.webContents.send("recording:start", {
       sessionId: this.session.id,
       preferredAudioInputId: persisted.settings.preferredAudioInputId
@@ -1579,6 +1580,7 @@ export class AppController {
   private async cancelRecording(): Promise<AppStateSnapshot> {
     if (this.session.status === "idle") {
       this.invalidateDictation("cancelled");
+      this.hidePill();
       return this.getSnapshot();
     }
     this.mainWindow?.webContents.send("recording:cancel", { sessionId: this.session.id });
@@ -1608,6 +1610,7 @@ export class AppController {
         this.mainWindow?.webContents.send("recording:cancel", { sessionId: this.sessionOperation.sessionId });
       }
       this.invalidateDictation("cleared");
+      this.hidePill();
       this.session = { ...defaultSession, modeId: this.storage.getState().settings.activeModeId };
       await this.codex.logout();
       await this.stt.clearLocalData();
@@ -1807,7 +1810,7 @@ export class AppController {
       };
       this.pushToTalkPressed = false;
       this.pushToTalkSessionId = null;
-      this.hidePillSoon();
+      this.hidePill();
       this.broadcastState();
       setTimeout(() => {
         if (this.session.id === completedSessionId && this.session.status === "complete") {
@@ -1945,7 +1948,7 @@ export class AppController {
     this.session = { ...this.session, status: "error", error: message };
     this.pushToTalkPressed = false;
     this.pushToTalkSessionId = null;
-    this.hidePillSoon();
+    this.hidePill();
     this.broadcastState();
     return this.getSnapshot();
   }
