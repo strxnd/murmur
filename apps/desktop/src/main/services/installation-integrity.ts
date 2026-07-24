@@ -161,18 +161,13 @@ export async function inspectTarArchive(
     if (entryType === "d") continue;
     if (entryType === "l") {
       const target = detail.includes(" -> ") ? detail.slice(detail.lastIndexOf(" -> ") + 4) : "";
-      if (!target || isUnsafeLinkTarget(name, target, false)) {
+      if (!target || isUnsafeLinkTarget(name, target)) {
         throw new Error(`Archive contains an unsafe symbolic link: ${name}`);
       }
       continue;
     }
     if (entryType === "h") {
-      const marker = " link to ";
-      const target = detail.includes(marker) ? detail.slice(detail.lastIndexOf(marker) + marker.length) : "";
-      if (!target || isUnsafeLinkTarget(name, target, true)) {
-        throw new Error(`Archive contains an unsafe hard link: ${name}`);
-      }
-      continue;
+      throw new Error(`Archive contains an unsupported hard link: ${name}`);
     }
     throw new Error(`Archive contains an unsupported entry type for ${name}.`);
   }
@@ -286,13 +281,12 @@ function isUnsafeArchivePath(path: string): boolean {
   return normalized.split("/").some((part) => part === "..");
 }
 
-function isUnsafeLinkTarget(entryName: string, target: string, archiveRootRelative: boolean): boolean {
+function isUnsafeLinkTarget(entryName: string, target: string): boolean {
   const normalizedTarget = target.replace(/\\/g, "/");
   if (!normalizedTarget || normalizedTarget.startsWith("/") || /^[A-Za-z]:\//.test(normalizedTarget) || normalizedTarget.includes("\0")) {
     return true;
   }
-  const base = archiveRootRelative ? "" : dirname(entryName);
-  const resolvedTarget = normalize(join(base, normalizedTarget)).replace(/\\/g, "/");
+  const resolvedTarget = normalize(join(dirname(entryName), normalizedTarget)).replace(/\\/g, "/");
   return resolvedTarget === ".." || resolvedTarget.startsWith("../");
 }
 

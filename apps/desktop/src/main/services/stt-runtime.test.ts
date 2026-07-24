@@ -640,7 +640,7 @@ describe("SttRuntimeService", () => {
     const state = await service.downloadRuntime("whisper.cpp|linux-x64|cpu|0.1.0");
 
     expect(state.status).toBe("error");
-    expect(state.error).toContain("unsafe hard link");
+    expect(state.error).toContain("unsupported hard link");
     expect(extractCalls).toBe(0);
   });
 
