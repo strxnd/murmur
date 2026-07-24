@@ -37,11 +37,11 @@ export function verifyPackagedMacosApp(appPath, run = spawnSync) {
   }
 }
 
-export function verifyMacosRelease(root = resolve(repoRoot, "dist"), platform = process.platform) {
+export function verifyMacosRelease(root = resolve(repoRoot, "dist"), platform = process.platform, run = spawnSync) {
   if (platform !== "darwin") return [];
   const apps = findPackagedMacosApps(root);
   if (apps.length === 0) throw new Error(`No packaged macOS application was found under ${root}.`);
-  for (const appPath of apps) verifyPackagedMacosApp(appPath);
+  for (const appPath of apps) verifyPackagedMacosApp(appPath, run);
   return apps;
 }
 

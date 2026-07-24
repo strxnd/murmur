@@ -1,10 +1,11 @@
 import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { validateMacosReleaseSigningEnvironment } from "./validate-macos-release-signing.mjs";
-import { verifyPackagedMacosApp } from "./verify-macos-release.mjs";
+import { verifyMacosRelease, verifyPackagedMacosApp } from "./verify-macos-release.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const desktopDir = join(repoRoot, "apps", "desktop");
@@ -17,6 +18,19 @@ describe("macOS development helper integration", () => {
   it("builds the macOS helper before development and production renderer builds", () => {
     expect(packageJson.scripts.predev).toBe("bun run macos-helper:build");
     expect(packageJson.scripts.prebuild).toBe("bun run macos-helper:build");
+  });
+});
+
+describe("macOS release preparation", () => {
+  it("advertises signed release packaging and its macOS credential requirement", () => {
+    const source = readFileSync(join(repoRoot, "scripts", "prepare-release.mjs"), "utf8");
+    const documentation = readFileSync(join(repoRoot, "docs", "development", "release-and-packaging.md"), "utf8");
+
+    expect(source).toContain("Build current-platform release artifacts with bun run dist:release");
+    expect(source).toContain("requires signing and notarization credentials on macOS");
+    expect(source).toContain("--skip-dist                       skip bun run dist:release");
+    expect(documentation).toContain("builds current-platform release artifacts with `bun run dist:release`");
+    expect(documentation).toContain("the default artifact step requires the signing and notarization credentials");
   });
 });
 
@@ -72,6 +86,30 @@ describe("macOS packaging profiles", () => {
       ["codesign", ["--verify", "--deep", "--strict", "--verbose=2", "/tmp/Murmur.app"]],
       ["xcrun", ["stapler", "validate", "/tmp/Murmur.app"]],
       ["spctl", ["--assess", "--type", "execute", "--verbose=2", "/tmp/Murmur.app"]]
+    ]);
+  });
+
+  it("propagates the injected command runner through app discovery", () => {
+    const root = mkdtempSync(join(tmpdir(), "murmur-macos-release-"));
+    const appPath = join(root, "Murmur.app");
+    mkdirSync(appPath);
+    const calls = [];
+
+    try {
+      expect(
+        verifyMacosRelease(root, "darwin", (command, args) => {
+          calls.push([command, args]);
+          return { status: 0, stdout: "", stderr: "" };
+        })
+      ).toEqual([appPath]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+
+    expect(calls).toEqual([
+      ["codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]],
+      ["xcrun", ["stapler", "validate", appPath]],
+      ["spctl", ["--assess", "--type", "execute", "--verbose=2", appPath]]
     ]);
   });
 

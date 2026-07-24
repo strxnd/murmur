@@ -1384,7 +1384,9 @@ export class AppController {
       ...diagnostics,
       "Push-to-talk was disabled because macOS release detection stopped."
     ];
-    void this.handlePushToTalkDeactivated().finally(() => this.broadcastState());
+    void this.handlePushToTalkDeactivated()
+      .catch(() => undefined)
+      .finally(() => this.broadcastState());
   }
 
   private async handleActivationHotkey(trigger: string): Promise<AppStateSnapshot> {

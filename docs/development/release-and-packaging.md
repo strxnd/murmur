@@ -46,7 +46,7 @@ For local release preparation without pushing a tag or creating a GitHub release
 bun run release:prepare
 ```
 
-The preparation helper verifies the release version and `docs/releases/<version>.md`, checks the git worktree, runs verification steps, prepares bundled STT runtimes, builds current-platform app artifacts, packages current-platform runtime archives, and writes `dist/SHA256SUMS.txt`. It does not edit tracked files, create release notes, commit, tag, push, or call `gh release`.
+The preparation helper verifies the release version and `docs/releases/<version>.md`, checks the git worktree, runs verification steps, prepares bundled STT runtimes, builds current-platform release artifacts with `bun run dist:release`, packages current-platform runtime archives, and writes `dist/SHA256SUMS.txt`. On macOS, the default artifact step requires the signing and notarization credentials listed below; use `--skip-dist` when preparing only runtimes or checksums without those credentials. The helper does not edit tracked files, create release notes, commit, tag, push, or call `gh release`.
 
 The helper writes only ignored generated output under paths such as `apps/desktop/out/`, `dist/`, `.cache/bundled-runtimes/`, `vendor/runtimes/`, and `resources/bin/*`. For available skips and non-interactive mode:
 
