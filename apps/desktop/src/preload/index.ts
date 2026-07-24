@@ -58,6 +58,7 @@ const api = {
     ipcRenderer.invoke("stt-runtime:cancel-download", target),
   setupBundledStt: (modelId: string): Promise<AppStateSnapshot> => ipcRenderer.invoke("stt-setup:setup-bundled", modelId),
   skipSttSetup: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("stt-setup:skip"),
+  setRecordingCaptureReady: (ready: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke("recording:capture-ready", { ready }),
   startDictation: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("dictation:start"),
   stopDictation: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("dictation:stop"),
   cancelDictation: (): Promise<AppStateSnapshot> => ipcRenderer.invoke("dictation:cancel"),

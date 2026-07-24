@@ -75,6 +75,7 @@ export const murmurClient = {
     window.murmur.cancelSttRuntimeDownload(target).then(parseSttSetup),
   setupBundledStt: (modelId: string): Promise<AppStateSnapshot> => window.murmur.setupBundledStt(modelId).then(parseState),
   skipSttSetup: (): Promise<AppStateSnapshot> => window.murmur.skipSttSetup().then(parseState),
+  setRecordingCaptureReady: (ready: boolean): Promise<void> => window.murmur.setRecordingCaptureReady(ready).then(() => undefined),
   startDictation: (): Promise<AppStateSnapshot> => window.murmur.startDictation().then(parseState),
   stopDictation: (): Promise<AppStateSnapshot> => window.murmur.stopDictation().then(parseState),
   cancelDictation: (): Promise<AppStateSnapshot> => window.murmur.cancelDictation().then(parseState),

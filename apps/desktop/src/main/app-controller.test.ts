@@ -242,7 +242,7 @@ function createControllerHarness(options: {
 
   const controller = Object.create(AppController.prototype) as TestController & Record<string, unknown>;
   Object.assign(controller, {
-    mainWindow: { webContents: { send: mainWindowSend } },
+    mainWindow: { webContents: { id: 1, send: mainWindowSend } },
     pillWindow: null,
     modeSelectorWindow: null,
     tray: null,
@@ -278,6 +278,8 @@ function createControllerHarness(options: {
     pushToTalkSessionId: null,
     hotkeyCaptureLeases: new Map(),
     onboardingDictationLeases: new Set(),
+    recordingCaptureReadyRenderers: new Set([1]),
+    recordingCaptureReadyWaiters: new Set(),
     rendererRoles: new Map(),
     rendererRecoveryAttempts: new Map(),
     ipcHandlerChannels: new Set(),
@@ -509,6 +511,7 @@ describe("AppController lifecycle and window ownership", () => {
     Object.assign(controller, {
       hotkeyCaptureLeases: new Map([[41, 2]]),
       onboardingDictationLeases: new Set([41]),
+      recordingCaptureReadyRenderers: new Set(),
       isQuitting: false,
       registerHotkeys,
       broadcastState
@@ -1044,6 +1047,56 @@ describe("AppController shortcut fallback", () => {
 });
 
 describe("AppController dictation ownership", () => {
+  it.each(["complete", "cancelled", "error"] as const)(
+    "starts push-to-talk from the %s terminal state",
+    async (status) => {
+      const harness = createControllerHarness({ aiEnabled: false });
+      harness.controller.session = { ...defaultSession, id: `terminal-${status}`, status };
+
+      await (harness.controller as unknown as { handlePushToTalkActivated(): Promise<AppStateSnapshot> })
+        .handlePushToTalkActivated();
+
+      expect(harness.controller.session.status).toBe("recording");
+      expect(harness.mainWindowSend).toHaveBeenCalledWith(
+        "recording:start",
+        expect.objectContaining({ sessionId: harness.controller.session.id })
+      );
+    }
+  );
+
+  it("holds recording activation until the capture renderer acknowledges readiness", async () => {
+    const harness = createControllerHarness({ aiEnabled: false });
+    (harness.controller as unknown as { recordingCaptureReadyRenderers: Set<number> }).recordingCaptureReadyRenderers.clear();
+
+    const start = harness.controller.startRecording("during-renderer-load");
+    await Promise.resolve();
+
+    expect(harness.controller.session.status).toBe("idle");
+    expect(harness.mainWindowSend).not.toHaveBeenCalledWith("recording:start", expect.anything());
+
+    (harness.controller as unknown as { setRecordingCaptureReady(senderId: number, ready: boolean): void })
+      .setRecordingCaptureReady(1, true);
+    await start;
+
+    expect(harness.controller.session.status).toBe("recording");
+    expect(harness.mainWindowSend).toHaveBeenCalledWith(
+      "recording:start",
+      expect.objectContaining({ sessionId: harness.controller.session.id })
+    );
+  });
+
+  it("invalidates an active dictation when capture readiness is lost", async () => {
+    const harness = createControllerHarness({ aiEnabled: false });
+    await harness.controller.startRecording("test");
+
+    (harness.controller as unknown as { setRecordingCaptureReady(senderId: number, ready: boolean): void })
+      .setRecordingCaptureReady(1, false);
+
+    expect(harness.controller.session.status).toBe("error");
+    expect(harness.controller.session.error).toContain("recording window stopped unexpectedly");
+    expect(harness.controller.sessionOperation).toBeNull();
+  });
+
   it("requests sensitive context only when both global and mode controls allow it", async () => {
     const harness = createControllerHarness({ aiEnabled: false });
     harness.state.settings.selectedTextCapture = "enabled";

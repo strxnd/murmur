@@ -33,6 +33,7 @@ const expectedChannelsByRole = {
     "stt-runtime:cancel-download",
     "stt-setup:setup-bundled",
     "stt-setup:skip",
+    "recording:capture-ready",
     "dictation:start",
     "dictation:stop",
     "dictation:cancel",
