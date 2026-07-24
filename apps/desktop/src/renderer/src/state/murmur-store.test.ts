@@ -39,6 +39,39 @@ describe("useMurmurStore initialization", () => {
     expect(unsubscribeState).toHaveBeenCalledOnce();
   });
 
+  it("keeps live subscriptions when the initial fetch fails after a state event", async () => {
+    const initial = deferred<AppStateSnapshot>();
+    let onStateChanged: ((snapshot: AppStateSnapshot) => void) | undefined;
+    const unsubscribeState = vi.fn();
+    vi.stubGlobal("window", {
+      murmur: {
+        getState: vi.fn(() => initial.promise),
+        onStateChanged: vi.fn((listener: (snapshot: AppStateSnapshot) => void) => {
+          onStateChanged = listener;
+          return unsubscribeState;
+        }),
+        onModelDownloadProgress: vi.fn(() => vi.fn()),
+        onSttRuntimeProgress: vi.fn(() => vi.fn())
+      }
+    });
+
+    const initialization = useMurmurStore.getState().init();
+    const firstEvent = testSnapshot();
+    firstEvent.settings = { ...firstEvent.settings, theme: "dark" };
+    onStateChanged?.(firstEvent);
+    initial.reject(new Error("stale fetch failed"));
+    await initialization;
+
+    const secondEvent = testSnapshot();
+    secondEvent.settings = { ...secondEvent.settings, theme: "light" };
+    onStateChanged?.(secondEvent);
+    expect(useMurmurStore.getState().snapshot?.settings.theme).toBe("light");
+    expect(unsubscribeState).not.toHaveBeenCalled();
+
+    useMurmurStore.getState().dispose();
+    expect(unsubscribeState).toHaveBeenCalledOnce();
+  });
+
   it("shares concurrent initialization and disposes listeners from a stale run", async () => {
     const initial = deferred<AppStateSnapshot>();
     const unsubscribers = [vi.fn(), vi.fn(), vi.fn()];
@@ -120,12 +153,14 @@ describe("useMurmurStore action errors", () => {
   });
 });
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void } {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolver) => {
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolver, rejecter) => {
     resolve = resolver;
+    reject = rejecter;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function testSnapshot(): AppStateSnapshot {

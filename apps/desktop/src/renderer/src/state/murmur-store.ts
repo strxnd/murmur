@@ -189,8 +189,10 @@ export const useMurmurStore = create<MurmurStore>()((set, get) => {
         .catch((error) => {
           if (generation !== storeGeneration || cancelled) return;
           const actionError = actionErrorFrom(error);
-          set({ status: get().snapshot ? "ready" : "error", error: actionError.message, actionError });
-          cancel();
+          const hasLiveSnapshot = Boolean(get().snapshot);
+          set({ status: hasLiveSnapshot ? "ready" : "error", error: actionError.message, actionError });
+          if (hasLiveSnapshot) activeStoreSubscriptions = cancel;
+          else cancel();
         })
         .finally(() => {
           if (storeInitialization?.promise === promise) storeInitialization = null;

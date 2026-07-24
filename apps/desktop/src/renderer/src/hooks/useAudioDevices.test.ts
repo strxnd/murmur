@@ -27,6 +27,25 @@ describe("watchAudioDevices", () => {
     stop();
   });
 
+  it("suppresses a pending enumeration after cleanup", async () => {
+    const pending = deferred<MediaDeviceInfo[]>();
+    const removeEventListener = vi.fn();
+    const mediaDevices = {
+      enumerateDevices: vi.fn(() => pending.promise),
+      addEventListener: vi.fn(),
+      removeEventListener
+    } as unknown as MediaDevices;
+    const onDevicesChanged = vi.fn();
+
+    const stop = watchAudioDevices(mediaDevices, onDevicesChanged);
+    stop();
+    pending.resolve([{ kind: "audioinput", deviceId: "late" } as MediaDeviceInfo]);
+    await Promise.resolve();
+
+    expect(onDevicesChanged).not.toHaveBeenCalled();
+    expect(removeEventListener).toHaveBeenCalledWith("devicechange", expect.any(Function));
+  });
+
   it("refreshes audio inputs on device changes and removes its listener", async () => {
     let deviceChange: (() => void) | undefined;
     const microphone = { kind: "audioinput", deviceId: "mic-1" } as MediaDeviceInfo;

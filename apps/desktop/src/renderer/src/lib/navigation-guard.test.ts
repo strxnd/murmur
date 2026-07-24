@@ -141,6 +141,13 @@ describe("route navigation guard policy", () => {
       hasUnsavedNavigationChanges({
         hasUnsavedConfigurationChanges: false,
         hasUnsavedModeChanges: false,
+        hasUnsavedProviderChanges: true
+      })
+    ).toBe(true);
+    expect(
+      hasUnsavedNavigationChanges({
+        hasUnsavedConfigurationChanges: false,
+        hasUnsavedModeChanges: false,
         hasUnsavedProviderChanges: false
       })
     ).toBe(false);

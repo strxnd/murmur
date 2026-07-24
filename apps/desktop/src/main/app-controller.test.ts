@@ -462,7 +462,8 @@ describe("AppController lifecycle and window ownership", () => {
 
   it("broadcasts final hotkey capabilities after startup registration", async () => {
     const controller = Object.create(AppController.prototype) as AppController & Record<string, unknown>;
-    const broadcastState = vi.fn();
+    const steps: string[] = [];
+    const broadcastState = vi.fn(() => steps.push("broadcastState"));
     Object.assign(controller, {
       isQuitting: false,
       disposePromise: null,
@@ -477,13 +478,16 @@ describe("AppController lifecycle and window ownership", () => {
       createWindows: vi.fn(async () => undefined),
       applySettings: vi.fn(),
       storage: { getState: vi.fn(() => ({ settings: {} })) },
-      registerHotkeys: vi.fn(async () => undefined),
+      registerHotkeys: vi.fn(async () => {
+        steps.push("registerHotkeys");
+      }),
       broadcastState
     });
 
     await controller.initialize();
 
     expect(broadcastState).toHaveBeenCalledOnce();
+    expect(steps).toEqual(["registerHotkeys", "broadcastState"]);
   });
 
   it("stops initialization after Quit marks the constructing controller", async () => {
