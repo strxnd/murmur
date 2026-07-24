@@ -81,30 +81,29 @@ function handleControllerError(error: unknown): void {
 }
 
 async function ensureController(): Promise<AppController> {
-  if (controller) return controller;
-  if (!controllerInitialization) {
-    controllerInitialization = app.whenReady().then(async () => {
-      const activeController = new AppController();
-      controller = activeController;
+  if (controllerInitialization) return controllerInitialization;
+
+  controllerInitialization = app.whenReady().then(async () => {
+    const activeController = new AppController();
+    controller = activeController;
+    try {
+      await activeController.initialize();
+      return activeController;
+    } catch (error) {
+      activeController.prepareToQuit();
       try {
-        await activeController.initialize();
-        return activeController;
-      } catch (error) {
-        activeController.prepareToQuit();
-        try {
-          await activeController.dispose();
-        } catch (cleanupError) {
-          console.error(
-            `Failed to clean up incomplete Murmur startup: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`
-          );
-        } finally {
-          if (controller === activeController) controller = null;
-          controllerInitialization = null;
-        }
-        throw error;
+        await activeController.dispose();
+      } catch (cleanupError) {
+        console.error(
+          `Failed to clean up incomplete Murmur startup: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`
+        );
+      } finally {
+        if (controller === activeController) controller = null;
+        controllerInitialization = null;
       }
-    });
-  }
+      throw error;
+    }
+  });
   return controllerInitialization;
 }
 

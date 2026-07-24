@@ -55,6 +55,54 @@ describe("application lifecycle", () => {
 
     initialization.resolve();
   });
+
+  it("waits for construction before handling activation requests", async () => {
+    const ready = deferred<void>();
+    const initialization = deferred<void>();
+    const handlers = new Map<string, (...args: never[]) => void>();
+    const showMainWindow = vi.fn();
+    const dispose = vi.fn(async () => undefined);
+    const navigationFailure = new Error("renderer navigation failed");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    vi.doMock("./electron-api", () => ({
+      app: {
+        isPackaged: false,
+        on: vi.fn((event: string, handler: (...args: never[]) => void) => handlers.set(event, handler)),
+        quit: vi.fn(),
+        requestSingleInstanceLock: vi.fn(() => true),
+        whenReady: vi.fn(() => ready.promise)
+      },
+      dialog: { showErrorBox: vi.fn() },
+      globalShortcut: { unregisterAll: vi.fn() },
+      Menu: { setApplicationMenu: vi.fn() }
+    }));
+    vi.doMock("./app-controller", () => ({
+      AppController: vi.fn(function MockAppController() {
+        return {
+          initialize: vi.fn(() => initialization.promise),
+          prepareToQuit: vi.fn(),
+          cancelQuit: vi.fn(),
+          dispose,
+          showMainWindow
+        };
+      })
+    }));
+
+    await import("./app-main");
+    ready.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    handlers.get("activate")?.();
+    await Promise.resolve();
+    expect(showMainWindow).not.toHaveBeenCalled();
+
+    initialization.reject(navigationFailure);
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+    expect(showMainWindow).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
 });
 
 function deferred<T>() {

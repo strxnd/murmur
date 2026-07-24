@@ -655,6 +655,86 @@ describe("AppController lifecycle and window ownership", () => {
     await disposal;
     expect(settled).toBe(true);
   });
+
+  it("quiesces deferred macOS hotkey registration before final cleanup", async () => {
+    const harness = createControllerHarness();
+    const releaseRegistration = deferred<{
+      registered: boolean;
+      triggerDescription: string;
+      diagnostics: string[];
+    }>();
+    const processPlatform = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const portalHotkeys = {
+      register: vi.fn(async () => ({
+        registered: false,
+        diagnostics: [],
+        actionResults: {
+          activation: { registered: false, pushToTalkRelease: false, diagnostics: [] },
+          "mode-selector": { registered: false, pushToTalkRelease: false, diagnostics: [] }
+        }
+      })),
+      unregister: vi.fn(async () => undefined),
+      dispose: vi.fn(async () => undefined)
+    };
+    const nativeHotkeys = {
+      register: vi.fn(async () => ({
+        registered: false,
+        backend: undefined,
+        pushToTalkRelease: false,
+        diagnostics: [],
+        actionResults: {
+          activation: { registered: false, pushToTalkRelease: false, diagnostics: [] },
+          "mode-selector": { registered: false, pushToTalkRelease: false, diagnostics: [] }
+        }
+      })),
+      unregister: vi.fn(async () => undefined),
+      dispose: vi.fn(async () => undefined)
+    };
+    const macosReleaseHotkeys = {
+      register: vi.fn(() => releaseRegistration.promise),
+      unregister: vi.fn()
+    };
+
+    harness.state.settings.activationMode = "push_to_talk";
+    Object.assign(harness.controller, {
+      automationPermissions: { status: vi.fn(() => ({ status: "trusted", diagnostics: [] })) },
+      portalHotkeys,
+      nativeHotkeys,
+      macosReleaseHotkeys,
+      hotkeyRegistrationGeneration: 0,
+      hotkeyRegistrationQueue: Promise.resolve()
+    });
+    delete (harness.controller as unknown as Record<string, unknown>).registerHotkeys;
+
+    const registerHotkeys = () =>
+      (harness.controller as unknown as { registerHotkeys(): Promise<void> }).registerHotkeys();
+    const registration = registerHotkeys();
+    await vi.waitFor(() => expect(macosReleaseHotkeys.register).toHaveBeenCalledOnce());
+    vi.mocked(globalShortcut.register).mockClear();
+    vi.mocked(globalShortcut.unregisterAll).mockClear();
+    macosReleaseHotkeys.unregister.mockClear();
+
+    const disposal = harness.controller.dispose();
+    const lateRegistration = registerHotkeys();
+    await Promise.resolve();
+    expect(macosReleaseHotkeys.register).toHaveBeenCalledOnce();
+    expect(globalShortcut.unregisterAll).not.toHaveBeenCalled();
+    expect(macosReleaseHotkeys.unregister).not.toHaveBeenCalled();
+
+    releaseRegistration.resolve({
+      registered: true,
+      triggerDescription: "CommandOrControl+Shift+Space",
+      diagnostics: []
+    });
+    await registration;
+    await lateRegistration;
+    await disposal;
+
+    expect(globalShortcut.register).not.toHaveBeenCalled();
+    expect(globalShortcut.unregisterAll).toHaveBeenCalled();
+    expect(macosReleaseHotkeys.unregister).toHaveBeenCalled();
+    processPlatform.mockRestore();
+  });
 });
 
 describe("AppController STT setup", () => {

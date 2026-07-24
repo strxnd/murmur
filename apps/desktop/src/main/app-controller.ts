@@ -240,8 +240,8 @@ export class AppController {
     this.hotkeyCaptureLeases.clear();
     this.onboardingDictationLeases.clear();
 
+    const registrationResults = await Promise.allSettled([this.hotkeyRegistrationQueue]);
     const preparationResults = await Promise.allSettled([
-      this.hotkeyRegistrationQueue,
       Promise.resolve().then(() => this.unregisterIpc()),
       Promise.resolve().then(() => this.clearPermissionPolicy()),
       Promise.resolve().then(() => globalShortcut.unregisterAll()),
@@ -273,7 +273,7 @@ export class AppController {
       Promise.resolve().then(() => this.destroyOwnedWindows())
     ]);
 
-    const failures = [...preparationResults, ...serviceResults, ...finalizationResults]
+    const failures = [...registrationResults, ...preparationResults, ...serviceResults, ...finalizationResults]
       .filter((result): result is PromiseRejectedResult => result.status === "rejected")
       .map((result) => result.reason);
     if (failures.length > 0) throw new AggregateError(failures, "Murmur cleanup did not complete cleanly.");
@@ -1017,6 +1017,8 @@ export class AppController {
   }
 
   private registerHotkeys(): Promise<void> {
+    if (this.isQuitting) return this.hotkeyRegistrationQueue.catch(() => undefined);
+
     const generation = ++this.hotkeyRegistrationGeneration;
     const registration = this.hotkeyRegistrationQueue
       .catch(() => undefined)
@@ -1176,6 +1178,14 @@ export class AppController {
                 ? macosPermission.diagnostics
                 : ["macOS Accessibility permission is required for push-to-talk release detection."]
             };
+      if (generation !== this.hotkeyRegistrationGeneration) {
+        globalShortcut.unregisterAll();
+        await this.portalHotkeys.unregister();
+        await this.nativeHotkeys.unregister();
+        this.macosReleaseHotkeys.unregister();
+        return;
+      }
+
       const electronResult = registerElectronShortcutActions(globalShortcut, [
         {
           id: "activation",
