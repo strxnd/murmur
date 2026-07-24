@@ -101,6 +101,24 @@ describe("LlmService", () => {
     expect(response.bodyUsed).toBe(true);
   });
 
+  it("validates Anthropic against its versioned models endpoint", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = new LlmService();
+
+    await expect(service.validate(anthropicProvider("https://api.anthropic.test"))).resolves.toMatchObject({ ok: true });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("https://api.anthropic.test/v1/models");
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
+      "anthropic-version": "2023-06-01",
+      "x-api-key": "test-key"
+    });
+  });
+
   it("rejects unknown successful cleanup schemas", async () => {
     vi.stubGlobal(
       "fetch",

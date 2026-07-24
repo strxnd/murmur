@@ -67,7 +67,7 @@ export class LlmService {
     }
 
     try {
-      const path = provider.type === "ollama" ? "/api/tags" : "/models";
+      const path = provider.type === "ollama" ? "/api/tags" : provider.type === "anthropic" ? "/v1/models" : "/models";
       const response = await fetchWithTimeout(
         joinUrl(provider.baseUrl, path),
         { headers: validationHeaders(provider) },
