@@ -920,6 +920,7 @@ export class StorageService {
           localPath: download.localPath,
           error: download.error,
           downloadedAt: download.downloadedAt,
+          verification: download.verification,
           favorite: Boolean(download.favorite)
         })),
       activeModelIds

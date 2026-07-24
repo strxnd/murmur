@@ -223,6 +223,7 @@ export class AppController {
     this.macosReleaseHotkeys.unregister();
     this.textAutomation.dispose();
     this.context.dispose();
+    await Promise.all([this.modelLibrary?.dispose?.(), this.runtimeService?.dispose?.()]);
     await this.stt.dispose();
     this.codex.dispose();
     this.closeToTrayNotification?.removeAllListeners();
@@ -1195,7 +1196,7 @@ export class AppController {
     const persisted = this.storage.getState();
     const source: RecordingSource = this.onboardingDictationScopeActive ? "onboarding" : "dictation";
 
-    const sttUsability = getSttUsability(persisted, this.runtimeService, this.paths);
+    const sttUsability = getSttUsability(persisted, this.runtimeService, this.paths, this.modelLibrary);
     if (!sttUsability.usable) {
       this.session = {
         ...defaultSession,
@@ -1727,7 +1728,7 @@ export class AppController {
     if (this.runtimeService.getAutomaticAvailability(runtimeId).status !== "available") return false;
     if (!provider.defaultModel) return false;
     const modelPath = isAbsolute(provider.defaultModel) ? provider.defaultModel : join(this.paths.modelDir, provider.defaultModel);
-    return existsSync(modelPath);
+    return this.modelLibrary.verifyModelPathForUse(modelPath);
   }
 
   private showPill(): void {
@@ -1969,10 +1970,11 @@ export class AppController {
   }
 
   private getSnapshot(): AppStateSnapshot {
+    const sttSetup = this.sttSetup.getSnapshot();
     const state = this.storage.getState();
     return {
       ...state,
-      sttSetup: this.sttSetup.getSnapshot(),
+      sttSetup,
       session: this.session,
       capabilities: this.getCapabilities(),
       providerRuntime: this.getProviderRuntime()

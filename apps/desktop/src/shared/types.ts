@@ -182,6 +182,11 @@ export interface ModelDownloadState {
   localPath?: string;
   error?: string;
   downloadedAt?: string;
+  verification?: {
+    sizeBytes: number;
+    mtimeMs: number;
+    sha256: string;
+  };
   favorite: boolean;
 }
 
