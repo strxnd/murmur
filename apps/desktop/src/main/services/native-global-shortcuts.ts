@@ -250,17 +250,19 @@ export class NativeDesktopGlobalShortcutService {
     }
   }
 
-  dispose(): void {
-    void this.unregister().finally(() => {
+  async dispose(): Promise<void> {
+    try {
+      await this.unregister();
+    } finally {
       const bus = this.connection.currentBus();
       if (this.callbackServiceRequested && bus?.releaseName) {
-        bus.releaseName(dbusServiceName, () => undefined);
+        await new Promise<void>((resolve) => bus.releaseName!(dbusServiceName, () => resolve()));
       }
       this.detachCallbackSenderCapture();
       this.connection.dispose();
       this.callbackServiceExported = false;
       this.callbackServiceRequested = false;
-    });
+    }
   }
 
   private async registerBackend(

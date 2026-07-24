@@ -20,22 +20,26 @@ import type {
 } from "../shared/types";
 import {
   AppController,
+  calculateModeSelectorBounds,
   computeDurationMs,
   countWords,
+  isAllowedRendererPermission,
   isSameOutputTarget,
   rendererQueryFromSuffix,
   selectLlmProviderAfterInitialRefresh,
   shouldPersistDictationHistory,
+  shouldRecoverRenderer,
   wrapIndex
 } from "./app-controller";
 import { DictationSessionOwner, type DictationSessionOperation } from "./services/dictation-session";
-import { globalShortcut, ipcMain } from "./electron-api";
+import { app, BrowserWindow, globalShortcut, ipcMain, session } from "./electron-api";
 
 vi.mock("./electron-api", () => ({
   app: {
     getPath: () => "/tmp/murmur-tests",
     getVersion: () => "0.1.0",
-    isPackaged: false
+    isPackaged: false,
+    quit: vi.fn()
   },
   BrowserWindow: vi.fn(),
   clipboard: {
@@ -64,6 +68,12 @@ vi.mock("./electron-api", () => ({
     decryptString: vi.fn(),
     encryptString: vi.fn(),
     isEncryptionAvailable: vi.fn(() => false)
+  },
+  session: {
+    defaultSession: {
+      setPermissionCheckHandler: vi.fn(),
+      setPermissionRequestHandler: vi.fn()
+    }
   },
   screen: {
     getCursorScreenPoint: vi.fn(() => ({ x: 0, y: 0 })),
@@ -266,7 +276,14 @@ function createControllerHarness(options: {
     recordingStopAckTimer: null,
     pushToTalkPressed: false,
     pushToTalkSessionId: null,
-    onboardingDictationScopeActive: false,
+    hotkeyCaptureLeases: new Map(),
+    onboardingDictationLeases: new Set(),
+    rendererRoles: new Map(),
+    rendererRecoveryAttempts: new Map(),
+    ipcHandlerChannels: new Set(),
+    ipcEventListeners: new Map(),
+    disposePromise: null,
+    permissionPolicyInstalled: false,
     ensureAutomationReadyForUserAction: vi.fn(() => ({ ready: true })),
     assertTrustedIpcSender: vi.fn(),
     beginRecordingContextCapture: vi.fn(() => {
@@ -279,7 +296,9 @@ function createControllerHarness(options: {
     scheduleRecordingStopAckTimeout: vi.fn(),
     broadcastState: vi.fn(),
     registerHotkeys: vi.fn(async () => undefined),
-    unregisterModeSelectorNavigationShortcuts: vi.fn(),
+    unregisterIpc: vi.fn(),
+    clearPermissionPolicy: vi.fn(),
+    destroyOwnedWindows: vi.fn(),
     getSnapshot: vi.fn(() => ({ ...state, session: controller.session }) as unknown as AppStateSnapshot),
     notifyPasteFallback: vi.fn(),
     notifyHistoryPersistenceFailure: vi.fn()
@@ -382,6 +401,259 @@ describe("app-controller utility contracts", () => {
     finishRefresh();
     await expect(selection).resolves.toEqual(codexProviderDefaults);
     expect(selectProvider).toHaveBeenCalledOnce();
+  });
+});
+
+describe("AppController lifecycle and window ownership", () => {
+  it("keeps quit reversible until renderer unload guards approve closure", () => {
+    const tray = { destroy: vi.fn(), setContextMenu: vi.fn() };
+    const controller = Object.create(AppController.prototype) as AppController & Record<string, unknown>;
+    Object.assign(controller, {
+      isQuitting: false,
+      disposePromise: null,
+      tray,
+      closeToTrayNotification: null,
+      refreshTrayMenu: vi.fn()
+    });
+
+    (controller as unknown as { requestQuit(): void }).requestQuit();
+    expect(app.quit).toHaveBeenCalledOnce();
+    expect(tray.destroy).not.toHaveBeenCalled();
+
+    controller.prepareToQuit();
+    controller.cancelQuit();
+    expect(controller).toMatchObject({ isQuitting: false, tray });
+
+    const listeners = new Map<string, () => void>();
+    const cancelQuit = vi.fn();
+    Object.assign(controller, {
+      rendererSource: { kind: "packaged", filePath: "/tmp/index.html" },
+      cancelQuit
+    });
+    (controller as unknown as { attachWindowDiagnostics(window: unknown, role: string): void }).attachWindowDiagnostics(
+      { webContents: { id: 1, on: (event: string, listener: () => void) => listeners.set(event, listener) } },
+      "main"
+    );
+    listeners.get("will-prevent-unload")?.();
+    expect(cancelQuit).toHaveBeenCalledOnce();
+  });
+
+  it("awaits initial renderer navigation before initialization succeeds", async () => {
+    const navigationFailure = new Error("renderer missing");
+    const controller = Object.create(AppController.prototype) as AppController & Record<string, unknown>;
+    const registerHotkeys = vi.fn(async () => undefined);
+    Object.assign(controller, {
+      automationPermissions: { initialize: vi.fn(async () => undefined) },
+      textAutomation: { initialize: vi.fn(async () => undefined) },
+      context: { initialize: vi.fn(async () => undefined) },
+      paste: { initialize: vi.fn(async () => undefined) },
+      registerIpc: vi.fn(),
+      configureSessionPermissions: vi.fn(),
+      codex: { refreshStatus: vi.fn(async () => undefined) },
+      createTray: vi.fn(),
+      createWindows: vi.fn(async () => Promise.reject(navigationFailure)),
+      storage: { getState: vi.fn() },
+      registerHotkeys
+    });
+
+    await expect(controller.initialize()).rejects.toBe(navigationFailure);
+    expect(registerHotkeys).not.toHaveBeenCalled();
+  });
+
+  it("stops initialization after Quit marks the constructing controller", async () => {
+    const firstStep = deferred<void>();
+    const textInitialize = vi.fn(async () => undefined);
+    const controller = Object.create(AppController.prototype) as AppController & Record<string, unknown>;
+    Object.assign(controller, {
+      isQuitting: false,
+      disposePromise: null,
+      automationPermissions: { initialize: vi.fn(() => firstStep.promise) },
+      textAutomation: { initialize: textInitialize }
+    });
+
+    const initialization = controller.initialize();
+    controller.prepareToQuit();
+    firstStep.resolve();
+
+    await expect(initialization).rejects.toThrow("startup was cancelled");
+    expect(textInitialize).not.toHaveBeenCalled();
+  });
+
+  it("recovers unexpected renderer loss but not expected termination", async () => {
+    expect(shouldRecoverRenderer("crashed", false)).toBe(true);
+    expect(shouldRecoverRenderer("clean-exit", false)).toBe(false);
+    expect(shouldRecoverRenderer("killed", false)).toBe(true);
+    expect(shouldRecoverRenderer("crashed", true)).toBe(false);
+
+    const loadRenderer = vi.fn(async () => undefined);
+    const controller = Object.create(AppController.prototype) as AppController & Record<string, unknown>;
+    Object.assign(controller, {
+      isQuitting: false,
+      rendererRecoveryAttempts: new Map(),
+      loadRenderer,
+      invalidateFailedWindow: vi.fn()
+    });
+    const window = { isDestroyed: vi.fn(() => false) };
+
+    await (controller as unknown as {
+      recoverRenderer(window: unknown, role: string, reason: string): Promise<void>;
+    }).recoverRenderer(window, "pill", "crashed");
+
+    expect(loadRenderer).toHaveBeenCalledWith(window, "?pill=1");
+  });
+
+  it("releases renderer-owned transient leases when the renderer disappears", () => {
+    const registerHotkeys = vi.fn(async () => undefined);
+    const broadcastState = vi.fn();
+    const controller = Object.create(AppController.prototype) as AppController & Record<string, unknown>;
+    Object.assign(controller, {
+      hotkeyCaptureLeases: new Map([[41, 2]]),
+      onboardingDictationLeases: new Set([41]),
+      isQuitting: false,
+      registerHotkeys,
+      broadcastState
+    });
+
+    (controller as unknown as { releaseRendererLeases(senderId: number): void }).releaseRendererLeases(41);
+
+    expect(controller).toMatchObject({
+      hotkeyCaptureLeases: new Map(),
+      onboardingDictationLeases: new Set()
+    });
+    expect(registerHotkeys).toHaveBeenCalledOnce();
+  });
+
+  it("keeps selector navigation local and hides the selector when it loses focus", async () => {
+    vi.mocked(globalShortcut.register).mockClear();
+    const listeners = new Map<string, () => void>();
+    const hide = vi.fn();
+    const window = {
+      isDestroyed: vi.fn(() => false),
+      isVisible: vi.fn(() => true),
+      hide,
+      on: vi.fn((event: string, listener: () => void) => listeners.set(event, listener)),
+      webContents: { id: 52 }
+    };
+    vi.mocked(BrowserWindow).mockImplementationOnce(function MockBrowserWindow() {
+      return window as never;
+    });
+    const controller = Object.create(AppController.prototype) as AppController & Record<string, unknown>;
+    Object.assign(controller, {
+      modeSelectorWindow: null,
+      configureTrustedRendererWindow: vi.fn(),
+      attachWindowDiagnostics: vi.fn(),
+      configureModeSelectorWindow: vi.fn(),
+      loadRenderer: vi.fn(async () => undefined),
+      releaseRendererOwnership: vi.fn()
+    });
+
+    await (controller as unknown as { createModeSelectorWindow(): Promise<void> }).createModeSelectorWindow();
+    listeners.get("blur")?.();
+
+    expect(globalShortcut.register).not.toHaveBeenCalled();
+    expect(hide).toHaveBeenCalledOnce();
+  });
+
+  it("enforces role-specific channels for owned renderer senders", () => {
+    const controller = Object.create(AppController.prototype) as AppController & Record<string, unknown>;
+    Object.assign(controller, {
+      rendererRoles: new Map([[9, "pill"]]),
+      rendererSource: { kind: "dev", url: "http://127.0.0.1:5173", filePath: "/unused" }
+    });
+    const event = {
+      sender: { id: 9, getURL: () => "http://127.0.0.1:5173/?pill=1" },
+      senderFrame: { url: "http://127.0.0.1:5173/?pill=1" }
+    };
+    const authorize = (channel: string): void =>
+      (controller as unknown as { assertTrustedIpcSender(event: unknown, channel: string): void }).assertTrustedIpcSender(
+        event,
+        channel
+      );
+
+    expect(() => authorize("app:get-pill-state")).not.toThrow();
+    expect(() => authorize("settings:update")).toThrow("Unauthorized IPC sender");
+  });
+
+  it("allows only trusted main-renderer audio permission requests", () => {
+    expect(isAllowedRendererPermission("media", ["audio"])).toBe(true);
+    expect(isAllowedRendererPermission("media", ["video"])).toBe(false);
+    expect(isAllowedRendererPermission("media", ["audio", "video"])).toBe(false);
+    expect(isAllowedRendererPermission("clipboard-read")).toBe(false);
+
+    const requestHandlerSetter = vi.mocked(session.defaultSession.setPermissionRequestHandler);
+    requestHandlerSetter.mockClear();
+    const controller = Object.create(AppController.prototype) as AppController & Record<string, unknown>;
+    Object.assign(controller, {
+      rendererRoles: new Map([[7, "main"], [8, "pill"]]),
+      rendererSource: { kind: "dev", url: "http://127.0.0.1:5173", filePath: "/unused" },
+      permissionPolicyInstalled: false
+    });
+    (controller as unknown as { configureSessionPermissions(): void }).configureSessionPermissions();
+    const requestHandler = requestHandlerSetter.mock.calls[0]?.[0] as unknown as (
+      webContents: { id: number; getURL(): string },
+      permission: string,
+      callback: (allowed: boolean) => void,
+      details: { requestingUrl: string; mediaTypes: string[] }
+    ) => void;
+    const mainCallback = vi.fn();
+    const pillCallback = vi.fn();
+    requestHandler({ id: 7, getURL: () => "http://127.0.0.1:5173/" }, "media", mainCallback, {
+      requestingUrl: "http://127.0.0.1:5173/",
+      mediaTypes: ["audio"]
+    });
+    requestHandler({ id: 8, getURL: () => "http://127.0.0.1:5173/?pill=1" }, "media", pillCallback, {
+      requestingUrl: "http://127.0.0.1:5173/?pill=1",
+      mediaTypes: ["audio"]
+    });
+
+    expect(mainCallback).toHaveBeenCalledWith(true);
+    expect(pillCallback).toHaveBeenCalledWith(false);
+  });
+
+  it("fits and centers the selector inside small work areas", () => {
+    expect(calculateModeSelectorBounds({ x: 100, y: 50, width: 420, height: 300 })).toEqual({
+      x: 176,
+      y: 66,
+      width: 268,
+      height: 268
+    });
+    expect(calculateModeSelectorBounds({ x: 0, y: 0, width: 1920, height: 1080 })).toEqual({
+      x: 640,
+      y: 220,
+      width: 640,
+      height: 640
+    });
+  });
+
+  it("does not resolve disposal until asynchronous desktop cleanup completes", async () => {
+    const harness = createControllerHarness();
+    const cleanup = deferred<void>();
+    Object.assign(harness.controller, {
+      portalHotkeys: { dispose: vi.fn(() => cleanup.promise) },
+      nativeHotkeys: { dispose: vi.fn(async () => undefined) },
+      textAutomation: { dispose: vi.fn(async () => undefined) },
+      context: { dispose: vi.fn() },
+      destroyOwnedWindows: vi.fn(),
+      unregisterIpc: vi.fn(),
+      clearPermissionPolicy: vi.fn(),
+      hotkeyCaptureLeases: new Map(),
+      onboardingDictationLeases: new Set(),
+      hotkeyRegistrationQueue: Promise.resolve(),
+      closeToTrayNotification: null,
+      tray: null,
+      disposePromise: null
+    });
+
+    let settled = false;
+    const disposal = harness.controller.dispose().then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    cleanup.resolve();
+    await disposal;
+    expect(settled).toBe(true);
   });
 });
 

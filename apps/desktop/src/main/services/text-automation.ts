@@ -39,7 +39,7 @@ export interface TextAutomationCapability {
 
 export interface TextAutomationBackend {
   initialize(): Promise<void>;
-  dispose(): void;
+  dispose(): void | Promise<void>;
   pasteClipboard(): Promise<AutomationResult>;
   copySelection(): Promise<AutomationResult>;
   readSelectedText?(): Promise<SelectedTextAutomationResult>;
@@ -62,8 +62,9 @@ export class TextAutomationService {
     return this.backend.initialize();
   }
 
-  dispose(): void {
-    this.backend.dispose();
+  async dispose(): Promise<void> {
+    await this.operationQueue;
+    await this.backend.dispose();
   }
 
   pasteClipboard(): Promise<AutomationResult> {

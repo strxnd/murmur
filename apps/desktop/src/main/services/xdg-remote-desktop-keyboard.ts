@@ -126,8 +126,10 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
     }
   }
 
-  dispose(): void {
-    void this.closeSession().finally(() => {
+  async dispose(): Promise<void> {
+    try {
+      await this.closeSession();
+    } finally {
       for (const pending of this.pendingResponses.values()) {
         clearTimeout(pending.timer);
         pending.reject(new Error("XDG RemoteDesktop keyboard automation was disposed."));
@@ -135,7 +137,7 @@ export class XdgRemoteDesktopKeyboardService implements ShortcutAutomationBacken
       this.pendingResponses.clear();
       this.completedResponses.clear();
       this.connection.dispose();
-    });
+    }
   }
 
   pasteClipboard(): Promise<AutomationResult> {

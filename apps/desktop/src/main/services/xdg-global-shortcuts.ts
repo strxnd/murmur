@@ -293,8 +293,12 @@ export class XdgGlobalShortcutService {
     }
   }
 
-  dispose(): void {
-    void this.unregister().finally(() => this.connection.dispose());
+  async dispose(): Promise<void> {
+    try {
+      await this.unregister();
+    } finally {
+      this.connection.dispose();
+    }
   }
 
   private getBus(): PortalMessageBus {
