@@ -1,17 +1,20 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
+  accessSync,
   chmodSync,
-  createWriteStream,
+  constants,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
   getSttRuntimeSupportedAccelerators,
   getSttRuntimeVariantAsset,
@@ -25,6 +28,15 @@ import {
   type SttRuntimeAsset,
   type SttRuntimeCatalogEntry
 } from "../../shared/stt-runtime-catalog";
+import {
+  createInstalledTreeReceipt,
+  downloadResponseToFile,
+  ensureAvailableDiskSpace,
+  inspectTarArchive,
+  type InstalledTreeReceipt,
+  verifyInstalledTreeReceipt,
+  withDownloadDeadline
+} from "./installation-integrity";
 import type {
   SttRuntimeAccelerator,
   SttRuntimeAvailability,
@@ -49,8 +61,10 @@ export type SttRuntimeActionTarget =
     };
 const defaultDownloadHeaderTimeoutMs = 15000;
 const defaultDownloadBodyTimeoutMs = 30000;
+const defaultDownloadTotalTimeoutMs = 30 * 60 * 1000;
 const defaultProgressEmitIntervalMs = 500;
 const progressEmitMinBytes = 1024 * 1024;
+const maxArchiveExpansionRatio = 20;
 
 interface RuntimeCandidate {
   binaryPath: string;
@@ -69,6 +83,7 @@ interface RuntimeReceipt {
   archiveName: string;
   archiveSha256: string;
   installedAt: string;
+  tree: InstalledTreeReceipt;
 }
 
 interface RuntimeOperation {
@@ -107,6 +122,7 @@ export interface SttRuntimeServiceOptions {
   downloadsEnabled?: boolean;
   downloadHeaderTimeoutMs?: number;
   downloadBodyTimeoutMs?: number;
+  downloadTotalTimeoutMs?: number;
   progressEmitIntervalMs?: number;
 }
 
@@ -129,6 +145,7 @@ export class SttRuntimeService {
   private downloadsEnabled: boolean;
   private downloadHeaderTimeoutMs: number;
   private downloadBodyTimeoutMs: number;
+  private downloadTotalTimeoutMs: number;
   private progressEmitIntervalMs: number;
   private operations = new Map<SttRuntimeVariantKey, RuntimeOperation>();
   private activeStates = new Map<SttRuntimeVariantKey, SttRuntimeInstallState>();
@@ -151,8 +168,9 @@ export class SttRuntimeService {
     this.downloadsEnabled = options.downloadsEnabled ?? true;
     this.downloadHeaderTimeoutMs = options.downloadHeaderTimeoutMs ?? defaultDownloadHeaderTimeoutMs;
     this.downloadBodyTimeoutMs = options.downloadBodyTimeoutMs ?? defaultDownloadBodyTimeoutMs;
+    this.downloadTotalTimeoutMs = options.downloadTotalTimeoutMs ?? defaultDownloadTotalTimeoutMs;
     this.progressEmitIntervalMs = options.progressEmitIntervalMs ?? defaultProgressEmitIntervalMs;
-    this.cleanupPartialInstalls();
+    this.recoverPartialInstalls();
   }
 
   setProgressEmitter(emitProgress: ProgressEmitter | undefined): void {
@@ -366,6 +384,12 @@ export class SttRuntimeService {
     return this.getInstallState(variant.id, variant.accelerator);
   }
 
+  async dispose(): Promise<void> {
+    const operations = Array.from(this.operations.values());
+    for (const operation of operations) operation.controller.abort();
+    await Promise.allSettled(operations.map((operation) => operation.promise));
+  }
+
   requireRuntime(id: SttRuntimeId, accelerator: SttRuntimeAccelerator = "cpu"): ResolvedSttRuntime {
     const definition = this.definition(id);
     const availability = this.getAvailability(id, accelerator);
@@ -434,6 +458,8 @@ export class SttRuntimeService {
     const archivePath = join(parentDir, `${asset.assetName}.part`);
     const stagingDir = join(parentDir, `${definition.version}.staging-${process.pid}-${Date.now()}`);
     const extractDir = join(stagingDir, "extract");
+    let backupDir: string | undefined;
+    let promotedFinal = false;
 
     mkdirSync(parentDir, { recursive: true });
     rmSync(archivePath, { force: true });
@@ -469,16 +495,16 @@ export class SttRuntimeService {
 
       if (controller.signal.aborted) throw abortError();
       mkdirSync(extractDir, { recursive: true });
-      await assertSafeTarGzArchive(archivePath, controller.signal);
+      const maxExtractedBytes = asset.sizeBytes * maxArchiveExpansionRatio;
+      const extractedBytes = await inspectTarArchive(archivePath, "gz", maxExtractedBytes, controller.signal);
+      ensureAvailableDiskSpace(stagingDir, extractedBytes);
       if (controller.signal.aborted) throw abortError();
       await this.extractArchiveImpl(archivePath, extractDir, controller.signal);
       if (controller.signal.aborted) throw abortError();
       const extractedRoot = singleChildDirectory(extractDir) ?? extractDir;
-      const binary = findExecutable(extractedRoot, definition);
-      if (!binary) {
-        throw new Error(`${definition.label} archive did not contain a supported executable.`);
-      }
       chmodExecutables(extractedRoot, definition);
+      const binaryProblem = validateRuntimeExecutable(extractedRoot, definition);
+      if (binaryProblem) throw new Error(binaryProblem);
       writeReceipt(join(extractedRoot, "runtime.json"), {
         id,
         platformKey,
@@ -488,7 +514,8 @@ export class SttRuntimeService {
         upstreamVersion: definition.upstreamVersion,
         archiveName: asset.assetName,
         archiveSha256: asset.sha256,
-        installedAt: new Date().toISOString()
+        installedAt: new Date().toISOString(),
+        tree: createInstalledTreeReceipt(extractedRoot, maxExtractedBytes)
       });
 
       const installingState = this.state(id, accelerator, "installing", {
@@ -496,15 +523,21 @@ export class SttRuntimeService {
         totalBytes: asset.sizeBytes
       });
       await this.onBeforeRuntimeMutation?.(installingState);
-      replaceDirectory(extractedRoot, finalDir);
-      rmSync(archivePath, { force: true });
-      rmSync(stagingDir, { recursive: true, force: true });
+      backupDir = replaceDirectory(extractedRoot, finalDir);
+      promotedFinal = true;
 
       this.activeStates.delete(variantKey);
       const ready = this.getInstallState(id, accelerator);
+      if (ready.status !== "ready") throw new Error(ready.error ?? ready.message);
+      if (backupDir) rmSync(backupDir, { recursive: true, force: true });
+      backupDir = undefined;
+      rmSync(archivePath, { force: true });
+      rmSync(stagingDir, { recursive: true, force: true });
       this.emit(ready);
       return ready;
     } catch (error) {
+      if (backupDir) restoreDirectoryBackup(finalDir, backupDir);
+      else if (promotedFinal) rmSync(finalDir, { recursive: true, force: true });
       rmSync(archivePath, { force: true });
       rmSync(stagingDir, { recursive: true, force: true });
       const errorText = isAbortError(error) ? "Runtime download was cancelled." : message(error);
@@ -531,67 +564,53 @@ export class SttRuntimeService {
     variantKey: SttRuntimeVariantKey,
     controller: AbortController
   ): Promise<string> {
-    const response = await fetchWithTimeout(
-      this.fetchImpl,
-      asset.url,
-      {
-        headers: { "User-Agent": "murmur-runtime-manager" }
-      },
-      this.downloadHeaderTimeoutMs,
-      controller.signal
-    );
-    if (!response.ok || !response.body) {
-      throw new Error(`Download failed with HTTP ${response.status}: ${await response.text()}`);
-    }
-
-    const totalBytes = Number(response.headers.get("content-length")) || asset.sizeBytes;
-    const writer = createWriteStream(archivePath);
-    const hash = createHash("sha256");
-    let progressBytes = 0;
-    let streamDone = false;
-    let lastEmittedAt = 0;
-    let lastProgressBytes = 0;
-    const reader = response.body.getReader();
-
-    try {
-      while (true) {
-        if (controller.signal.aborted) throw abortError();
-        const { done, value } = await readStreamChunk(reader, this.downloadBodyTimeoutMs, controller.signal);
-        if (done) {
-          streamDone = true;
-          break;
-        }
-        if (!value) continue;
-        progressBytes += value.byteLength;
-        hash.update(value);
-        await writeChunk(writer, value);
-        const active = this.activeStates.get(variantKey);
-        const now = Date.now();
-        const firstPositiveProgress = lastProgressBytes === 0 && progressBytes > 0;
-        const shouldEmit =
-          active &&
-          (lastEmittedAt === 0 ||
-            firstPositiveProgress ||
-            progressBytes - lastProgressBytes >= progressEmitMinBytes ||
-            now - lastEmittedAt >= this.progressEmitIntervalMs ||
-            progressBytes >= totalBytes);
-        if (active && shouldEmit) {
-          lastEmittedAt = now;
-          lastProgressBytes = progressBytes;
-          this.emit({
-            ...active,
-            progressBytes,
-            totalBytes,
-            message: `Downloading ${active.label} runtime.`
-          });
-        }
+    return withDownloadDeadline(controller.signal, this.downloadTotalTimeoutMs, async (deadlineSignal) => {
+      const response = await fetchWithTimeout(
+        this.fetchImpl,
+        asset.url,
+        {
+          headers: { "User-Agent": "murmur-runtime-manager" }
+        },
+        this.downloadHeaderTimeoutMs,
+        deadlineSignal
+      );
+      if (!response.ok) {
+        throw new Error(`Download failed with HTTP ${response.status}: ${await response.text()}`);
       }
-    } finally {
-      if (!streamDone) await reader.cancel().catch(() => undefined);
-      await closeWriter(writer);
-    }
 
-    return hash.digest("hex");
+      let lastEmittedAt = 0;
+      let lastProgressBytes = 0;
+      const result = await downloadResponseToFile({
+        response,
+        filePath: archivePath,
+        expectedBytes: asset.sizeBytes,
+        idleTimeoutMs: this.downloadBodyTimeoutMs,
+        signal: deadlineSignal,
+        onProgress: (progressBytes) => {
+          const active = this.activeStates.get(variantKey);
+          const now = Date.now();
+          const firstPositiveProgress = lastProgressBytes === 0 && progressBytes > 0;
+          const shouldEmit =
+            active &&
+            (lastEmittedAt === 0 ||
+              firstPositiveProgress ||
+              progressBytes - lastProgressBytes >= progressEmitMinBytes ||
+              now - lastEmittedAt >= this.progressEmitIntervalMs ||
+              progressBytes >= asset.sizeBytes);
+          if (active && shouldEmit) {
+            lastEmittedAt = now;
+            lastProgressBytes = progressBytes;
+            this.emit({
+              ...active,
+              progressBytes,
+              totalBytes: asset.sizeBytes,
+              message: `Downloading ${active.label} runtime.`
+            });
+          }
+        }
+      });
+      return result.sha256;
+    });
   }
 
   private resolveCandidate(
@@ -703,8 +722,20 @@ export class SttRuntimeService {
     if (receiptAccelerator !== accelerator) {
       return "Runtime receipt does not match the required accelerator.";
     }
-    if (!findExecutable(root, definition)) return "Runtime executable is missing.";
-    return null;
+    const asset = getSttRuntimeVariantAsset(definition, platformKey, accelerator);
+    if (!asset?.sizeBytes || !asset.sha256 || !receipt.tree) {
+      return "Runtime receipt is missing required file integrity metadata.";
+    }
+    if (receipt.archiveName !== asset.assetName || receipt.archiveSha256 !== asset.sha256) {
+      return "Runtime receipt does not match the pinned release asset.";
+    }
+    const expectedVariantKey = this.variantKey(definition, platformKey, accelerator);
+    if (receipt.variantKey && receipt.variantKey !== expectedVariantKey) {
+      return "Runtime receipt does not match the required runtime variant.";
+    }
+    const treeProblem = verifyInstalledTreeReceipt(root, receipt.tree, asset.sizeBytes * maxArchiveExpansionRatio);
+    if (treeProblem) return treeProblem;
+    return validateRuntimeExecutable(root, definition);
   }
 
   private isValidCacheInstall(
@@ -865,10 +896,39 @@ export class SttRuntimeService {
     this.emitProgress?.(state);
   }
 
-  private cleanupPartialInstalls(): void {
+  private recoverPartialInstalls(): void {
     const root = this.runtimeDir;
     if (!root || !existsSync(root)) return;
     cleanupPartialEntries(root);
+
+    for (const variant of this.runtimeVariants()) {
+      const definition = this.definition(variant.id);
+      const finalDir = this.cacheInstallRoot(definition, variant.platformKey, variant.accelerator);
+      const parentDir = dirname(finalDir);
+      if (!existsSync(parentDir)) continue;
+      const backupPrefix = `${basename(finalDir)}.previous-`;
+      const backups = readdirSync(parentDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith(backupPrefix))
+        .map((entry) => join(parentDir, entry.name))
+        .sort()
+        .reverse();
+      if (backups.length === 0) continue;
+
+      if (this.isValidCacheInstall(definition, variant.platformKey, variant.accelerator, finalDir)) {
+        for (const backup of backups) rmSync(backup, { recursive: true, force: true });
+        continue;
+      }
+
+      const validBackup = backups.find((backup) =>
+        this.isValidCacheInstall(definition, variant.platformKey, variant.accelerator, backup)
+      );
+      if (!validBackup) continue;
+      rmSync(finalDir, { recursive: true, force: true });
+      renameSync(validBackup, finalDir);
+      for (const backup of backups) {
+        if (backup !== validBackup) rmSync(backup, { recursive: true, force: true });
+      }
+    }
   }
 }
 
@@ -899,6 +959,38 @@ function findExecutable(root: string, definition: SttRuntimeCatalogEntry): strin
   return null;
 }
 
+function validateRuntimeExecutable(root: string, definition: SttRuntimeCatalogEntry): string | null {
+  const canonicalRoot = realpathSync(root);
+  let problem = "Runtime executable is missing.";
+  for (const candidate of definition.executableCandidates) {
+    const binaryPath = join(root, ...candidate.split("/"));
+    if (!existsSync(binaryPath)) continue;
+    const stats = lstatSync(binaryPath);
+    if (!stats.isFile()) {
+      problem = "Runtime executable is not a regular file.";
+      continue;
+    }
+    const canonicalBinary = realpathSync(binaryPath);
+    const relativePath = relative(canonicalRoot, canonicalBinary);
+    if (relativePath === ".." || relativePath.startsWith(`..${sep}`)) {
+      problem = "Runtime executable resolves outside its installation root.";
+      continue;
+    }
+    try {
+      accessSync(binaryPath, constants.X_OK);
+    } catch {
+      problem = "Runtime executable is not executable.";
+      continue;
+    }
+    if (statSync(binaryPath).size <= 0) {
+      problem = "Runtime executable is empty.";
+      continue;
+    }
+    return null;
+  }
+  return problem;
+}
+
 function writeReceipt(path: string, receipt: RuntimeReceipt): void {
   writeFileSync(path, JSON.stringify(receipt, null, 2));
 }
@@ -907,7 +999,16 @@ function readReceipt(path: string): RuntimeReceipt | null {
   if (!existsSync(path)) return null;
   try {
     const value = JSON.parse(readFileSync(path, "utf8")) as Partial<RuntimeReceipt>;
-    if (!value.id || !value.platformKey || !value.version || !value.archiveName || !value.archiveSha256 || !value.installedAt) {
+    if (
+      !value.id ||
+      !value.platformKey ||
+      !value.version ||
+      !value.archiveName ||
+      !value.archiveSha256 ||
+      !value.installedAt ||
+      !value.tree?.files ||
+      !value.tree.symlinks
+    ) {
       return null;
     }
     return value as RuntimeReceipt;
@@ -916,19 +1017,24 @@ function readReceipt(path: string): RuntimeReceipt | null {
   }
 }
 
-function replaceDirectory(sourceDir: string, targetDir: string): void {
+function replaceDirectory(sourceDir: string, targetDir: string): string | undefined {
   const backupDir = `${targetDir}.previous-${process.pid}-${Date.now()}`;
-  if (existsSync(backupDir)) rmSync(backupDir, { recursive: true, force: true });
-  if (existsSync(targetDir)) renameSync(targetDir, backupDir);
+  const hadTarget = existsSync(targetDir);
+  if (hadTarget) renameSync(targetDir, backupDir);
   try {
     mkdirSync(dirname(targetDir), { recursive: true });
     renameSync(sourceDir, targetDir);
-    rmSync(backupDir, { recursive: true, force: true });
+    return hadTarget ? backupDir : undefined;
   } catch (error) {
     if (existsSync(targetDir)) rmSync(targetDir, { recursive: true, force: true });
-    if (existsSync(backupDir)) renameSync(backupDir, targetDir);
+    if (hadTarget && existsSync(backupDir)) renameSync(backupDir, targetDir);
     throw error;
   }
+}
+
+function restoreDirectoryBackup(targetDir: string, backupDir: string): void {
+  rmSync(targetDir, { recursive: true, force: true });
+  if (existsSync(backupDir)) renameSync(backupDir, targetDir);
 }
 
 function chmodExecutables(root: string, definition: SttRuntimeCatalogEntry): void {
@@ -953,9 +1059,9 @@ function cleanupPartialEntries(root: string): void {
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     const path = join(root, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name.includes(".staging-") || entry.name.includes(".previous-")) {
+      if (entry.name.includes(".staging-")) {
         rmSync(path, { recursive: true, force: true });
-      } else {
+      } else if (!entry.name.includes(".previous-")) {
         cleanupPartialEntries(path);
       }
     } else if (entry.isFile() && entry.name.endsWith(".part")) {
@@ -990,111 +1096,6 @@ async function fetchWithTimeout(
     clearTimeout(timeout);
     signal?.removeEventListener("abort", abort);
   }
-}
-
-function readStreamChunk(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  timeoutMs: number,
-  signal?: AbortSignal
-): Promise<ReadableStreamReadResult<Uint8Array>> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(abortError());
-      return;
-    }
-
-    let settled = false;
-    let timeout: NodeJS.Timeout;
-    const finish = (callback: () => void): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      signal?.removeEventListener("abort", abort);
-      callback();
-    };
-    const abort = (): void => finish(() => reject(abortError()));
-    timeout = setTimeout(() => {
-      finish(() => reject(new Error(`Download stalled while reading the response body for ${timeoutMs}ms.`)));
-    }, timeoutMs);
-
-    signal?.addEventListener("abort", abort, { once: true });
-    reader.read().then(
-      (result) => finish(() => resolve(result)),
-      (error: unknown) => finish(() => reject(error))
-    );
-  });
-}
-
-function writeChunk(writer: NodeJS.WritableStream, value: Uint8Array): Promise<void> {
-  return new Promise((resolve, reject) => {
-    writer.write(Buffer.from(value), (error) => {
-      if (error) reject(error);
-      else resolve();
-    });
-  });
-}
-
-function assertSafeTarGzArchive(archivePath: string, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("tar", ["-tzf", archivePath], { stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    const finish = (error?: Error): void => {
-      if (settled) return;
-      settled = true;
-      signal?.removeEventListener("abort", abort);
-      if (error) {
-        reject(error);
-        return;
-      }
-      const unsafeEntry = stdout
-        .split("\n")
-        .map((entry) => entry.trim())
-        .filter(Boolean)
-        .find(isUnsafeArchiveEntry);
-      if (unsafeEntry) {
-        reject(new Error(`Archive contains an unsafe path: ${unsafeEntry}`));
-      } else {
-        resolve();
-      }
-    };
-    const abort = (): void => {
-      child.kill();
-      finish(abortError());
-    };
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", (error) => finish(isAbortError(error) ? abortError() : error));
-    child.on("close", (code) => {
-      if (code === 0) finish();
-      else finish(new Error(`tar archive listing failed with exit code ${code}: ${stderr.trim()}`));
-    });
-    if (signal?.aborted) {
-      abort();
-      return;
-    }
-    signal?.addEventListener("abort", abort, { once: true });
-  });
-}
-
-function isUnsafeArchiveEntry(entry: string): boolean {
-  const normalized = entry.replace(/\\/g, "/");
-  if (!normalized || normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized) || normalized.includes("\0")) return true;
-  return normalized.split("/").some((part) => part === "..");
-}
-
-function closeWriter(writer: NodeJS.WritableStream): Promise<void> {
-  return new Promise((resolve, reject) => {
-    writer.end((error?: Error | null) => {
-      if (error) reject(error);
-      else resolve();
-    });
-  });
 }
 
 function extractTarGz(archivePath: string, targetDir: string, signal?: AbortSignal): Promise<void> {

@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { modelCatalog } from "../../shared/model-catalog";
 import {
@@ -34,7 +33,7 @@ export class SttSetupService {
 
   getSnapshot(): SttSetupSnapshot {
     const state = this.storage.getState();
-    const usability = getSttUsability(state, this.runtimeService, this.paths);
+    const usability = getSttUsability(state, this.runtimeService, this.paths, this.modelLibrary);
 
     return {
       skipped: Boolean(state.settings.sttSetupSkippedAt),
@@ -55,7 +54,7 @@ export class SttSetupService {
       throw new Error(`${item.name} is not a Murmur-managed local STT model.`);
     }
 
-  const runtimeState = this.runtimeService.getInstallState(runtimeId);
+    const runtimeState = this.runtimeService.getInstallState(runtimeId);
     if (runtimeState.status === "unsupported") {
       throw new Error(runtimeState.message);
     }
@@ -67,7 +66,7 @@ export class SttSetupService {
       }
     }
 
-  const readyRuntime = this.runtimeService.getInstallState(runtimeId);
+    const readyRuntime = this.runtimeService.getInstallState(runtimeId);
     if (readyRuntime.status !== "ready") {
       throw new Error(readyRuntime.error || readyRuntime.message);
     }
@@ -77,7 +76,10 @@ export class SttSetupService {
       throw new Error(`Could not download ${item.name}.`);
     }
 
-    await this.modelLibrary.activateModel(item.id);
+    const activated = await this.modelLibrary.activateModel(item.id);
+    if (activated.activeModelIds.voice !== item.id) {
+      throw new Error(`${item.name} could not be activated after installation verification.`);
+    }
     this.storage.updateSettings({
       sttSetupCompletedAt: new Date().toISOString(),
       sttSetupSkippedAt: undefined
@@ -91,20 +93,21 @@ export class SttSetupService {
   private async ensureModelDownloaded(item: ModelCatalogItem): Promise<boolean> {
     if (item.downloadStrategy === "none") return true;
 
+    const modelPath = this.expectedLocalPath(item);
+    if (!modelPath) return false;
     const snapshot = this.modelLibrary.snapshot();
     const existing = snapshot.downloads.find((download) => download.modelId === item.id);
-    if (existing?.status === "downloaded" && this.expectedLocalPathExists(item)) return true;
+    if (existing?.status === "downloaded" && this.modelLibrary.verifyModelPathForUse(modelPath)) return true;
 
     const afterDownload = await this.modelLibrary.downloadModel(item.id);
     const download = afterDownload.downloads.find((candidate) => candidate.modelId === item.id);
-    return Boolean(download?.status === "downloaded" && this.expectedLocalPathExists(item));
+    return Boolean(download?.status === "downloaded" && this.modelLibrary.verifyModelPathForUse(modelPath));
   }
 
-  private expectedLocalPathExists(item: ModelCatalogItem): boolean {
+  private expectedLocalPath(item: ModelCatalogItem): string | undefined {
     const modelName = item.defaultProviderConfig?.model ?? item.extractDir ?? item.filename;
-    if (!modelName) return false;
-    const modelPath = isAbsolute(modelName) ? modelName : join(this.paths.modelDir, modelName);
-    return existsSync(modelPath);
+    if (!modelName) return undefined;
+    return isAbsolute(modelName) ? modelName : join(this.paths.modelDir, modelName);
   }
 }
 
@@ -115,18 +118,19 @@ export function getSttUsability(
     modelLibrary: ModelLibrarySnapshot;
   },
   runtimeService: Pick<SttRuntimeService, "getAvailability" | "getAutomaticAvailability">,
-  paths: Pick<AppPaths, "modelDir">
+  paths: Pick<AppPaths, "modelDir">,
+  modelVerifier: Pick<ModelLibraryService, "verifyModelPathForUse">
 ): SttUsabilityResult {
-  const activeModel = selectReadyActiveVoiceModel(state.modelLibrary, runtimeService, paths);
+  const activeModel = selectReadyActiveVoiceModel(state.modelLibrary, runtimeService, paths, modelVerifier);
   if (activeModel) {
     const provider = transcriptionProviderFromModel(activeModel, state.transcriptionProviders);
-    if (provider && providerUsable(provider, runtimeService, paths)) {
+    if (provider && providerUsable(provider, runtimeService, paths, modelVerifier)) {
       return { usable: true, reason: `${activeModel.name} is ready.` };
     }
   }
 
   for (const provider of state.transcriptionProviders) {
-    if (providerUsable(provider, runtimeService, paths)) {
+    if (providerUsable(provider, runtimeService, paths, modelVerifier)) {
       return { usable: true, reason: `${provider.name} is configured.` };
     }
   }
@@ -148,27 +152,29 @@ export function sttRuntimeIdForModel(item: ModelCatalogItem): SttRuntimeId | nul
 function selectReadyActiveVoiceModel(
   modelLibrary: ModelLibrarySnapshot,
   runtimeService: Pick<SttRuntimeService, "getAvailability" | "getAutomaticAvailability">,
-  paths: Pick<AppPaths, "modelDir">
+  paths: Pick<AppPaths, "modelDir">,
+  modelVerifier: Pick<ModelLibraryService, "verifyModelPathForUse">
 ): ModelCatalogItem | undefined {
   const modelId = modelLibrary.activeModelIds.voice;
   const item = modelId ? modelLibrary.catalog.find((candidate) => candidate.id === modelId && candidate.kind === "voice") : undefined;
   if (!item) return undefined;
-  if (!modelReady(item, modelLibrary, runtimeService, paths)) return undefined;
+  if (!modelReady(item, modelLibrary, runtimeService, paths, modelVerifier)) return undefined;
   return item;
 }
 
 function providerUsable(
   provider: TranscriptionProviderConfig,
   runtimeService: Pick<SttRuntimeService, "getAvailability" | "getAutomaticAvailability">,
-  paths: Pick<AppPaths, "modelDir">
+  paths: Pick<AppPaths, "modelDir">,
+  modelVerifier: Pick<ModelLibraryService, "verifyModelPathForUse">
 ): boolean {
   if (!isBaseTranscriptionProviderUsable(provider)) return false;
 
   if (provider.type === "whisper_cpp" && provider.baseUrl === "murmur://runtime/whisper.cpp") {
-    return bundledProviderReady(provider, "whisper.cpp", runtimeService, paths);
+    return bundledProviderReady(provider, "whisper.cpp", runtimeService, paths, modelVerifier);
   }
   if (provider.type === "sherpa_onnx") {
-    return bundledProviderReady(provider, "sherpa-onnx", runtimeService, paths);
+    return bundledProviderReady(provider, "sherpa-onnx", runtimeService, paths, modelVerifier);
   }
 
   return true;
@@ -178,19 +184,21 @@ function bundledProviderReady(
   provider: TranscriptionProviderConfig,
   runtimeId: SttRuntimeId,
   runtimeService: Pick<SttRuntimeService, "getAutomaticAvailability">,
-  paths: Pick<AppPaths, "modelDir">
+  paths: Pick<AppPaths, "modelDir">,
+  modelVerifier: Pick<ModelLibraryService, "verifyModelPathForUse">
 ): boolean {
   if (runtimeService.getAutomaticAvailability(runtimeId).status !== "available") return false;
   if (!provider.defaultModel) return false;
   const modelPath = isAbsolute(provider.defaultModel) ? provider.defaultModel : join(paths.modelDir, provider.defaultModel);
-  return existsSync(modelPath);
+  return modelVerifier.verifyModelPathForUse(modelPath);
 }
 
 function modelReady(
   item: ModelCatalogItem,
   modelLibrary: ModelLibrarySnapshot,
   runtimeService: Pick<SttRuntimeService, "getAvailability" | "getAutomaticAvailability">,
-  paths: Pick<AppPaths, "modelDir">
+  paths: Pick<AppPaths, "modelDir">,
+  modelVerifier: Pick<ModelLibraryService, "verifyModelPathForUse">
 ): boolean {
   const runtimeId = sttRuntimeIdForModel(item);
   if (runtimeId && runtimeService.getAutomaticAvailability(runtimeId).status !== "available") return false;
@@ -200,5 +208,5 @@ function modelReady(
   const modelName = item.defaultProviderConfig?.model ?? item.extractDir ?? item.filename;
   if (!modelName) return false;
   const modelPath = isAbsolute(modelName) ? modelName : join(paths.modelDir, modelName);
-  return existsSync(modelPath);
+  return modelVerifier.verifyModelPathForUse(modelPath);
 }

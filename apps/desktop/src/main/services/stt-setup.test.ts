@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -42,12 +42,21 @@ describe("SttSetupService", () => {
 
   it("does not require setup for existing users with an active downloaded model and runtime", async () => {
     const { setup, storage, modelLibrary, paths } = createSetup("ready");
-    writeFileSync(join(paths.modelDir, "ggml-tiny.en.bin"), "model");
+    const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en")!;
+    const original = { size: item.sizeBytes, sha: item.sha256 };
+    const modelContents = "model";
+    const modelPath = join(paths.modelDir, item.filename!);
+    item.sizeBytes = Buffer.byteLength(modelContents);
+    item.sha256 = sha256(modelContents);
+    writeFileSync(modelPath, modelContents);
+    const modelStats = statSync(modelPath);
     storage.upsertModelDownload({
-      modelId: "whisper-tiny-en",
+      modelId: item.id,
       status: "downloaded",
-      progressBytes: 1,
-      localPath: join(paths.modelDir, "ggml-tiny.en.bin"),
+      progressBytes: modelStats.size,
+      totalBytes: item.sizeBytes,
+      localPath: modelPath,
+      verification: { sizeBytes: modelStats.size, mtimeMs: modelStats.mtimeMs, sha256: item.sha256 },
       favorite: false
     });
     storage.setTranscriptionProviders(
@@ -55,12 +64,56 @@ describe("SttSetupService", () => {
         provider.id === "local-whisper-cpp" ? { ...provider, enabled: true } : provider
       )
     );
-    storage.setActiveModel("voice", "whisper-tiny-en");
-    await modelLibrary.getLibrary();
+    storage.setActiveModel("voice", item.id);
 
-    const snapshot = setup.getSnapshot();
+    try {
+      await modelLibrary.getLibrary();
+      expect(setup.getSnapshot().needsSetup).toBe(false);
+    } finally {
+      item.sizeBytes = original.size;
+      item.sha256 = original.sha;
+    }
+  });
 
-    expect(snapshot.needsSetup).toBe(false);
+  it("requires setup when an active managed model is corrupted after startup", () => {
+    const { setup, storage, paths } = createSetup("ready");
+    const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en")!;
+    const original = { size: item.sizeBytes, sha: item.sha256 };
+    const modelContents = "verified-model";
+    const modelPath = join(paths.modelDir, item.filename!);
+    item.sizeBytes = Buffer.byteLength(modelContents);
+    item.sha256 = sha256(modelContents);
+    writeFileSync(modelPath, modelContents);
+    const modelStats = statSync(modelPath);
+    storage.upsertModelDownload({
+      modelId: item.id,
+      status: "downloaded",
+      progressBytes: modelStats.size,
+      totalBytes: item.sizeBytes,
+      localPath: modelPath,
+      verification: { sizeBytes: modelStats.size, mtimeMs: modelStats.mtimeMs, sha256: item.sha256 },
+      favorite: false
+    });
+    storage.setTranscriptionProviders(
+      storage.getState().transcriptionProviders.map((provider) =>
+        provider.id === "local-whisper-cpp" ? { ...provider, enabled: true } : provider
+      )
+    );
+    storage.setActiveModel("voice", item.id);
+
+    try {
+      expect(setup.getSnapshot().needsSetup).toBe(false);
+
+      writeFileSync(modelPath, "corrupted-managed-model");
+
+      expect(setup.getSnapshot().needsSetup).toBe(true);
+      const state = storage.getState();
+      expect(state.modelLibrary.downloads.find((download) => download.modelId === item.id)?.status).toBe("error");
+      expect(state.modelLibrary.activeModelIds.voice).toBeUndefined();
+    } finally {
+      item.sizeBytes = original.size;
+      item.sha256 = original.sha;
+    }
   });
 
   it("repairs the required runtime before activating a downloaded model", async () => {
@@ -71,7 +124,9 @@ describe("SttSetupService", () => {
     if (!item) throw new Error("Missing whisper-tiny-en catalog item.");
     const originalUrl = item.downloadUrl;
     const originalSha256 = item.sha256;
+    const originalSizeBytes = item.sizeBytes;
     item.downloadUrl = server.url;
+    item.sizeBytes = Buffer.byteLength("model");
     item.sha256 = sha256("model");
 
     try {
@@ -83,7 +138,44 @@ describe("SttSetupService", () => {
       expect(state.settings.sttSetupCompletedAt).toBeTruthy();
     } finally {
       item.downloadUrl = originalUrl;
+      item.sizeBytes = originalSizeBytes;
       item.sha256 = originalSha256;
+      await closeServer(server.server);
+    }
+  });
+
+  it("does not mark setup complete when a changed cached model cannot be reverified or repaired", async () => {
+    const { setup, storage, paths } = createSetup("ready");
+    const server = await modelServer("tampered");
+    const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en")!;
+    const original = { url: item.downloadUrl, size: item.sizeBytes, sha: item.sha256 };
+    const modelPath = join(paths.modelDir, item.filename!);
+    item.downloadUrl = server.url;
+    item.sizeBytes = Buffer.byteLength("verified-model");
+    item.sha256 = sha256("verified-model");
+    writeFileSync(modelPath, "verified-model");
+    const modelStats = statSync(modelPath);
+    storage.upsertModelDownload({
+      modelId: item.id,
+      status: "downloaded",
+      progressBytes: modelStats.size,
+      totalBytes: item.sizeBytes,
+      localPath: modelPath,
+      downloadedAt: new Date().toISOString(),
+      verification: { sizeBytes: modelStats.size, mtimeMs: modelStats.mtimeMs, sha256: item.sha256 },
+      favorite: false
+    });
+    storage.setActiveModel("voice", item.id);
+    writeFileSync(modelPath, "tampered");
+
+    try {
+      await expect(setup.setupBundledStt(item.id)).rejects.toThrow(`Could not download ${item.name}.`);
+      expect(storage.getState().settings.sttSetupCompletedAt).toBeUndefined();
+      expect(storage.getState().modelLibrary.activeModelIds.voice).toBeUndefined();
+    } finally {
+      item.downloadUrl = original.url;
+      item.sizeBytes = original.size;
+      item.sha256 = original.sha;
       await closeServer(server.server);
     }
   });

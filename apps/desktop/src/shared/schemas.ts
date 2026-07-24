@@ -154,6 +154,13 @@ export const modelDownloadStateSchema = z.object({
   localPath: optionalStringSchema,
   error: optionalStringSchema,
   downloadedAt: optionalStringSchema,
+  verification: z
+    .object({
+      sizeBytes: z.number().nonnegative(),
+      mtimeMs: z.number().nonnegative(),
+      sha256: z.string().regex(/^[a-f0-9]{64}$/)
+    })
+    .optional(),
   favorite: z.boolean()
 });
 
