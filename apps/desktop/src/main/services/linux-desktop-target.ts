@@ -17,6 +17,7 @@ export interface LinuxDesktopEnvironment {
 export interface LinuxTargetInfo {
   appId?: string;
   appName?: string;
+  classification: "terminal" | "non_terminal" | "unknown";
   diagnostics: string[];
   isElectron: boolean;
   isTerminal: boolean;
@@ -147,10 +148,10 @@ export function detectLinuxDesktopEnvironment(env: NodeJS.ProcessEnv = process.e
 }
 
 export function pasteShortcutForTarget(target: LinuxTargetInfo, environment: LinuxDesktopEnvironment): "ctrl_v" | "ctrl_shift_v" | "shift_insert" {
-  if (target.isTerminal) {
+  if (target.classification === "terminal") {
     return isKonsole(target) ? "shift_insert" : "ctrl_shift_v";
   }
-  if (environment.sessionType === "wayland" && !target.appName && !target.appId && environment.isKde) {
+  if (target.classification === "unknown" && environment.sessionType === "wayland") {
     return "shift_insert";
   }
   return "ctrl_v";
@@ -169,15 +170,18 @@ function buildTarget(input: {
   windowTitle?: string;
 }): LinuxTargetInfo {
   const searchable = [input.appId, input.appName, input.windowTitle].filter(Boolean).join(" ");
+  const isTerminal = isTerminalTarget(searchable);
   return {
     ...input,
+    classification: isTerminal ? "terminal" : searchable ? "non_terminal" : "unknown",
     isElectron: isElectronTarget(searchable),
-    isTerminal: isTerminalTarget(searchable)
+    isTerminal
   };
 }
 
 function emptyTarget(diagnostics: string[]): LinuxTargetInfo {
   return {
+    classification: "unknown",
     diagnostics,
     isElectron: false,
     isTerminal: false

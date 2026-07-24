@@ -3,6 +3,7 @@ import { LinuxTextAutomationService } from "./linux-text-automation";
 import { MacosTextAutomationService } from "./macos-text-automation";
 
 export type AutomationResultStatus = "success" | "unavailable" | "denied" | "failed";
+export type AutomationFailureDelivery = "pre_dispatch" | "partial" | "ambiguous";
 export type TextAutomationBackendId =
   | "linux_native_helper"
   | "macos_accessibility_helper"
@@ -18,6 +19,7 @@ export interface AutomationResult {
   status: AutomationResultStatus;
   message: string;
   diagnostics: string[];
+  failureDelivery?: AutomationFailureDelivery;
   backend?: TextAutomationBackendId;
   attemptedBackends?: TextAutomationBackendId[];
 }
