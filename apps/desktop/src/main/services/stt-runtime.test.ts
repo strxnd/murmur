@@ -18,7 +18,7 @@ import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import { SttRuntimeService } from "./stt-runtime";
 import { getSttRuntimeVariantAsset, sttRuntimeCatalog } from "../../shared/stt-runtime-catalog";
-import type { SttRuntimeId } from "../../shared/types";
+import type { SttRuntimeId, SttRuntimeInstallState } from "../../shared/types";
 
 let tempDirs: string[] = [];
 
@@ -511,6 +511,53 @@ describe("SttRuntimeService", () => {
     expect(existsSync(join(runtimeDir, "linux-x64", "whisper.cpp", "cpu", "0.1.0"))).toBe(false);
   });
 
+  it("keeps installing operations cancellable while waiting to mutate the exact variant", async () => {
+    const root = tempRoot();
+    const runtimeDir = join(root, "cache", "runtimes", "stt");
+    const archive = validWhisperRuntimeTarGz();
+    const catalog = structuredClone(sttRuntimeCatalog);
+    catalog["whisper.cpp"].platforms["linux-x64"] = {
+      assetName: "runtime.tar.gz",
+      url: "https://example.test/runtime.tar.gz",
+      sizeBytes: archive.byteLength,
+      sha256: sha256(archive)
+    };
+    let mutationState: SttRuntimeInstallState | undefined;
+    let mutationStarted!: () => void;
+    const mutationStartedPromise = new Promise<void>((resolve) => {
+      mutationStarted = resolve;
+    });
+
+    const service = new SttRuntimeService({
+      platform: "linux",
+      arch: "x64",
+      projectRoot: root,
+      runtimeDir,
+      env: {},
+      catalog,
+      fetch: async () => new Response(arrayBufferFromBuffer(archive), { status: 200, headers: { "content-length": String(archive.byteLength) } }),
+      onBeforeRuntimeMutation: (state, signal) => {
+        mutationState = state;
+        mutationStarted();
+        return new Promise<() => void>((_resolve, reject) => {
+          const onAbort = (): void => reject(createAbortError());
+          if (signal.aborted) onAbort();
+          else signal.addEventListener("abort", onAbort, { once: true });
+        });
+      }
+    });
+
+    const installPromise = service.downloadRuntime("whisper.cpp|linux-x64|cpu|0.1.0");
+    await mutationStartedPromise;
+    const cancelState = await service.cancelRuntimeDownload("whisper.cpp|linux-x64|cpu|0.1.0");
+    const installState = await installPromise;
+
+    expect(mutationState?.variantKey).toBe("whisper.cpp|linux-x64|cpu|0.1.0");
+    expect(mutationState?.accelerator).toBe("cpu");
+    expect(cancelState.status).toBe("not_installed");
+    expect(installState.status).toBe("not_installed");
+  });
+
   it("rejects runtime responses that exceed pinned sizes", async () => {
     const root = tempRoot();
     const runtimeDir = join(root, "cache", "runtimes", "stt");
@@ -770,6 +817,19 @@ function externalSymlinkTarGz(): Buffer {
 
 function unsafeTarGz(): Buffer {
   return gzipSync(tarWithSingleFile("../payload.txt", "payload"));
+}
+
+function validWhisperRuntimeTarGz(): Buffer {
+  const root = tempRoot();
+  const sourceDir = join(root, "archive-src");
+  const archivePath = join(root, "runtime.tar.gz");
+  mkdirSync(sourceDir, { recursive: true });
+  const binaryPath = join(sourceDir, "whisper-server");
+  writeFileSync(binaryPath, "#!/bin/sh\nexit 0\n");
+  chmodSync(binaryPath, 0o755);
+  const result = spawnSync("tar", ["-czf", archivePath, "-C", sourceDir, "whisper-server"], { encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`Could not create runtime fixture: ${result.stderr}`);
+  return readFileSync(archivePath);
 }
 
 function safeTarGz(): Buffer {

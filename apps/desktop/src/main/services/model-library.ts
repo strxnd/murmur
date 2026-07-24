@@ -87,6 +87,7 @@ export interface ModelLibraryServiceOptions {
   downloadTotalTimeoutMs?: number;
   progressEmitIntervalMs?: number;
   getProviderRuntime?: () => ProviderRuntimeSnapshot;
+  beginModelMutation?: (modelPath: string, signal?: AbortSignal) => Promise<() => void>;
 }
 
 export class ModelLibraryService {
@@ -97,6 +98,7 @@ export class ModelLibraryService {
   private downloadTotalTimeoutMs: number;
   private progressEmitIntervalMs: number;
   private getProviderRuntime?: () => ProviderRuntimeSnapshot;
+  private beginModelMutation?: (modelPath: string, signal?: AbortSignal) => Promise<() => void>;
 
   constructor(
     private paths: AppPaths,
@@ -110,6 +112,7 @@ export class ModelLibraryService {
     this.downloadTotalTimeoutMs = options.downloadTotalTimeoutMs ?? defaultDownloadTotalTimeoutMs;
     this.progressEmitIntervalMs = options.progressEmitIntervalMs ?? defaultProgressEmitIntervalMs;
     this.getProviderRuntime = options.getProviderRuntime;
+    this.beginModelMutation = options.beginModelMutation;
     this.cleanupPartialModelInstalls();
     this.refreshCachedModelDownloadStates();
   }
@@ -186,7 +189,9 @@ export class ModelLibraryService {
     const existing = this.getDownloadState(modelId);
     const expectedPath = item ? this.expectedLocalPath(item) : undefined;
     if ((item?.downloadStrategy === "direct_file" || item?.downloadStrategy === "archive") && expectedPath && existsSync(expectedPath)) {
-      rmSync(expectedPath, { recursive: item.downloadStrategy === "archive", force: true });
+      await this.withModelMutation(expectedPath, undefined, () => {
+        rmSync(expectedPath, { recursive: item.downloadStrategy === "archive", force: true });
+      });
     }
     if (item?.downloadStrategy === "ollama_pull" && item.ollamaModel) {
       try {
@@ -278,6 +283,16 @@ export class ModelLibraryService {
     return true;
   }
 
+  private async withModelMutation<T>(modelPath: string, signal: AbortSignal | undefined, operation: () => T | Promise<T>): Promise<T> {
+    const finishMutation = await this.beginModelMutation?.(modelPath, signal);
+    try {
+      if (signal?.aborted) throw abortError();
+      return await operation();
+    } finally {
+      finishMutation?.();
+    }
+  }
+
   private async downloadDirectFile(item: ModelCatalogItem, signal: AbortSignal): Promise<void> {
     if (!item.downloadUrl || !item.filename) return;
 
@@ -300,7 +315,9 @@ export class ModelLibraryService {
 
       if (signal.aborted) throw abortError();
       verifyModelSha256(item, sha256);
-      renameSync(partPath, targetPath);
+      await this.withModelMutation(targetPath, signal, () => {
+        renameSync(partPath, targetPath);
+      });
       this.persistAndEmit({
         modelId: item.id,
         status: "downloaded",
@@ -375,20 +392,22 @@ export class ModelLibraryService {
         tree: createInstalledTreeReceipt(stagedModelPath, maxExtractedBytes)
       };
       writeFileSync(join(stagedModelPath, modelReceiptName), JSON.stringify(receipt, null, 2), { mode: 0o600 });
-      backupDir = replaceModelDirectory(stagedModelPath, targetPath);
-      promotedFinal = true;
-      const promoted = this.validateExistingModelArtifact(item, targetPath, {
-        modelId: item.id,
-        status: "downloaded",
-        progressBytes,
-        totalBytes: item.sizeBytes,
-        localPath: targetPath,
-        downloadedAt: receipt.installedAt,
-        favorite: false
+      await this.withModelMutation(targetPath, signal, () => {
+        backupDir = replaceModelDirectory(stagedModelPath, targetPath);
+        promotedFinal = true;
+        const promoted = this.validateExistingModelArtifact(item, targetPath, {
+          modelId: item.id,
+          status: "downloaded",
+          progressBytes,
+          totalBytes: item.sizeBytes,
+          localPath: targetPath,
+          downloadedAt: receipt.installedAt,
+          favorite: false
+        });
+        if (!promoted.valid) throw new Error(promoted.error);
+        if (backupDir) rmSync(backupDir, { recursive: true, force: true });
+        backupDir = undefined;
       });
-      if (!promoted.valid) throw new Error(promoted.error);
-      if (backupDir) rmSync(backupDir, { recursive: true, force: true });
-      backupDir = undefined;
       rmSync(archivePath, { force: true });
       rmSync(stagingDir, { recursive: true, force: true });
 

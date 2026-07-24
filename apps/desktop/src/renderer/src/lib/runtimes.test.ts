@@ -7,7 +7,7 @@ import type {
   SttRuntimeId,
   SttRuntimeInstallState
 } from "../../../shared/types";
-import { accelerationRuntimePromptState, runtimeInstallForModel, uniqueRuntimeInstallStates } from "./runtimes";
+import { accelerationRuntimePromptState, canCancelRuntimeOperation, runtimeInstallForModel, uniqueRuntimeInstallStates } from "./runtimes";
 
 describe("renderer runtime helpers", () => {
   it("sorts variant-keyed runtime states", () => {
@@ -79,6 +79,20 @@ describe("renderer runtime helpers", () => {
     });
 
     expect(runtimeInstallForModel(snapshot, voiceModel())?.variantKey).toBe(cuda.variantKey);
+  });
+
+  it("shows an active accelerator install instead of a ready CPU fallback", () => {
+    const cpu = runtime("whisper.cpp", "cpu", "ready");
+    const cuda = runtime("whisper.cpp", "cuda", "installing");
+    const snapshot = state({
+      runtimes: {
+        [cpu.variantKey]: cpu,
+        [cuda.variantKey]: cuda
+      }
+    });
+
+    expect(runtimeInstallForModel(snapshot, voiceModel())?.variantKey).toBe(cuda.variantKey);
+    expect(canCancelRuntimeOperation(cuda)).toBe(true);
   });
 });
 
