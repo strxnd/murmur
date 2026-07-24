@@ -55,7 +55,7 @@ export class SttSetupService {
       throw new Error(`${item.name} is not a Murmur-managed local STT model.`);
     }
 
-  const runtimeState = this.runtimeService.getInstallState(runtimeId);
+    const runtimeState = this.runtimeService.getInstallState(runtimeId);
     if (runtimeState.status === "unsupported") {
       throw new Error(runtimeState.message);
     }
@@ -67,7 +67,7 @@ export class SttSetupService {
       }
     }
 
-  const readyRuntime = this.runtimeService.getInstallState(runtimeId);
+    const readyRuntime = this.runtimeService.getInstallState(runtimeId);
     if (readyRuntime.status !== "ready") {
       throw new Error(readyRuntime.error || readyRuntime.message);
     }
@@ -77,7 +77,10 @@ export class SttSetupService {
       throw new Error(`Could not download ${item.name}.`);
     }
 
-    await this.modelLibrary.activateModel(item.id);
+    const activated = await this.modelLibrary.activateModel(item.id);
+    if (activated.activeModelIds.voice !== item.id) {
+      throw new Error(`${item.name} could not be activated after installation verification.`);
+    }
     this.storage.updateSettings({
       sttSetupCompletedAt: new Date().toISOString(),
       sttSetupSkippedAt: undefined
@@ -91,20 +94,21 @@ export class SttSetupService {
   private async ensureModelDownloaded(item: ModelCatalogItem): Promise<boolean> {
     if (item.downloadStrategy === "none") return true;
 
+    const modelPath = this.expectedLocalPath(item);
+    if (!modelPath) return false;
     const snapshot = this.modelLibrary.snapshot();
     const existing = snapshot.downloads.find((download) => download.modelId === item.id);
-    if (existing?.status === "downloaded" && this.expectedLocalPathExists(item)) return true;
+    if (existing?.status === "downloaded" && this.modelLibrary.verifyModelPathForUse(modelPath)) return true;
 
     const afterDownload = await this.modelLibrary.downloadModel(item.id);
     const download = afterDownload.downloads.find((candidate) => candidate.modelId === item.id);
-    return Boolean(download?.status === "downloaded" && this.expectedLocalPathExists(item));
+    return Boolean(download?.status === "downloaded" && this.modelLibrary.verifyModelPathForUse(modelPath));
   }
 
-  private expectedLocalPathExists(item: ModelCatalogItem): boolean {
+  private expectedLocalPath(item: ModelCatalogItem): string | undefined {
     const modelName = item.defaultProviderConfig?.model ?? item.extractDir ?? item.filename;
-    if (!modelName) return false;
-    const modelPath = isAbsolute(modelName) ? modelName : join(this.paths.modelDir, modelName);
-    return existsSync(modelPath);
+    if (!modelName) return undefined;
+    return isAbsolute(modelName) ? modelName : join(this.paths.modelDir, modelName);
   }
 }
 

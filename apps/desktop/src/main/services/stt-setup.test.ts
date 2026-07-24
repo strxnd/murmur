@@ -95,6 +95,42 @@ describe("SttSetupService", () => {
     }
   });
 
+  it("does not mark setup complete when a changed cached model cannot be reverified or repaired", async () => {
+    const { setup, storage, paths } = createSetup("ready");
+    const server = await modelServer("tampered");
+    const item = modelCatalog.find((candidate) => candidate.id === "whisper-tiny-en")!;
+    const original = { url: item.downloadUrl, size: item.sizeBytes, sha: item.sha256 };
+    const modelPath = join(paths.modelDir, item.filename!);
+    item.downloadUrl = server.url;
+    item.sizeBytes = Buffer.byteLength("verified-model");
+    item.sha256 = sha256("verified-model");
+    writeFileSync(modelPath, "verified-model");
+    const modelStats = statSync(modelPath);
+    storage.upsertModelDownload({
+      modelId: item.id,
+      status: "downloaded",
+      progressBytes: modelStats.size,
+      totalBytes: item.sizeBytes,
+      localPath: modelPath,
+      downloadedAt: new Date().toISOString(),
+      verification: { sizeBytes: modelStats.size, mtimeMs: modelStats.mtimeMs, sha256: item.sha256 },
+      favorite: false
+    });
+    storage.setActiveModel("voice", item.id);
+    writeFileSync(modelPath, "tampered");
+
+    try {
+      await expect(setup.setupBundledStt(item.id)).rejects.toThrow(`Could not download ${item.name}.`);
+      expect(storage.getState().settings.sttSetupCompletedAt).toBeUndefined();
+      expect(storage.getState().modelLibrary.activeModelIds.voice).toBeUndefined();
+    } finally {
+      item.downloadUrl = original.url;
+      item.sizeBytes = original.size;
+      item.sha256 = original.sha;
+      await closeServer(server.server);
+    }
+  });
+
   it("does not repair the required runtime when runtime actions are disabled", async () => {
     const runtime = fakeRuntimeService("not_installed", {
       canDownload: false,
