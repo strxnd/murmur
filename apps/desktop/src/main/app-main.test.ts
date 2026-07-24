@@ -16,6 +16,10 @@ describe("application lifecycle", () => {
     const prepareToQuit = vi.fn();
     const dispose = vi.fn(() => disposal.promise);
     const initialize = vi.fn(() => initialization.promise);
+    const showMainWindow = vi.fn();
+    const AppController = vi.fn(function MockAppController() {
+      return { initialize, prepareToQuit, cancelQuit: vi.fn(), dispose, showMainWindow };
+    });
 
     vi.doMock("./electron-api", () => ({
       app: {
@@ -29,11 +33,7 @@ describe("application lifecycle", () => {
       globalShortcut: { unregisterAll: vi.fn() },
       Menu: { setApplicationMenu: vi.fn() }
     }));
-    vi.doMock("./app-controller", () => ({
-      AppController: vi.fn(function MockAppController() {
-        return { initialize, prepareToQuit, cancelQuit: vi.fn(), dispose, showMainWindow: vi.fn() };
-      })
-    }));
+    vi.doMock("./app-controller", () => ({ AppController }));
 
     await import("./app-main");
     ready.resolve();
@@ -49,6 +49,12 @@ describe("application lifecycle", () => {
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(dispose).toHaveBeenCalledOnce();
     expect(quit).not.toHaveBeenCalled();
+
+    handlers.get("second-instance")?.();
+    handlers.get("activate")?.();
+    await Promise.resolve();
+    expect(AppController).toHaveBeenCalledOnce();
+    expect(showMainWindow).not.toHaveBeenCalled();
 
     disposal.resolve();
     await vi.waitFor(() => expect(quit).toHaveBeenCalledOnce());

@@ -23,6 +23,7 @@ if (!isSupportedPlatform(process.platform)) {
 let controller: AppController | null = null;
 let controllerInitialization: Promise<AppController> | null = null;
 let shutdownPromise: Promise<void> | null = null;
+let shutdownStarted = false;
 let shutdownComplete = false;
 
 function startApp(): void {
@@ -35,7 +36,7 @@ function startApp(): void {
   }
 
   app.on("second-instance", () => {
-    showControllerWindow();
+    if (!shutdownStarted) showControllerWindow();
   });
 
   app.whenReady().then(() => ensureController()).catch(handleControllerError);
@@ -49,13 +50,14 @@ function startApp(): void {
   });
 
   app.on("activate", () => {
-    showControllerWindow();
+    if (!shutdownStarted) showControllerWindow();
   });
 
   app.on("will-quit", (event) => {
     if (shutdownComplete) return;
     event.preventDefault();
-    if (shutdownPromise) return;
+    if (shutdownStarted) return;
+    shutdownStarted = true;
 
     // Registered shortcuts are process-scoped and must be released on shutdown.
     globalShortcut.unregisterAll();
@@ -72,15 +74,18 @@ function startApp(): void {
 }
 
 function showControllerWindow(): void {
+  if (shutdownStarted) return;
   void ensureController().then((activeController) => activeController.showMainWindow()).catch(handleControllerError);
 }
 
 function handleControllerError(error: unknown): void {
+  if (shutdownStarted) return;
   console.error(`Failed to initialize Murmur: ${error instanceof Error ? error.message : String(error)}`);
   app.quit();
 }
 
 async function ensureController(): Promise<AppController> {
+  if (shutdownStarted) throw new Error("Murmur is shutting down.");
   if (controllerInitialization) return controllerInitialization;
 
   controllerInitialization = app.whenReady().then(async () => {
