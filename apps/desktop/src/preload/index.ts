@@ -152,6 +152,38 @@ const api = {
   }
 };
 
-contextBridge.exposeInMainWorld("murmur", api);
-
 export type MurmurApi = typeof api;
+export type PreloadRendererRole = "main" | "pill" | "mode-selector";
+
+const auxiliaryOnlyApiKeys = {
+  pill: ["getPillState", "onPillStateChanged"],
+  "mode-selector": [
+    "getModeSelectorState",
+    "hideModeSelector",
+    "selectModeFromSelector",
+    "moveModeSelectorSelection",
+    "onModeSelectorStateChanged"
+  ]
+} as const satisfies Record<Exclude<PreloadRendererRole, "main">, ReadonlyArray<keyof MurmurApi>>;
+
+const mainExcludedApiKeys = new Set<keyof MurmurApi>(Object.values(auxiliaryOnlyApiKeys).flat());
+const auxiliaryApiKeys: Record<Exclude<PreloadRendererRole, "main">, ReadonlyArray<keyof MurmurApi>> = {
+  pill: [...auxiliaryOnlyApiKeys.pill, "onRecordingLevel"],
+  "mode-selector": auxiliaryOnlyApiKeys["mode-selector"]
+};
+
+export function rendererRoleFromArguments(args: string[]): PreloadRendererRole {
+  const argument = args.find((value) => value.startsWith("--murmur-renderer-role="));
+  const role = argument?.slice("--murmur-renderer-role=".length);
+  return role === "pill" || role === "mode-selector" ? role : "main";
+}
+
+export function selectPreloadApi(role: PreloadRendererRole): Partial<MurmurApi> {
+  const keys =
+    role === "main"
+      ? (Object.keys(api) as Array<keyof MurmurApi>).filter((key) => !mainExcludedApiKeys.has(key))
+      : auxiliaryApiKeys[role];
+  return Object.fromEntries(keys.map((key) => [key, api[key]])) as Partial<MurmurApi>;
+}
+
+contextBridge.exposeInMainWorld("murmur", selectPreloadApi(rendererRoleFromArguments(process.argv)));

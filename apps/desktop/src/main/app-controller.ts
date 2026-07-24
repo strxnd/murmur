@@ -57,7 +57,7 @@ import {
 import { buildProcessingPrompt, buildVocabularyPrompt } from "../shared/prompts";
 import { resolveModeByContext } from "./services/auto-mode";
 import { createId } from "./services/ids";
-import { registerElectronShortcutActions, registerModeSelectorNavigationShortcuts } from "./services/electron-global-shortcuts";
+import { registerElectronShortcutActions } from "./services/electron-global-shortcuts";
 import { CodexOAuthService } from "./services/codex-oauth";
 import { ContextService } from "./services/context";
 import { LlmService } from "./services/llm";
@@ -91,6 +91,7 @@ import {
   XdgGlobalShortcutService
 } from "./services/xdg-global-shortcuts";
 import { MacosEventTapReleaseService } from "./services/macos-event-tap-hotkeys";
+import { isIpcChannelAllowed, rendererRoleArgument, type RendererRole } from "./ipc-policy";
 import {
   app,
   BrowserWindow,
@@ -103,6 +104,7 @@ import {
   Notification,
   safeStorage,
   screen,
+  session,
   shell,
   Tray
 } from "./electron-api";
@@ -111,6 +113,9 @@ const pillWindowWidth = 140;
 const pillWindowHeight = 64;
 const pillWindowMargin = 24;
 const modeSelectorWindowSize = 640;
+const modeSelectorWindowMargin = 16;
+const maxRendererRecoveryAttempts = 3;
+const rendererRecoveryWindowMs = 30000;
 const recordingStopAckTimeoutMs = 15000;
 const maxRecordingDurationNotice = "Maximum recording length reached; finishing this dictation.";
 const trayIconDataUrl =
@@ -165,12 +170,17 @@ export class AppController {
   private modeSelectorHotkeyRegistered = false;
   private modeSelectorHotkeyTriggerDescription: string | undefined;
   private modeSelectorHotkeyDiagnostics: string[] = [];
-  private modeSelectorNavigationShortcutCleanup: (() => void) | null = null;
-  private hotkeyCaptureDepth = 0;
+  private hotkeyCaptureLeases = new Map<number, number>();
+  private onboardingDictationLeases = new Set<number>();
+  private rendererRoles = new Map<number, RendererRole>();
+  private rendererRecoveryAttempts = new Map<RendererRole, number[]>();
+  private ipcHandlerChannels = new Set<string>();
+  private ipcEventListeners = new Map<string, (event: IpcMainEvent, ...args: unknown[]) => void>();
+  private disposePromise: Promise<void> | null = null;
+  private permissionPolicyInstalled = false;
   private hotkeyRegistrationGeneration = 0;
   private hotkeyRegistrationQueue: Promise<void> = Promise.resolve();
   private lastActivationHotkeyAt = 0;
-  private onboardingDictationScopeActive = false;
 
   constructor() {
     this.paths = resolveAppPaths(app);
@@ -217,47 +227,87 @@ export class AppController {
     this.sttSetup = new SttSetupService(this.paths, this.storage, this.modelLibrary, this.runtimeService);
   }
 
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
+    this.disposePromise = this.disposeInternal();
+    return this.disposePromise;
+  }
+
+  private async disposeInternal(): Promise<void> {
+    this.prepareToQuit();
     this.invalidateDictation("shutdown");
-    this.unregisterModeSelectorNavigationShortcuts();
-    globalShortcut.unregisterAll();
-    this.portalHotkeys.dispose();
-    this.nativeHotkeys.dispose();
-    this.macosReleaseHotkeys.unregister();
-    this.textAutomation.dispose();
-    this.context.dispose();
-    await Promise.all([this.modelLibrary?.dispose?.(), this.runtimeService?.dispose?.()]);
-    await this.stt.dispose();
-    this.codex.dispose();
-    this.closeToTrayNotification?.removeAllListeners();
-    this.closeToTrayNotification?.close();
-    this.closeToTrayNotification = null;
-    this.tray?.destroy();
-    this.tray = null;
-    this.clearPillHideTimer();
-    this.clearRecordingTimers();
+    this.hotkeyRegistrationGeneration += 1;
+    this.hotkeyCaptureLeases.clear();
+    this.onboardingDictationLeases.clear();
+
+    const registrationResults = await Promise.allSettled([this.hotkeyRegistrationQueue]);
+    const preparationResults = await Promise.allSettled([
+      Promise.resolve().then(() => this.unregisterIpc()),
+      Promise.resolve().then(() => this.clearPermissionPolicy()),
+      Promise.resolve().then(() => globalShortcut.unregisterAll()),
+      Promise.resolve().then(() => this.macosReleaseHotkeys.unregister())
+    ]);
+    const serviceResults = await Promise.allSettled([
+      Promise.resolve().then(() => this.portalHotkeys.dispose()),
+      Promise.resolve().then(() => this.nativeHotkeys.dispose()),
+      Promise.resolve().then(() => this.textAutomation.dispose()),
+      Promise.resolve().then(() => this.context.dispose()),
+      Promise.resolve().then(() => this.modelLibrary?.dispose?.()),
+      Promise.resolve().then(() => this.runtimeService?.dispose?.()),
+      Promise.resolve().then(() => this.stt.dispose()),
+      Promise.resolve().then(() => this.codex.dispose())
+    ]);
+
+    const finalizationResults = await Promise.allSettled([
+      Promise.resolve().then(() => {
+        this.closeToTrayNotification?.removeAllListeners();
+        this.closeToTrayNotification?.close();
+        this.closeToTrayNotification = null;
+      }),
+      Promise.resolve().then(() => {
+        this.tray?.destroy();
+        this.tray = null;
+      }),
+      Promise.resolve().then(() => this.clearPillHideTimer()),
+      Promise.resolve().then(() => this.clearRecordingTimers()),
+      Promise.resolve().then(() => this.destroyOwnedWindows())
+    ]);
+
+    const failures = [...registrationResults, ...preparationResults, ...serviceResults, ...finalizationResults]
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => result.reason);
+    if (failures.length > 0) throw new AggregateError(failures, "Murmur cleanup did not complete cleanly.");
   }
 
   async initialize(): Promise<void> {
     await this.automationPermissions.initialize();
+    this.assertStartupActive();
     await this.textAutomation.initialize();
+    this.assertStartupActive();
     await this.context.initialize();
+    this.assertStartupActive();
     await this.paste.initialize();
+    this.assertStartupActive();
     this.registerIpc();
+    this.configureSessionPermissions();
     this.initialCodexRefresh = this.codex.refreshStatus();
     this.createTray();
-    this.createWindows();
+    await this.createWindows();
+    this.assertStartupActive();
     this.applySettings(this.storage.getState().settings);
     await this.registerHotkeys();
+    this.assertStartupActive();
   }
 
-  private createWindows(): void {
-    this.createMainWindow();
-    this.createPillWindow();
-    this.createModeSelectorWindow();
+  private assertStartupActive(): void {
+    if (this.isQuitting || this.disposePromise) throw new Error("Murmur startup was cancelled.");
   }
 
-  private createMainWindow(): void {
+  private async createWindows(): Promise<void> {
+    await Promise.all([this.createMainWindow(), this.createPillWindow(), this.createModeSelectorWindow()]);
+  }
+
+  private async createMainWindow(): Promise<void> {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) return;
 
     const window = new BrowserWindow({
@@ -277,13 +327,14 @@ export class AppController {
         contextIsolation: true,
         sandbox: true,
         nodeIntegration: false,
-        backgroundThrottling: false
+        backgroundThrottling: false,
+        additionalArguments: [rendererRoleArgument("main")]
       }
     });
     this.mainWindow = window;
+    const rendererId = window.webContents.id;
 
     this.configureTrustedRendererWindow(window, "main");
-    void this.loadRenderer(window);
     this.attachWindowDiagnostics(window, "main");
 
     window.on("close", (event) => {
@@ -297,15 +348,17 @@ export class AppController {
     window.on("minimize", () => this.refreshTrayMenu());
     window.on("restore", () => this.refreshTrayMenu());
     window.on("closed", () => {
+      this.releaseRendererOwnership(rendererId);
       if (this.mainWindow === window) {
         this.mainWindow = null;
         this.refreshTrayMenu();
       }
     });
     this.refreshTrayMenu();
+    await this.loadRenderer(window);
   }
 
-  private createPillWindow(): void {
+  private async createPillWindow(): Promise<void> {
     if (this.pillWindow && !this.pillWindow.isDestroyed()) return;
 
     const window = new BrowserWindow({
@@ -330,22 +383,25 @@ export class AppController {
         contextIsolation: true,
         sandbox: true,
         nodeIntegration: false,
-        backgroundThrottling: false
+        backgroundThrottling: false,
+        additionalArguments: [rendererRoleArgument("pill")]
       }
     });
     this.pillWindow = window;
+    const rendererId = window.webContents.id;
 
     this.configureTrustedRendererWindow(window, "pill");
-    void this.loadRenderer(window, "?pill=1");
     this.attachWindowDiagnostics(window, "pill");
     this.configurePillWindow();
 
     window.on("closed", () => {
+      this.releaseRendererOwnership(rendererId);
       if (this.pillWindow === window) this.pillWindow = null;
     });
+    await this.loadRenderer(window, "?pill=1");
   }
 
-  private createModeSelectorWindow(): void {
+  private async createModeSelectorWindow(): Promise<void> {
     if (this.modeSelectorWindow && !this.modeSelectorWindow.isDestroyed()) return;
 
     const window = new BrowserWindow({
@@ -370,23 +426,25 @@ export class AppController {
         contextIsolation: true,
         sandbox: true,
         nodeIntegration: false,
-        backgroundThrottling: false
+        backgroundThrottling: false,
+        additionalArguments: [rendererRoleArgument("mode-selector")]
       }
     });
     this.modeSelectorWindow = window;
+    const rendererId = window.webContents.id;
 
     this.configureTrustedRendererWindow(window, "mode-selector");
-    void this.loadRenderer(window, "?mode-selector=1");
     this.attachWindowDiagnostics(window, "mode-selector");
     this.configureModeSelectorWindow();
 
-    window.on("hide", () => {
-      this.unregisterModeSelectorNavigationShortcuts();
+    window.on("blur", () => {
+      if (window.isVisible()) window.hide();
     });
     window.on("closed", () => {
-      this.unregisterModeSelectorNavigationShortcuts();
+      this.releaseRendererOwnership(rendererId);
       if (this.modeSelectorWindow === window) this.modeSelectorWindow = null;
     });
+    await this.loadRenderer(window, "?mode-selector=1");
   }
 
   private createTray(): void {
@@ -402,7 +460,9 @@ export class AppController {
   showMainWindow(): void {
     if (this.isQuitting) return;
     if (!this.mainWindow || this.mainWindow.isDestroyed()) {
-      this.createMainWindow();
+      void this.createMainWindow().catch((error) => {
+        console.error(`Failed to recreate Murmur main window: ${errorMessage(error)}`);
+      });
     }
 
     const window = this.mainWindow;
@@ -447,17 +507,18 @@ export class AppController {
   }
 
   private requestQuit(): void {
-    this.isQuitting = true;
-    this.closeToTrayNotification?.removeAllListeners();
-    this.closeToTrayNotification?.close();
-    this.closeToTrayNotification = null;
-    this.tray?.destroy();
-    this.tray = null;
     app.quit();
   }
 
   prepareToQuit(): void {
     this.isQuitting = true;
+  }
+
+  cancelQuit(): void {
+    if (this.disposePromise) return;
+    this.isQuitting = false;
+    if (!this.tray) this.createTray();
+    this.refreshTrayMenu();
   }
 
   private refreshTrayMenu(): void {
@@ -497,23 +558,35 @@ export class AppController {
     }
   }
 
-  private attachWindowDiagnostics(window: ElectronBrowserWindow, label: string): void {
+  private attachWindowDiagnostics(window: ElectronBrowserWindow, role: RendererRole): void {
     if (this.rendererSource.kind === "dev") {
       window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-        console.log(`[renderer:${label}:${level}] ${message} (${sourceId}:${line})`);
+        console.log(`[renderer:${role}:${level}] ${message} (${sourceId}:${line})`);
       });
     }
     window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
-      console.error(`[renderer:${label}:load-failed] ${errorCode} ${errorDescription} ${validatedUrl}`);
+      console.error(`[renderer:${role}:load-failed] ${errorCode} ${errorDescription} ${validatedUrl}`);
+    });
+    window.webContents.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
+      if (isMainFrame) this.releaseRendererLeases(window.webContents.id);
+    });
+    window.webContents.on("will-prevent-unload", () => {
+      this.cancelQuit();
     });
     window.webContents.on("render-process-gone", (_event, details) => {
-      console.error(`[renderer:${label}:gone] ${details.reason}`);
+      console.error(`[renderer:${role}:gone] ${details.reason}`);
+      this.releaseRendererLeases(window.webContents.id);
+      if (role === "main" && this.isPillSessionActive()) {
+        this.failSession("The recording window stopped unexpectedly. Try again.", undefined, "failed");
+      }
+      void this.recoverRenderer(window, role, details.reason);
     });
   }
 
-  private configureTrustedRendererWindow(window: ElectronBrowserWindow, label: string): void {
+  private configureTrustedRendererWindow(window: ElectronBrowserWindow, role: RendererRole): void {
+    this.rendererRoles.set(window.webContents.id, role);
     window.webContents.setWindowOpenHandler(({ url }) => {
-      console.warn(`[renderer:${label}:window-open-blocked] ${url}`);
+      console.warn(`[renderer:${role}:window-open-blocked] ${url}`);
       return { action: "deny" };
     });
     window.webContents.on("will-attach-webview", (event) => {
@@ -522,7 +595,7 @@ export class AppController {
     window.webContents.on("will-navigate", (event, url) => {
       if (isTrustedRendererUrl(this.rendererSource, url)) return;
       event.preventDefault();
-      console.warn(`[renderer:${label}:navigation-blocked] ${url}`);
+      console.warn(`[renderer:${role}:navigation-blocked] ${url}`);
     });
     const frameNavigationEvents = window.webContents as unknown as {
       on(
@@ -533,8 +606,107 @@ export class AppController {
     frameNavigationEvents.on("will-frame-navigate", (event, url, _isInPlace, isMainFrame) => {
       if (!isMainFrame || isTrustedRendererUrl(this.rendererSource, url)) return;
       event.preventDefault();
-      console.warn(`[renderer:${label}:frame-navigation-blocked] ${url}`);
+      console.warn(`[renderer:${role}:frame-navigation-blocked] ${url}`);
     });
+  }
+
+  private async recoverRenderer(window: ElectronBrowserWindow, role: RendererRole, reason: string): Promise<void> {
+    if (!shouldRecoverRenderer(reason, this.isQuitting) || window.isDestroyed()) return;
+
+    const now = Date.now();
+    const attempts = (this.rendererRecoveryAttempts.get(role) ?? []).filter(
+      (attemptedAt) => now - attemptedAt < rendererRecoveryWindowMs
+    );
+    if (attempts.length >= maxRendererRecoveryAttempts) {
+      console.error(`[renderer:${role}:recovery-stopped] Too many renderer failures.`);
+      this.invalidateFailedWindow(window, role);
+      return;
+    }
+    attempts.push(now);
+    this.rendererRecoveryAttempts.set(role, attempts);
+
+    try {
+      await this.loadRenderer(window, rendererSuffixForRole(role));
+    } catch (error) {
+      console.error(`[renderer:${role}:recovery-failed] ${errorMessage(error)}`);
+      await this.recoverRenderer(window, role, "launch-failed");
+    }
+  }
+
+  private invalidateFailedWindow(window: ElectronBrowserWindow, role: RendererRole): void {
+    if (role === "main" && this.mainWindow === window) this.mainWindow = null;
+    if (role === "pill" && this.pillWindow === window) this.pillWindow = null;
+    if (role === "mode-selector" && this.modeSelectorWindow === window) this.modeSelectorWindow = null;
+    this.releaseRendererOwnership(window.webContents.id);
+    if (!window.isDestroyed()) window.destroy();
+    this.refreshTrayMenu();
+  }
+
+  private releaseRendererLeases(senderId: number): void {
+    const hadHotkeyLease = this.hotkeyCaptureLeases.delete(senderId);
+    this.onboardingDictationLeases.delete(senderId);
+    if (hadHotkeyLease && !this.isQuitting) {
+      void this.registerHotkeys()
+        .catch(() => undefined)
+        .then(() => this.broadcastState());
+    }
+  }
+
+  private releaseRendererOwnership(senderId: number): void {
+    this.releaseRendererLeases(senderId);
+    this.rendererRoles.delete(senderId);
+  }
+
+  private configureSessionPermissions(): void {
+    const electronSession = session.defaultSession;
+    electronSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+      const mediaTypes = "mediaTypes" in details ? details.mediaTypes : undefined;
+      callback(
+        this.isRendererPermissionAllowed(
+          webContents?.id,
+          permission,
+          details.requestingUrl || webContents?.getURL() || "",
+          mediaTypes
+        )
+      );
+    });
+    electronSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) =>
+      this.isRendererPermissionAllowed(
+        webContents?.id,
+        permission,
+        details.requestingUrl || webContents?.getURL() || requestingOrigin,
+        details.mediaType ? [details.mediaType] : undefined
+      )
+    );
+    this.permissionPolicyInstalled = true;
+  }
+
+  private clearPermissionPolicy(): void {
+    if (!this.permissionPolicyInstalled) return;
+    session.defaultSession.setPermissionRequestHandler(null);
+    session.defaultSession.setPermissionCheckHandler(null);
+    this.permissionPolicyInstalled = false;
+  }
+
+  private isRendererPermissionAllowed(
+    senderId: number | undefined,
+    permission: string,
+    requestingUrl: string,
+    mediaTypes?: string[]
+  ): boolean {
+    if (senderId === undefined || this.rendererRoles.get(senderId) !== "main") return false;
+    if (!isTrustedRendererUrl(this.rendererSource, requestingUrl)) return false;
+    return isAllowedRendererPermission(permission, mediaTypes);
+  }
+
+  private destroyOwnedWindows(): void {
+    for (const window of [this.modeSelectorWindow, this.pillWindow, this.mainWindow]) {
+      if (window && !window.isDestroyed()) window.destroy();
+    }
+    this.mainWindow = null;
+    this.pillWindow = null;
+    this.modeSelectorWindow = null;
+    this.rendererRoles.clear();
   }
 
   private registerIpc(): void {
@@ -546,12 +718,15 @@ export class AppController {
         this.assertTrustedIpcSender(event, channel);
         return listener(event, ...args);
       });
+      this.ipcHandlerChannels.add(channel);
     };
     const on = (channel: string, listener: (event: IpcMainEvent, ...args: unknown[]) => void): void => {
-      ipcMain.on(channel, (event, ...args) => {
+      const authorizedListener = (event: IpcMainEvent, ...args: unknown[]): void => {
         this.assertTrustedIpcSender(event, channel);
         listener(event, ...args);
-      });
+      };
+      ipcMain.on(channel, authorizedListener);
+      this.ipcEventListeners.set(channel, authorizedListener);
     };
 
     handle("app:get-state", () => this.getSnapshot());
@@ -571,13 +746,13 @@ export class AppController {
       this.broadcastState();
       return this.getSnapshot();
     });
-    handle("hotkeys:capture-start", async () => {
-      await this.beginHotkeyCapture();
+    handle("hotkeys:capture-start", async (event) => {
+      await this.beginHotkeyCapture(event.sender.id);
       this.broadcastState();
       return { ok: true };
     });
-    handle("hotkeys:capture-end", async () => {
-      await this.endHotkeyCapture();
+    handle("hotkeys:capture-end", async (event) => {
+      await this.endHotkeyCapture(event.sender.id);
       return { ok: true };
     });
     handle("modes:set", (_event, payload) => {
@@ -725,9 +900,13 @@ export class AppController {
       this.broadcastState();
       return result;
     });
-    handle("onboarding:dictation-scope", (_event, payload) => {
+    handle("onboarding:dictation-scope", (event, payload) => {
       const { active } = parseIpcPayload(onboardingDictationScopePayloadSchema, payload, "onboarding:dictation-scope");
-      this.onboardingDictationScopeActive = active;
+      if (active) {
+        this.onboardingDictationLeases.add(event.sender.id);
+      } else {
+        this.onboardingDictationLeases.delete(event.sender.id);
+      }
       return { ok: true };
     });
     handle("history:copy", (_event, payload) => {
@@ -765,13 +944,16 @@ export class AppController {
     );
   }
 
-  private assertTrustedIpcSender(event: IpcMainInvokeEvent | IpcMainEvent, channel: string): void {
-    const senderId = event.sender.id;
-    const owned = [this.mainWindow, this.pillWindow, this.modeSelectorWindow].some(
-      (window) => window && !window.isDestroyed() && window.webContents.id === senderId
-    );
+  private unregisterIpc(): void {
+    for (const channel of this.ipcHandlerChannels) ipcMain.removeHandler(channel);
+    for (const [channel, listener] of this.ipcEventListeners) ipcMain.removeListener(channel, listener);
+    this.ipcHandlerChannels.clear();
+    this.ipcEventListeners.clear();
+  }
 
-    if (!owned) {
+  private assertTrustedIpcSender(event: IpcMainInvokeEvent | IpcMainEvent, channel: string): void {
+    const role = this.rendererRoles.get(event.sender.id);
+    if (!role || !isIpcChannelAllowed(role, channel)) {
       throw new IpcAuthorizationError(channel);
     }
 
@@ -809,15 +991,20 @@ export class AppController {
     };
   }
 
-  private async beginHotkeyCapture(): Promise<void> {
-    this.hotkeyCaptureDepth += 1;
+  private async beginHotkeyCapture(senderId: number): Promise<void> {
+    this.hotkeyCaptureLeases.set(senderId, (this.hotkeyCaptureLeases.get(senderId) ?? 0) + 1);
     await this.registerHotkeys();
   }
 
-  private async endHotkeyCapture(): Promise<void> {
-    if (this.hotkeyCaptureDepth === 0) return;
-    this.hotkeyCaptureDepth -= 1;
-    if (this.hotkeyCaptureDepth > 0) return;
+  private async endHotkeyCapture(senderId: number): Promise<void> {
+    const depth = this.hotkeyCaptureLeases.get(senderId) ?? 0;
+    if (depth === 0) return;
+    if (depth === 1) {
+      this.hotkeyCaptureLeases.delete(senderId);
+    } else {
+      this.hotkeyCaptureLeases.set(senderId, depth - 1);
+    }
+    if (this.hotkeyCaptureLeases.size > 0) return;
     await this.registerHotkeys();
     this.broadcastState();
   }
@@ -830,6 +1017,8 @@ export class AppController {
   }
 
   private registerHotkeys(): Promise<void> {
+    if (this.isQuitting) return this.hotkeyRegistrationQueue.catch(() => undefined);
+
     const generation = ++this.hotkeyRegistrationGeneration;
     const registration = this.hotkeyRegistrationQueue
       .catch(() => undefined)
@@ -850,7 +1039,7 @@ export class AppController {
 
     const settings = this.storage.getState().settings;
 
-    if (this.hotkeyCaptureDepth > 0) {
+    if (this.hotkeyCaptureLeases.size > 0) {
       this.hotkeyDiagnostics = ["Keyboard shortcut recording is active."];
       this.modeSelectorHotkeyDiagnostics = ["Keyboard shortcut recording is active."];
       return;
@@ -989,6 +1178,14 @@ export class AppController {
                 ? macosPermission.diagnostics
                 : ["macOS Accessibility permission is required for push-to-talk release detection."]
             };
+      if (generation !== this.hotkeyRegistrationGeneration) {
+        globalShortcut.unregisterAll();
+        await this.portalHotkeys.unregister();
+        await this.nativeHotkeys.unregister();
+        this.macosReleaseHotkeys.unregister();
+        return;
+      }
+
       const electronResult = registerElectronShortcutActions(globalShortcut, [
         {
           id: "activation",
@@ -1197,7 +1394,7 @@ export class AppController {
 
     const startGeneration = ++this.dictationStartGeneration;
     const persisted = this.storage.getState();
-    const source: RecordingSource = this.onboardingDictationScopeActive ? "onboarding" : "dictation";
+    const source: RecordingSource = this.onboardingDictationLeases.size > 0 ? "onboarding" : "dictation";
 
     const sttUsability = getSttUsability(persisted, this.runtimeService, this.paths, this.modelLibrary);
     if (!sttUsability.usable) {
@@ -1810,7 +2007,9 @@ export class AppController {
     if (this.isModeSelectorBlocked()) return;
 
     if (!this.modeSelectorWindow || this.modeSelectorWindow.isDestroyed()) {
-      this.createModeSelectorWindow();
+      void this.createModeSelectorWindow().catch((error) => {
+        console.error(`Failed to recreate Murmur mode selector: ${errorMessage(error)}`);
+      });
     }
 
     const window = this.modeSelectorWindow;
@@ -1818,14 +2017,12 @@ export class AppController {
     this.configureModeSelectorWindow();
     this.positionModeSelectorWindow();
     window.webContents.send("mode-selector-state:changed", this.getModeSelectorSnapshot());
-    this.registerModeSelectorNavigationShortcuts();
     window.show();
     window.focus();
     window.webContents.focus();
   }
 
   private hideModeSelectorWindow(): void {
-    this.unregisterModeSelectorNavigationShortcuts();
     this.modeSelectorWindow?.hide();
   }
 
@@ -1908,35 +2105,6 @@ export class AppController {
     this.positionModeSelectorWindow();
   }
 
-  private registerModeSelectorNavigationShortcuts(): void {
-    this.unregisterModeSelectorNavigationShortcuts();
-
-    const registration = registerModeSelectorNavigationShortcuts(globalShortcut, {
-      hide: () => {
-        this.hideModeSelectorWindow();
-      },
-      next: () => {
-        if (!this.modeSelectorWindow?.isVisible()) return;
-        this.moveModeSelectorSelection(1);
-      },
-      previous: () => {
-        if (!this.modeSelectorWindow?.isVisible()) return;
-        this.moveModeSelectorSelection(-1);
-      }
-    });
-
-    if (registration.diagnostics.length > 0) {
-      console.warn(`Mode selector navigation shortcuts were not fully registered: ${registration.diagnostics.join(" ")}`);
-    }
-
-    this.modeSelectorNavigationShortcutCleanup = registration.unregister;
-  }
-
-  private unregisterModeSelectorNavigationShortcuts(): void {
-    this.modeSelectorNavigationShortcutCleanup?.();
-    this.modeSelectorNavigationShortcutCleanup = null;
-  }
-
   private positionPillWindow(): void {
     if (!this.pillWindow) return;
 
@@ -1962,14 +2130,7 @@ export class AppController {
     if (!this.modeSelectorWindow) return;
 
     const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-    const { x, y, width, height } = display.workArea;
-
-    this.modeSelectorWindow.setBounds({
-      x: Math.round(x + (width - modeSelectorWindowSize) / 2),
-      y: Math.round(y + (height - modeSelectorWindowSize) / 2),
-      width: modeSelectorWindowSize,
-      height: modeSelectorWindowSize
-    });
+    this.modeSelectorWindow.setBounds(calculateModeSelectorBounds(display.workArea));
   }
 
   private getSnapshot(): AppStateSnapshot {
@@ -2150,6 +2311,42 @@ function unavailableContext(message: string): ContextSnapshot {
     sourceQuality: "unavailable",
     diagnostics: [message]
   };
+}
+
+export function calculateModeSelectorBounds(workArea: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}): { x: number; y: number; width: number; height: number } {
+  const inset = Math.max(
+    0,
+    Math.min(modeSelectorWindowMargin, Math.floor(workArea.width / 2), Math.floor(workArea.height / 2))
+  );
+  const size = Math.max(
+    1,
+    Math.min(modeSelectorWindowSize, workArea.width - inset * 2, workArea.height - inset * 2)
+  );
+  return {
+    x: Math.round(workArea.x + (workArea.width - size) / 2),
+    y: Math.round(workArea.y + (workArea.height - size) / 2),
+    width: size,
+    height: size
+  };
+}
+
+export function isAllowedRendererPermission(permission: string, mediaTypes?: string[]): boolean {
+  return permission === "media" && Boolean(mediaTypes?.length && mediaTypes.every((mediaType) => mediaType === "audio"));
+}
+
+export function shouldRecoverRenderer(reason: string, isQuitting: boolean): boolean {
+  return !isQuitting && reason !== "clean-exit";
+}
+
+function rendererSuffixForRole(role: RendererRole): string {
+  if (role === "pill") return "?pill=1";
+  if (role === "mode-selector") return "?mode-selector=1";
+  return "";
 }
 
 export function countWords(text: string): number {

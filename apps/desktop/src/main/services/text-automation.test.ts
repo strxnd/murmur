@@ -137,7 +137,9 @@ class FakeBackend implements TextAutomationBackend {
   };
 
   async initialize(): Promise<void> {}
-  dispose(): void {}
+  dispose(): void {
+    this.calls.push("dispose");
+  }
   getCapability(): TextAutomationCapability {
     return this.capability;
   }
@@ -297,6 +299,30 @@ describe("TextAutomationService", () => {
 
     expect(events).toEqual(["exclusive:start", "exclusive:end", "copy:done"]);
     expect(backend.calls).toEqual(["copy:start", "copy:end"]);
+  });
+
+  it("rejects new operations while idempotent disposal drains accepted work", async () => {
+    const backend = new FakeBackend();
+    const service = new TextAutomationService(backend);
+    let releaseOperation!: () => void;
+    const operationBlocked = new Promise<void>((resolve) => {
+      releaseOperation = resolve;
+    });
+    const acceptedOperation = service.runExclusive(() => operationBlocked);
+
+    const firstDispose = service.dispose();
+    const repeatedDispose = service.dispose();
+
+    await expect(service.pasteClipboard()).rejects.toThrow("cannot accept new operations");
+    await expect(service.copySelection()).rejects.toThrow("cannot accept new operations");
+    await expect(service.readSelectedText()).rejects.toThrow("cannot accept new operations");
+    await expect(service.runExclusive(async () => undefined)).rejects.toThrow("cannot accept new operations");
+    expect(backend.calls).not.toContain("dispose");
+
+    releaseOperation();
+    await Promise.all([acceptedOperation, firstDispose, repeatedDispose]);
+
+    expect(backend.calls).toEqual(["dispose"]);
   });
 });
 

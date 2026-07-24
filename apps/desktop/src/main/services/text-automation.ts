@@ -41,7 +41,7 @@ export interface TextAutomationCapability {
 
 export interface TextAutomationBackend {
   initialize(): Promise<void>;
-  dispose(): void;
+  dispose(): void | Promise<void>;
   pasteClipboard(): Promise<AutomationResult>;
   copySelection(): Promise<AutomationResult>;
   readSelectedText?(): Promise<SelectedTextAutomationResult>;
@@ -57,6 +57,8 @@ export interface ShortcutAutomationBackend extends TextAutomationBackend {
 export class TextAutomationService {
   private operationQueue: Promise<void> = Promise.resolve();
   private exclusiveContext = new AsyncLocalStorage<boolean>();
+  private disposing = false;
+  private disposePromise: Promise<void> | null = null;
 
   constructor(private readonly backend: TextAutomationBackend = createTextAutomationBackend()) {}
 
@@ -64,21 +66,29 @@ export class TextAutomationService {
     return this.backend.initialize();
   }
 
-  dispose(): void {
-    this.backend.dispose();
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
+
+    this.disposing = true;
+    const acceptedOperations = this.operationQueue;
+    this.disposePromise = acceptedOperations.then(() => this.backend.dispose());
+    return this.disposePromise;
   }
 
   pasteClipboard(): Promise<AutomationResult> {
+    if (this.isUnavailableForNewOperations()) return Promise.reject(disposedError());
     if (this.exclusiveContext.getStore()) return this.backend.pasteClipboard();
     return this.enqueue(() => this.backend.pasteClipboard());
   }
 
   copySelection(): Promise<AutomationResult> {
+    if (this.isUnavailableForNewOperations()) return Promise.reject(disposedError());
     if (this.exclusiveContext.getStore()) return this.backend.copySelection();
     return this.enqueue(() => this.backend.copySelection());
   }
 
   readSelectedText(): Promise<SelectedTextAutomationResult> {
+    if (this.isUnavailableForNewOperations()) return Promise.reject(disposedError());
     if (!this.backend.readSelectedText) {
       return Promise.resolve({
         success: false,
@@ -93,6 +103,7 @@ export class TextAutomationService {
   }
 
   runExclusive<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (this.disposing) return Promise.reject(disposedError());
     return this.enqueue(() => this.exclusiveContext.run(true, operation), signal);
   }
 
@@ -109,6 +120,8 @@ export class TextAutomationService {
   }
 
   private enqueue<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (this.disposing) return Promise.reject(disposedError());
+
     const runOperation = (): Promise<T> => {
       if (signal?.aborted) return Promise.reject(abortError());
       return operation();
@@ -120,10 +133,18 @@ export class TextAutomationService {
     );
     return run;
   }
+
+  private isUnavailableForNewOperations(): boolean {
+    return this.disposing && !this.exclusiveContext.getStore();
+  }
 }
 
 function abortError(): Error {
   return new DOMException("The operation was aborted.", "AbortError");
+}
+
+function disposedError(): Error {
+  return new Error("Text automation is disposing and cannot accept new operations.");
 }
 
 export function createTextAutomationBackend(platform: NodeJS.Platform = process.platform): TextAutomationBackend {

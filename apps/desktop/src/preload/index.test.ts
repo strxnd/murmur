@@ -27,6 +27,29 @@ describe("preload API", () => {
     expect(harness.send).toHaveBeenCalledWith("recording:level", { sessionId: "session-1", level: 0.5 });
   });
 
+  it("exposes only focused APIs to auxiliary renderer roles", async () => {
+    const main = await loadPreloadHarness();
+    expect(main.api.onRecordingLevel).toBeTypeOf("function");
+    expect(main.api.getPillState).toBeUndefined();
+    expect(main.api.getModeSelectorState).toBeUndefined();
+
+    const pill = await loadPreloadHarness("pill");
+    expect(Object.keys(pill.api).sort()).toEqual(["getPillState", "onPillStateChanged", "onRecordingLevel"]);
+    expect(pill.api.getState).toBeUndefined();
+    expect(pill.api.clearLocalData).toBeUndefined();
+
+    const selector = await loadPreloadHarness("mode-selector");
+    expect(Object.keys(selector.api).sort()).toEqual([
+      "getModeSelectorState",
+      "hideModeSelector",
+      "moveModeSelectorSelection",
+      "onModeSelectorStateChanged",
+      "selectModeFromSelector"
+    ]);
+    expect(selector.api.updateSettings).toBeUndefined();
+    expect(selector.api.startDictation).toBeUndefined();
+  });
+
   it("returns listener cleanup functions that remove the exact IPC listener", async () => {
     const harness = await loadPreloadHarness();
     const callback = vi.fn();
@@ -42,7 +65,7 @@ describe("preload API", () => {
   });
 });
 
-async function loadPreloadHarness(): Promise<{
+async function loadPreloadHarness(role: "main" | "pill" | "mode-selector" = "main"): Promise<{
   api: MurmurApi;
   invoke: ReturnType<typeof vi.fn>;
   send: ReturnType<typeof vi.fn>;
@@ -71,7 +94,13 @@ async function loadPreloadHarness(): Promise<{
     }
   }));
 
-  await import("./index");
+  const originalArgv = process.argv;
+  process.argv = [...originalArgv.filter((argument) => !argument.startsWith("--murmur-renderer-role=")), `--murmur-renderer-role=${role}`];
+  try {
+    await import("./index");
+  } finally {
+    process.argv = originalArgv;
+  }
   if (!api) throw new Error("Preload API was not exposed.");
   return { api, invoke, send, on, removeListener };
 }

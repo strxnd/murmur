@@ -204,6 +204,62 @@ describe("native shortcut callback authorization", () => {
     expect(authorizeCallbackSender).toHaveBeenNthCalledWith(2, ":1.42");
     expect(onActivated).toHaveBeenCalledTimes(1);
   });
+
+  it("bounds callback name release and always closes the session connection", async () => {
+    vi.useFakeTimers();
+    try {
+      type ExecFileCallback = (error: Error | null, stdout: string, stderr: string) => void;
+      execFileMock.mockImplementation((file: string, args: string[], _options: unknown, callback: ExecFileCallback) => {
+        let stdout = "";
+        if (file === "gsettings" && args[0] === "get" && args[2] === "custom-keybindings") stdout = "@as []";
+        if (file === "gsettings" && args[0] === "get" && args[2] === "binding") stdout = "'<Alt><Shift>r'";
+        callback(null, stdout, "");
+        return {};
+      });
+
+      const connection = new EventEmitter() as EventEmitter & { end: ReturnType<typeof vi.fn> };
+      connection.end = vi.fn();
+      const releaseName = vi.fn();
+      const bus = {
+        connection,
+        invoke: vi.fn(),
+        requestName: (_name: string, _flags: number, callback: (error?: Error, result?: number) => void) => callback(undefined, 1),
+        releaseName,
+        exportInterface: vi.fn()
+      };
+      const service = new NativeDesktopGlobalShortcutService({
+        platform: "linux",
+        env: {
+          DBUS_SESSION_BUS_ADDRESS: "unix:path=/tmp/fake-bus",
+          XDG_CURRENT_DESKTOP: "GNOME"
+        },
+        createBus: () => bus as never
+      });
+
+      await service.register({
+        actions: [
+          {
+            id: "activation",
+            accelerator: "Alt+Shift+R",
+            description: "Murmur activation",
+            activationMode: "toggle",
+            onActivated: vi.fn(),
+            onDeactivated: vi.fn(),
+            onPressedWithoutRelease: vi.fn()
+          }
+        ]
+      });
+
+      const disposal = service.dispose();
+      await vi.advanceTimersByTimeAsync(3000);
+      await disposal;
+
+      expect(releaseName).toHaveBeenCalledWith("dev.murmur.App", expect.any(Function));
+      expect(connection.end).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("GNOME built-in shortcut conflicts", () => {

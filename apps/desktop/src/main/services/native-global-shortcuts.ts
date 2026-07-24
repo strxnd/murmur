@@ -250,17 +250,20 @@ export class NativeDesktopGlobalShortcutService {
     }
   }
 
-  dispose(): void {
-    void this.unregister().finally(() => {
+  async dispose(): Promise<void> {
+    try {
+      await this.unregister();
+    } finally {
       const bus = this.connection.currentBus();
-      if (this.callbackServiceRequested && bus?.releaseName) {
-        bus.releaseName(dbusServiceName, () => undefined);
+      try {
+        if (this.callbackServiceRequested && bus?.releaseName) await this.releaseName(bus);
+      } finally {
+        this.detachCallbackSenderCapture();
+        this.connection.dispose();
+        this.callbackServiceExported = false;
+        this.callbackServiceRequested = false;
       }
-      this.detachCallbackSenderCapture();
-      this.connection.dispose();
-      this.callbackServiceExported = false;
-      this.callbackServiceRequested = false;
-    });
+    }
   }
 
   private async registerBackend(
@@ -729,6 +732,27 @@ export class NativeDesktopGlobalShortcutService {
         }
         resolve(result ?? 0);
       });
+    });
+  }
+
+  private releaseName(bus: NativeMessageBus): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(finish, nativeTimeoutMs);
+      timer.unref();
+      try {
+        bus.releaseName!(dbusServiceName, finish);
+      } catch (error) {
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      }
     });
   }
 

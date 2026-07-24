@@ -115,8 +115,8 @@ export class LinuxTextAutomationService implements TextAutomationBackend {
     this.baseDiagnostics = this.computeBaseDiagnostics();
   }
 
-  dispose(): void {
-    this.portalBackend.dispose();
+  async dispose(): Promise<void> {
+    await this.portalBackend.dispose();
   }
 
   pasteClipboard(): Promise<AutomationResult> {

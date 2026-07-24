@@ -62,7 +62,7 @@ function startApp(): void {
     const activeController = controller;
     controller = null;
     controllerInitialization = null;
-    shutdownPromise = (activeController?.dispose() ?? Promise.resolve())
+    shutdownPromise = disposeControllerWithin(activeController, 10000)
       .catch((error) => console.error(`Failed to dispose Murmur: ${error instanceof Error ? error.message : String(error)}`))
       .finally(() => {
         shutdownComplete = true;
@@ -81,21 +81,48 @@ function handleControllerError(error: unknown): void {
 }
 
 async function ensureController(): Promise<AppController> {
-  if (controller) return controller;
-  if (!controllerInitialization) {
-    controllerInitialization = app.whenReady().then(async () => {
-      const activeController = new AppController();
+  if (controllerInitialization) return controllerInitialization;
+
+  controllerInitialization = app.whenReady().then(async () => {
+    const activeController = new AppController();
+    controller = activeController;
+    try {
+      await activeController.initialize();
+      return activeController;
+    } catch (error) {
+      activeController.prepareToQuit();
       try {
-        await activeController.initialize();
-        controller = activeController;
-        return activeController;
-      } catch (error) {
         await activeController.dispose();
-        controller = null;
+      } catch (cleanupError) {
+        console.error(
+          `Failed to clean up incomplete Murmur startup: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`
+        );
+      } finally {
+        if (controller === activeController) controller = null;
         controllerInitialization = null;
-        throw error;
       }
-    });
-  }
+      throw error;
+    }
+  });
   return controllerInitialization;
+}
+
+export async function disposeControllerWithin(
+  activeController: Pick<AppController, "dispose"> | null,
+  timeoutMs: number
+): Promise<void> {
+  if (!activeController) return;
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      activeController.dispose(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`Murmur shutdown exceeded ${timeoutMs}ms.`)), timeoutMs);
+        timer.unref();
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
