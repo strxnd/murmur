@@ -28,15 +28,24 @@ describe("preload API", () => {
   });
 
   it("exposes only focused APIs to auxiliary renderer roles", async () => {
+    const main = await loadPreloadHarness();
+    expect(main.api.onRecordingLevel).toBeTypeOf("function");
+    expect(main.api.getPillState).toBeUndefined();
+    expect(main.api.getModeSelectorState).toBeUndefined();
+
     const pill = await loadPreloadHarness("pill");
-    expect(pill.api.getPillState).toBeTypeOf("function");
-    expect(pill.api.onRecordingLevel).toBeTypeOf("function");
+    expect(Object.keys(pill.api).sort()).toEqual(["getPillState", "onPillStateChanged", "onRecordingLevel"]);
     expect(pill.api.getState).toBeUndefined();
     expect(pill.api.clearLocalData).toBeUndefined();
 
     const selector = await loadPreloadHarness("mode-selector");
-    expect(selector.api.getModeSelectorState).toBeTypeOf("function");
-    expect(selector.api.selectModeFromSelector).toBeTypeOf("function");
+    expect(Object.keys(selector.api).sort()).toEqual([
+      "getModeSelectorState",
+      "hideModeSelector",
+      "moveModeSelectorSelection",
+      "onModeSelectorStateChanged",
+      "selectModeFromSelector"
+    ]);
     expect(selector.api.updateSettings).toBeUndefined();
     expect(selector.api.startDictation).toBeUndefined();
   });

@@ -155,18 +155,8 @@ const api = {
 export type MurmurApi = typeof api;
 export type PreloadRendererRole = "main" | "pill" | "mode-selector";
 
-const mainExcludedApiKeys = new Set<keyof MurmurApi>([
-  "getPillState",
-  "getModeSelectorState",
-  "hideModeSelector",
-  "selectModeFromSelector",
-  "moveModeSelectorSelection",
-  "onPillStateChanged",
-  "onModeSelectorStateChanged"
-]);
-
-const auxiliaryApiKeys: Record<Exclude<PreloadRendererRole, "main">, ReadonlyArray<keyof MurmurApi>> = {
-  pill: ["getPillState", "onPillStateChanged", "onRecordingLevel"],
+const auxiliaryOnlyApiKeys = {
+  pill: ["getPillState", "onPillStateChanged"],
   "mode-selector": [
     "getModeSelectorState",
     "hideModeSelector",
@@ -174,6 +164,12 @@ const auxiliaryApiKeys: Record<Exclude<PreloadRendererRole, "main">, ReadonlyArr
     "moveModeSelectorSelection",
     "onModeSelectorStateChanged"
   ]
+} as const satisfies Record<Exclude<PreloadRendererRole, "main">, ReadonlyArray<keyof MurmurApi>>;
+
+const mainExcludedApiKeys = new Set<keyof MurmurApi>(Object.values(auxiliaryOnlyApiKeys).flat());
+const auxiliaryApiKeys: Record<Exclude<PreloadRendererRole, "main">, ReadonlyArray<keyof MurmurApi>> = {
+  pill: [...auxiliaryOnlyApiKeys.pill, "onRecordingLevel"],
+  "mode-selector": auxiliaryOnlyApiKeys["mode-selector"]
 };
 
 export function rendererRoleFromArguments(args: string[]): PreloadRendererRole {
