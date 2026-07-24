@@ -849,7 +849,7 @@ async function waitForWhisperServer(
     }
 
     try {
-      const challengeResponse = await fetchWithTimeout(`${baseUrl}${requestPath}/`, { signal }, 500);
+      const challengeResponse = await fetchWithTimeout(`${baseUrl}/`, { signal }, 500);
       const challengeBody = await readResponseText(challengeResponse, {
         totalTimeoutMs: 500,
         idleTimeoutMs: 500,

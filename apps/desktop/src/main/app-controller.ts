@@ -693,7 +693,7 @@ export class AppController {
     });
     handle("stt-setup:setup-bundled", async (_event, payload) => {
       const modelId = parseIpcPayload(ipcIdPayloadSchema, payload, "stt-setup:setup-bundled");
-      this.stt.stopRuntime();
+      await this.stt.stopRuntime();
       await this.sttSetup.setupBundledStt(modelId);
       this.broadcastState();
       return this.getSnapshot();

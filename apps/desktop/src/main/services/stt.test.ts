@@ -180,7 +180,7 @@ describe("TranscriptionService", () => {
     await service.dispose();
   });
 
-  it("uses authenticated managed paths and a writable temp dir for whisper-server", async () => {
+  it("uses whisper.cpp root static routing for identity and authenticated managed API paths", async () => {
     const paths = testPaths();
     const modelPath = join(paths.modelDir, "ggml-tiny.en.bin");
     const argsPath = join(paths.tempDir, "whisper-args.json");
@@ -522,7 +522,7 @@ function whisperServerShim(root: string): string {
     'const requestPath = value("--request-path");',
     'const challenge = fs.readFileSync(value("--public") + "/index.html", "utf8");',
     "const server = http.createServer((request, response) => {",
-    '  if (request.url === requestPath + "/") { response.end(challenge); return; }',
+    '  if (request.url === "/") { response.end(challenge); return; }',
     '  if (request.url === requestPath + "/health") { response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify({ status: "ok" })); return; }',
     '  if (request.url === requestPath + "/inference") { request.resume(); request.on("end", () => { fs.writeFileSync(process.env.MURMUR_REQUEST_PATH, request.url); response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify({ text: "managed transcript" })); }); return; }',
     "  response.statusCode = 404; response.end();",
