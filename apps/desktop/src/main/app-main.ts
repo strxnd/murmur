@@ -22,6 +22,8 @@ if (!isSupportedPlatform(process.platform)) {
 
 let controller: AppController | null = null;
 let controllerInitialization: Promise<AppController> | null = null;
+let shutdownPromise: Promise<void> | null = null;
+let shutdownComplete = false;
 
 function startApp(): void {
   Menu.setApplicationMenu(null);
@@ -50,12 +52,22 @@ function startApp(): void {
     showControllerWindow();
   });
 
-  app.on("will-quit", () => {
+  app.on("will-quit", (event) => {
+    if (shutdownComplete) return;
+    event.preventDefault();
+    if (shutdownPromise) return;
+
     // Registered shortcuts are process-scoped and must be released on shutdown.
     globalShortcut.unregisterAll();
-    controller?.dispose();
+    const activeController = controller;
     controller = null;
     controllerInitialization = null;
+    shutdownPromise = (activeController?.dispose() ?? Promise.resolve())
+      .catch((error) => console.error(`Failed to dispose Murmur: ${error instanceof Error ? error.message : String(error)}`))
+      .finally(() => {
+        shutdownComplete = true;
+        app.quit();
+      });
   });
 }
 
@@ -78,7 +90,7 @@ async function ensureController(): Promise<AppController> {
         controller = activeController;
         return activeController;
       } catch (error) {
-        activeController.dispose();
+        await activeController.dispose();
         controller = null;
         controllerInitialization = null;
         throw error;

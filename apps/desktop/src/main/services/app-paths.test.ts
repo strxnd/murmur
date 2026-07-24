@@ -24,6 +24,7 @@ describe("resolveAppPaths", () => {
     expect(paths.dataDir).toBe(join(root, "xdg-data", "murmur"));
     expect(paths.cacheDir).toBe(join(root, "xdg-cache", "murmur"));
     expect(paths.tempDir).toBe(join(root, "tmp", "murmur-1000"));
+    expect(paths.sttTempDir).toBe(join(root, "tmp", "murmur-1000", "stt"));
     expect(paths.runtimeDir).toBe(join(root, "xdg-cache", "murmur", "runtimes", "stt"));
     expect(existsSync(paths.configDir)).toBe(true);
     expect(existsSync(paths.modelDir)).toBe(true);

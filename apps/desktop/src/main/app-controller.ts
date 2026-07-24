@@ -214,7 +214,7 @@ export class AppController {
     this.sttSetup = new SttSetupService(this.paths, this.storage, this.modelLibrary, this.runtimeService);
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     this.invalidateDictation("shutdown");
     this.unregisterModeSelectorNavigationShortcuts();
     globalShortcut.unregisterAll();
@@ -223,7 +223,7 @@ export class AppController {
     this.macosReleaseHotkeys.unregister();
     this.textAutomation.dispose();
     this.context.dispose();
-    this.stt.dispose();
+    await this.stt.dispose();
     this.codex.dispose();
     this.closeToTrayNotification?.removeAllListeners();
     this.closeToTrayNotification?.close();
@@ -693,7 +693,7 @@ export class AppController {
     });
     handle("stt-setup:setup-bundled", async (_event, payload) => {
       const modelId = parseIpcPayload(ipcIdPayloadSchema, payload, "stt-setup:setup-bundled");
-      this.stt.stopRuntime();
+      await this.stt.stopRuntime();
       await this.sttSetup.setupBundledStt(modelId);
       this.broadcastState();
       return this.getSnapshot();
@@ -1308,6 +1308,7 @@ export class AppController {
       this.invalidateDictation("cleared");
       this.session = { ...defaultSession, modeId: this.storage.getState().settings.activeModeId };
       await this.codex.logout();
+      await this.stt.clearLocalData();
       this.storage.clearLocalData();
       this.session = { ...defaultSession, modeId: this.storage.getState().settings.activeModeId };
       await this.registerHotkeys();

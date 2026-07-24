@@ -29,7 +29,7 @@ import {
   wrapIndex
 } from "./app-controller";
 import { DictationSessionOwner, type DictationSessionOperation } from "./services/dictation-session";
-import { globalShortcut } from "./electron-api";
+import { globalShortcut, ipcMain } from "./electron-api";
 
 vi.mock("./electron-api", () => ({
   app: {
@@ -113,10 +113,11 @@ interface TestController {
   stopRecording(notice?: string): Promise<AppStateSnapshot>;
   cancelRecording(): Promise<AppStateSnapshot>;
   clearLocalData(): Promise<AppStateSnapshot>;
+  registerIpc(): void;
   captureRecordingContext(operation: DictationSessionOperation): Promise<typeof capturedContext>;
   completeRecording(payload: { sessionId: string; audio: ArrayBuffer; mimeType: string }): Promise<AppStateSnapshot>;
   ensureAutomationReadyForUserAction: ReturnType<typeof vi.fn>;
-  dispose(): void;
+  dispose(): Promise<void>;
 }
 
 interface ControllerHarness {
@@ -127,7 +128,13 @@ interface ControllerHarness {
     clearLocalData: ReturnType<typeof vi.fn>;
     resolveLlmProviderSecret: ReturnType<typeof vi.fn>;
   };
-  stt: { transcribe: ReturnType<typeof vi.fn> };
+  stt: {
+    transcribe: ReturnType<typeof vi.fn>;
+    stopRuntime: ReturnType<typeof vi.fn>;
+    clearLocalData: ReturnType<typeof vi.fn>;
+    dispose: ReturnType<typeof vi.fn>;
+  };
+  sttSetup: { setupBundledStt: ReturnType<typeof vi.fn> };
   llm: { process: ReturnType<typeof vi.fn> };
   paste: { copyText: ReturnType<typeof vi.fn>; insertText: ReturnType<typeof vi.fn> };
   codex: { logout: ReturnType<typeof vi.fn> };
@@ -188,7 +195,14 @@ function createControllerHarness(options: {
   };
   const stt = {
     transcribe: vi.fn(async () => transcriptionResult),
-    dispose: vi.fn()
+    stopRuntime: vi.fn(async () => undefined),
+    clearLocalData: vi.fn(async () => undefined),
+    dispose: vi.fn(async () => undefined)
+  };
+  const sttSetup = {
+    getSnapshot: vi.fn(),
+    setupBundledStt: vi.fn(async () => undefined),
+    skipSttSetup: vi.fn()
   };
   const llm = {
     process: vi.fn(async () => ({ text: "processed transcript", providerId: "codex", model: "test-llm" }))
@@ -235,6 +249,7 @@ function createControllerHarness(options: {
     macosReleaseHotkeys: { unregister: vi.fn() },
     paths: { modelDir: "/tmp/murmur-test-models" },
     stt,
+    sttSetup,
     codex,
     initialCodexRefresh: options.initialCodexRefresh ?? Promise.resolve(),
     clearingLocalData: false,
@@ -253,6 +268,7 @@ function createControllerHarness(options: {
     pushToTalkSessionId: null,
     onboardingDictationScopeActive: false,
     ensureAutomationReadyForUserAction: vi.fn(() => ({ ready: true })),
+    assertTrustedIpcSender: vi.fn(),
     beginRecordingContextCapture: vi.fn(() => {
       controller.sessionContext = capturedContext;
     }),
@@ -274,6 +290,7 @@ function createControllerHarness(options: {
     state,
     storage,
     stt,
+    sttSetup,
     llm,
     paste,
     codex,
@@ -365,6 +382,35 @@ describe("app-controller utility contracts", () => {
     finishRefresh();
     await expect(selection).resolves.toEqual(codexProviderDefaults);
     expect(selectProvider).toHaveBeenCalledOnce();
+  });
+});
+
+describe("AppController STT setup", () => {
+  it("waits for the managed runtime to close before replacing bundled STT setup", async () => {
+    const harness = createControllerHarness();
+    const runtimeStopped = deferred<void>();
+    harness.stt.stopRuntime.mockReturnValueOnce(runtimeStopped.promise);
+    vi.mocked(ipcMain.handle).mockClear();
+    harness.controller.registerIpc();
+    const registration = vi.mocked(ipcMain.handle).mock.calls.find(([channel]) => channel === "stt-setup:setup-bundled");
+    const setupHandler = registration?.[1] as
+      | ((event: unknown, modelId: string) => Promise<AppStateSnapshot>)
+      | undefined;
+    if (!setupHandler) throw new Error("STT setup IPC handler was not registered.");
+
+    const setup = setupHandler({}, "whisper-tiny-en");
+    await Promise.resolve();
+
+    expect(harness.stt.stopRuntime).toHaveBeenCalledOnce();
+    expect(harness.sttSetup.setupBundledStt).not.toHaveBeenCalled();
+
+    runtimeStopped.resolve();
+    await setup;
+
+    expect(harness.sttSetup.setupBundledStt).toHaveBeenCalledWith("whisper-tiny-en");
+    expect(harness.stt.stopRuntime.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.sttSetup.setupBundledStt.mock.invocationCallOrder[0]
+    );
   });
 });
 
@@ -570,6 +616,7 @@ describe("AppController dictation ownership", () => {
     refresh.resolve();
     await start;
 
+    expect(harness.stt.clearLocalData).toHaveBeenCalledOnce();
     expect(harness.storage.clearLocalData).toHaveBeenCalledOnce();
     expect(harness.controller.session.status).toBe("idle");
     expect(harness.controller.sessionOperation).toBeNull();
@@ -666,6 +713,7 @@ describe("AppController dictation ownership", () => {
     await completion;
 
     expect(signal.aborted).toBe(true);
+    expect(harness.stt.clearLocalData).toHaveBeenCalledOnce();
     expect(harness.storage.clearLocalData).toHaveBeenCalledOnce();
     expect(harness.controller.session.status).toBe("idle");
     expect(harness.paste.insertText).not.toHaveBeenCalled();
@@ -681,7 +729,7 @@ describe("AppController dictation ownership", () => {
     const completion = harness.controller.completeRecording({ sessionId, audio: new ArrayBuffer(1), mimeType: "audio/wav" });
     await vi.waitFor(() => expect(harness.llm.process).toHaveBeenCalledOnce());
     const signal = harness.llm.process.mock.calls[0]?.[0]?.signal as AbortSignal;
-    harness.controller.dispose();
+    await harness.controller.dispose();
     processing.resolve({ text: "stale processed text", providerId: "codex", model: "test-llm" });
     await completion;
 
